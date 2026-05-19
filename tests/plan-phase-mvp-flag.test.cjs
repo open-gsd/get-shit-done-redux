@@ -74,10 +74,7 @@ describe('plan-phase --mvp — resolution chain integration', () => {
 
   test('config-get workflow.mvp_mode default is empty/unset', () => {
     const result = runGsdTools('config-get workflow.mvp_mode', tmpDir);
-    // Either success with empty output OR a non-zero exit; both are fine.
-    // Real assertion: the key isn't accidentally set to "true" in tmp project.
-    if (result.success) {
-      assert.notStrictEqual(result.output.trim(), 'true');
-    }
+    assert.ok(result.success, `expected gsd-tools to succeed: ${result.error || result.stderr}`);
+    assert.notStrictEqual(result.output.trim(), 'true');
   });
 });

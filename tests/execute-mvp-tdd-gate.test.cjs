@@ -79,8 +79,7 @@ describe('execute-phase MVP+TDD — resolution chain integration', () => {
 
   test('config-get workflow.mvp_mode default is unset in fresh project', () => {
     const result = runGsdTools('config-get workflow.mvp_mode', tmpDir);
-    if (result.success) {
-      assert.notStrictEqual(result.output.trim(), 'true');
-    }
+    assert.ok(result.success, `expected gsd-tools to succeed: ${result.error || result.stderr}`);
+    assert.notStrictEqual(result.output.trim(), 'true');
   });
 });
