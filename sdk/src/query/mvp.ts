@@ -25,7 +25,8 @@
 
 import { readFile, readdir } from 'node:fs/promises';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { relative, resolve, sep, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { relative, resolve, sep, join, basename, dirname } from 'node:path';
 
 import { GSDError, ErrorClassification } from '../errors.js';
 import { loadConfig } from '../config.js';
@@ -497,6 +498,205 @@ export const phaseWalkingSkeletonTrigger: QueryHandler<WalkingSkeletonTriggerRes
         source_files_sampled: sources.sample,
       },
       reason,
+    },
+  };
+};
+
+// ─── task.tdd-gate-check ─────────────────────────────────────────────────────
+
+interface RedCommitInfo {
+  found: boolean;
+  sha: string | null;
+  subject: string | null;
+}
+
+interface TddGateSignals {
+  mvp_mode_active: boolean;
+  tdd_mode_active: boolean;
+  is_behavior_adding: boolean;
+  red_commit: RedCommitInfo;
+}
+
+interface TddGateCheckResult {
+  /** True when mvp_mode AND tdd_mode AND is_behavior_adding are all true. */
+  gate_active: boolean;
+  /** True when gate_active AND no RED commit found. */
+  blocked: boolean;
+  /** Human-readable reason when blocked or skipped (null when unblocked and active). */
+  reason: string | null;
+  signals: TddGateSignals;
+}
+
+/**
+ * Parse phase number and plan ID from a conventional path.
+ * e.g. `.planning/phase-01/01-PLAN-auth.md` → { phaseNum: '1', phasePad: '01', planId: '01-PLAN-auth' }
+ * Falls back to directory/file name heuristics.
+ */
+function parsePlanPath(planPath: string): { phaseNum: string; phasePad: string; planId: string } | null {
+  // Match `.planning/phase-NN/ID-PLAN-*.md` or `phase-NN/ID-PLAN-*.md`
+  const phaseMatch = planPath.match(/phase-(\d+)[/\\]/i);
+  const fileBase = basename(planPath, '.md');
+  if (phaseMatch) {
+    const phasePad = phaseMatch[1]!; // keep raw padded form e.g. '01'
+    return { phaseNum: String(parseInt(phasePad, 10)), phasePad, planId: fileBase };
+  }
+  return null;
+}
+
+/**
+ * Resolve TDD mode. Precedence (first hit wins):
+ *   1. `--cli-tdd-flag` arg on this verb
+ *   2. `workflow.tdd_mode` config
+ *   3. false
+ */
+async function resolveTddMode(
+  args: string[],
+  projectDir: string,
+  workstream?: string,
+): Promise<boolean> {
+  if (args.includes('--cli-tdd-flag')) return true;
+  const config = await loadConfig(projectDir, workstream);
+  const wf = (config.workflow ?? {}) as unknown as Record<string, unknown>;
+  return Boolean(wf.tdd_mode ?? false);
+}
+
+/**
+ * Search git log for a RED commit whose subject matches `test(<phasePad>-<planId>):` and
+ * which touches at least one test file (`*.test.*`, `*.spec.*`, files under `tests/`).
+ *
+ * Uses execFileSync (not execSync) to avoid shell injection risk.
+ * Uses `:(glob)` pathspec syntax so git resolves globs itself without shell expansion.
+ */
+function findRedCommit(projectRoot: string, phasePad: string, planId: string): RedCommitInfo {
+  // Subject prefix pattern: test(<phasePad>-<planId>):
+  const grepPattern = `test(${phasePad}-${planId}):`;
+  let logOutput: string;
+  try {
+    logOutput = execFileSync(
+      'git',
+      [
+        'log',
+        '--oneline',
+        `--grep=${grepPattern}`,
+        '--',
+        ':(glob)**/*.test.*',
+        ':(glob)**/*.spec.*',
+        'tests/',
+      ],
+      { cwd: projectRoot, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+  } catch {
+    // git not available or not a git repo — treat as no commit found
+    return { found: false, sha: null, subject: null };
+  }
+
+  const lines = logOutput.trim().split('\n').filter(Boolean);
+  if (lines.length === 0) {
+    return { found: false, sha: null, subject: null };
+  }
+
+  // First matching line (most recent). Format: `<sha> <subject>`
+  const firstLine = lines[0]!;
+  const spaceIdx = firstLine.indexOf(' ');
+  if (spaceIdx === -1) return { found: false, sha: null, subject: null };
+
+  const sha = firstLine.slice(0, spaceIdx);
+  const subject = firstLine.slice(spaceIdx + 1);
+  return { found: true, sha, subject };
+}
+
+/**
+ * Combined MVP+TDD gate check. Returns a typed gate decision in one call.
+ *
+ * Input: path to PLAN.md file. Optional flags: `--cli-tdd-flag` (caller asserts user passed `--tdd`).
+ * Phase and plan ID are extracted from the file path conventionally.
+ *
+ * @example
+ *   gsd-sdk query task.tdd-gate-check .planning/phase-01/01-PLAN-auth.md
+ *   gsd-sdk query task.tdd-gate-check .planning/phase-01/01-PLAN-auth.md --cli-tdd-flag
+ */
+export const taskTddGateCheck: QueryHandler<TddGateCheckResult> = async (
+  args,
+  projectDir,
+  workstream,
+) => {
+  // Find the plan file path arg (first non-flag arg)
+  const planPathArg = args.find(a => !a.startsWith('--'));
+  if (!planPathArg) {
+    throw new GSDError(
+      'Usage: task.tdd-gate-check <plan-file-path> [--cli-tdd-flag]',
+      ErrorClassification.Validation,
+    );
+  }
+
+  const projectRoot = resolve(projectDir ?? process.cwd());
+  const resolvedPlanPath = resolve(projectRoot, planPathArg);
+  const rel = relative(projectRoot, resolvedPlanPath);
+  if (rel === '..' || rel.startsWith(`..${sep}`)) {
+    throw new GSDError(
+      `Plan file is outside project scope: ${planPathArg}`,
+      ErrorClassification.Validation,
+    );
+  }
+  if (!existsSync(resolvedPlanPath)) {
+    throw new GSDError(
+      `Plan file not found: ${planPathArg}`,
+      ErrorClassification.Validation,
+    );
+  }
+
+  // Parse phase and planId from path
+  const parsed = parsePlanPath(resolvedPlanPath);
+  const phaseNum = parsed?.phaseNum ?? '1';
+  const phasePad = parsed?.phasePad ?? '01';
+  const planId = parsed?.planId ?? basename(resolvedPlanPath, '.md');
+
+  // Signal 1: MVP mode (reuse existing precedence chain; phaseNum is numeric e.g. '1')
+  const mvpResult = await phaseMvpMode([phaseNum, ...(args.filter(a => a === '--cli-flag'))], projectRoot, workstream);
+  const mvpModeActive = mvpResult.data.active;
+
+  // Signal 2: TDD mode
+  const tddModeActive = await resolveTddMode(args, projectRoot, workstream);
+
+  // Signal 3: behavior-adding predicate (reuse existing handler)
+  const behaviorResult = await taskIsBehaviorAdding([resolvedPlanPath], projectRoot);
+  const isBehaviorAdding = behaviorResult.data.is_behavior_adding;
+
+  // Gate activation: all three signals required
+  const gateActive = mvpModeActive && tddModeActive && isBehaviorAdding;
+
+  // Signal 4: RED commit (only search when gate is active — saves git invocation cost)
+  let redCommit: RedCommitInfo = { found: false, sha: null, subject: null };
+  if (gateActive) {
+    redCommit = findRedCommit(projectRoot, phasePad, planId);
+  }
+
+  const blocked = gateActive && !redCommit.found;
+
+  let reason: string | null = null;
+  if (blocked) {
+    reason = `No RED commit found matching test(${phasePad}-${planId}): in git log. Write a failing test and commit it before implementing.`;
+  } else if (!gateActive) {
+    if (!mvpModeActive) {
+      reason = 'Gate inactive: mvp not active for this phase.';
+    } else if (!tddModeActive) {
+      reason = 'Gate inactive: tdd not active (pass --cli-tdd-flag or set workflow.tdd_mode=true in config).';
+    } else if (!isBehaviorAdding) {
+      reason = 'Gate inactive: task is not behavior-adding (doc-only, config-only, or test-only task).';
+    }
+  }
+
+  return {
+    data: {
+      gate_active: gateActive,
+      blocked,
+      reason,
+      signals: {
+        mvp_mode_active: mvpModeActive,
+        tdd_mode_active: tddModeActive,
+        is_behavior_adding: isBehaviorAdding,
+        red_commit: redCommit,
+      },
     },
   };
 };

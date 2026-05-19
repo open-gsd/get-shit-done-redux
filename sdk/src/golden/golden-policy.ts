@@ -61,6 +61,8 @@ const NO_CJS_SUBPROCESS_REASON: Record<string, string> = {
     'SDK-only User Story regex validator. Centralizes /^As a .+, I want to .+, so that .+\\.$/ previously hardcoded in verify-work workflow. Covered in sdk/src/query/mvp.test.ts.',
   'phase.walking-skeleton-trigger':
     'SDK-only: filesystem scan for source-file detection (brownfield guard). Combines mvp-mode precedence chain + phase-1 check + summaries count + project-root source scan. No CJS mirror — the scan walks the live project tree and is not representable as a gsd-tools.cjs parity test. Covered in sdk/src/query/mvp.test.ts.',
+  'task.tdd-gate-check':
+    'SDK-only: combines phase-mode, tdd-mode, behavior-adding, and git log inspection. No CJS port — git operations are environment-dependent and parity-tested via the in-process integration tests in sdk/src/query/mvp.test.ts.',
 };
 
 const READ_HANDLER_ONLY_REASON = (cmd: string) =>

@@ -176,14 +176,13 @@ Offer these recovery options:
 **MVP+TDD gate.** Task-scoped enforcement runs inside plan execution (immediately before each implementation step), where `TASK_FILE`, `PLAN_ID`, and `TASK_ID` are defined. Keep the same predicate and RED-commit contract:
 ```bash
 if [ "$MVP_MODE" = "true" ] && [ "$TDD_MODE" = "true" ]; then
-  IS_BEHAVIOR_ADDING=$(gsd-sdk query task.is-behavior-adding "$TASK_FILE" --pick is_behavior_adding)
-  if [ "$IS_BEHAVIOR_ADDING" = "true" ]; then
-    RED_COMMIT=$(git log --oneline --grep="^test(${PHASE_NUMBER}-${PLAN_ID}):" -- "**/*.test.*" "**/*.spec.*" "tests/" | head -1)
-    if [ -z "$RED_COMMIT" ]; then
-      gsd-sdk query state.update last_gate_trip "${PLAN_ID}/${TASK_ID}" || true
-      echo "MVP+TDD GATE TRIPPED: missing RED commit for ${PLAN_ID}/${TASK_ID}"
-      exit 1
-    fi
+  GATE_JSON=$(gsd-sdk query task.tdd-gate-check "$TASK_FILE" --json 2>/dev/null || echo '{"data":{"blocked":false}}')
+  GATE_BLOCKED=$(echo "$GATE_JSON" | jq -r '.data.blocked // false')
+  GATE_REASON=$(echo "$GATE_JSON" | jq -r '.data.reason // empty')
+  if [ "$GATE_BLOCKED" = "true" ]; then
+    gsd-sdk query state.update last_gate_trip "${PLAN_ID}/${TASK_ID}" 2>/dev/null || true
+    echo "MVP+TDD GATE TRIPPED: $GATE_REASON"
+    exit 1
   fi
 fi
 ```

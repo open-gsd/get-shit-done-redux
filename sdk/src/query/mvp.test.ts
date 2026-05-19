@@ -10,8 +10,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 import {
   phaseMvpMode,
@@ -19,6 +20,7 @@ import {
   userStoryValidate,
   USER_STORY_REGEX,
   phaseWalkingSkeletonTrigger,
+  taskTddGateCheck,
 } from './mvp.js';
 import { roadmapGetPhase } from './roadmap.js';
 
@@ -514,5 +516,125 @@ describe('phase.walking-skeleton-trigger', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── task.tdd-gate-check ─────────────────────────────────────────────────────
+
+describe('task.tdd-gate-check', () => {
+  it('blocks when mvp+tdd active, task is behavior-adding, no RED commit', async () => {
+    const dir = tmpProject();
+    try {
+      // Seed ROADMAP with mvp mode on phase 1
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n\n**Mode:** mvp\n`);
+      // Seed a plan file with tdd="true" and a behavior + source files
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>User can log in</behavior>\n<files>\nsrc/auth.ts\n</files>\n</task>`);
+      // Initialize git repo in tmp dir with NO RED commits
+      execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+
+      const result = await taskTddGateCheck([planPath, '--cli-tdd-flag'], dir);
+      expect(result.data.gate_active).toBe(true);
+      expect(result.data.blocked).toBe(true);
+      expect(result.data.signals.mvp_mode_active).toBe(true);
+      expect(result.data.signals.tdd_mode_active).toBe(true);
+      expect(result.data.signals.is_behavior_adding).toBe(true);
+      expect(result.data.signals.red_commit.found).toBe(false);
+      expect(result.data.reason).toMatch(/no RED commit/i);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('unblocks when matching RED commit exists in git log', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n\n**Mode:** mvp\n`);
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>User can log in</behavior>\n<files>\nsrc/auth.ts\n</files>\n</task>`);
+
+      execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['config', 'user.email', 'test@test'], { cwd: dir });
+      execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+      // Create a test file and commit it as a RED commit
+      const testFile = join(dir, 'src', 'auth.test.ts');
+      mkdirSync(dirname(testFile), { recursive: true });
+      writeFileSync(testFile, 'test("login", () => { expect(true).toBe(false); });');
+      execFileSync('git', ['add', '.'], { cwd: dir });
+      execFileSync('git', ['commit', '-m', 'test(01-01-PLAN-auth): failing login spec (RED)'], { cwd: dir });
+
+      const result = await taskTddGateCheck([planPath, '--cli-tdd-flag'], dir);
+      expect(result.data.gate_active).toBe(true);
+      expect(result.data.blocked).toBe(false);
+      expect(result.data.signals.red_commit.found).toBe(true);
+      expect(result.data.signals.red_commit.sha).toMatch(/^[a-f0-9]{7,}$/);
+      expect(result.data.signals.red_commit.subject).toMatch(/test\(01-01-PLAN-auth\)/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('gate inactive when mvp mode absent', async () => {
+    const dir = tmpProject();
+    try {
+      // No **Mode:** mvp in roadmap
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n`);
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>User can log in</behavior>\n<files>\nsrc/auth.ts\n</files>\n</task>`);
+
+      const result = await taskTddGateCheck([planPath, '--cli-tdd-flag'], dir);
+      expect(result.data.gate_active).toBe(false);
+      expect(result.data.blocked).toBe(false);
+      expect(result.data.reason).toMatch(/mvp.*not active/i);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('gate inactive when tdd mode absent', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n\n**Mode:** mvp\n`);
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>User can log in</behavior>\n<files>\nsrc/auth.ts\n</files>\n</task>`);
+      // NO --cli-tdd-flag and no config.tdd_mode
+
+      const result = await taskTddGateCheck([planPath], dir);
+      expect(result.data.gate_active).toBe(false);
+      expect(result.data.blocked).toBe(false);
+      expect(result.data.reason).toMatch(/tdd.*not active/i);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('gate active but not blocked when task is doc-only', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n\n**Mode:** mvp\n`);
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      // Only docs in <files> → not behavior-adding
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>Update docs</behavior>\n<files>\ndocs/auth.md\n</files>\n</task>`);
+
+      const result = await taskTddGateCheck([planPath, '--cli-tdd-flag'], dir);
+      expect(result.data.signals.is_behavior_adding).toBe(false);
+      expect(result.data.gate_active).toBe(false);
+      expect(result.data.blocked).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('gate evaluates correctly with tdd flag from config', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `### Phase 1: Auth\n\n**Goal:** ...\n\n**Mode:** mvp\n`);
+      const planPath = join(dir, '.planning', 'phase-01', '01-PLAN-auth.md');
+      mkdirSync(dirname(planPath), { recursive: true });
+      writeFileSync(planPath, `<task tdd="true">\n<behavior>User can log in</behavior>\n<files>\nsrc/auth.ts\n</files>\n</task>`);
+      // Set tdd_mode via config (no --cli-tdd-flag)
+      writeConfig(dir, { workflow: { tdd_mode: true } });
+      // Init git with no RED commits
+      execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+
+      const result = await taskTddGateCheck([planPath], dir);
+      expect(result.data.signals.tdd_mode_active).toBe(true);
+      expect(result.data.gate_active).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
