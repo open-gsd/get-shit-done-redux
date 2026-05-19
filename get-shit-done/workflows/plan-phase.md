@@ -120,20 +120,13 @@ fi
 
 Set `TEXT_MODE=true` if `--text` is present in $ARGUMENTS OR `text_mode` from init JSON is `true`. When `TEXT_MODE` is active, replace every `AskUserQuestion` call with a plain-text numbered list and ask the user to type their choice number. This is required for Claude Code remote sessions (`/rc` mode) where TUI menus don't work through the Claude App.
 
-**MVP_MODE resolution.** Resolve `MVP_MODE` once via the centralized `phase.mvp-mode` query verb. Precedence (first hit wins): CLI no-flag → CLI flag → ROADMAP.md `**Mode:** mvp` → `workflow.mvp_mode` config → false. The verb is the single source of truth — do not re-implement the chain.
+**MVP_MODE / TDD_MODE resolution.** Resolve each once via the centralized query verbs (`phase.mvp-mode`, `phase.tdd-mode`). Precedence (first hit wins): CLI no-flag → CLI flag → ROADMAP.md marker → config → false. Check `--no-X` before `--X` to avoid substring false-match.
 
 ```bash
 MVP_FLAG_ARG=""
-# IMPORTANT: check --no-mvp BEFORE --mvp; use word-boundary regex to avoid --mvp matching inside --no-mvp
 if [[ "$ARGUMENTS" =~ (^|[[:space:]])--no-mvp([[:space:]]|$) ]]; then MVP_FLAG_ARG="--cli-no-flag";
 elif [[ "$ARGUMENTS" =~ (^|[[:space:]])--mvp([[:space:]]|$) ]]; then MVP_FLAG_ARG="--cli-flag"; fi
-```
-
-**TDD_MODE resolution.** Resolve `TDD_MODE` once via the centralized `phase.tdd-mode` query verb. Precedence (first hit wins): CLI no-flag → CLI flag → ROADMAP.md `**TDD:** true` → `workflow.tdd_mode` config → false. Symmetric with MVP_MODE resolution above.
-
-```bash
 TDD_FLAG_ARG=""
-# IMPORTANT: check --no-tdd BEFORE --tdd; use word-boundary regex to avoid --tdd matching inside --no-tdd
 if [[ "$ARGUMENTS" =~ (^|[[:space:]])--no-tdd([[:space:]]|$) ]]; then TDD_FLAG_ARG="--cli-no-flag";
 elif [[ "$ARGUMENTS" =~ (^|[[:space:]])--tdd([[:space:]]|$) ]]; then TDD_FLAG_ARG="--cli-flag"; fi
 ```
@@ -144,22 +137,14 @@ The verbs return `true|false`. Full result also exposes `source` (`cli_no_flag` 
 **Walking Skeleton gate.** When `MVP_MODE=true` AND `phase_number == 1` AND there are zero prior phase summaries AND no existing source files (new project, not brownfield), the planner runs in **Walking Skeleton mode** (per PRD decision Q2 — new projects only, per ADR `docs/adr/2826-vertical-mvp-slice-planning-mode.md:34`). Detect with:
 
 ```bash
-# new — uses typed phase.walking-skeleton-trigger verb (combines mvp mode + phase 1 + no summaries + no source files)
 WALKING_SKELETON_JSON=$(gsd-sdk query phase.walking-skeleton-trigger "${PHASE}" $MVP_FLAG_ARG --json 2>/dev/null || echo '{"data":{"active":false}}')
 WALKING_SKELETON=$(echo "$WALKING_SKELETON_JSON" | jq -r '.data.active // false')
 WALKING_SKELETON_REASON=$(echo "$WALKING_SKELETON_JSON" | jq -r '.data.reason // empty')
-
-# SKELETON.md re-emission gate (E8): detect whether an existing SKELETON.md is present
+# SKELETON.md re-emission gate (E8)
 SKELETON_EXISTS="false"
-if [ "$WALKING_SKELETON" = "true" ]; then
-  SKELETON_EXISTS=$(gsd-sdk query phase.skeleton-status "${PHASE}" --pick exists 2>/dev/null || echo "false")
-fi
-
-# --regenerate-skeleton override: explicit user intent to overwrite existing SKELETON.md
+[ "$WALKING_SKELETON" = "true" ] && SKELETON_EXISTS=$(gsd-sdk query phase.skeleton-status "${PHASE}" --pick exists 2>/dev/null || echo "false")
 REGEN_SKELETON="false"
-if [[ "$ARGUMENTS" =~ (^|[[:space:]])--regenerate-skeleton([[:space:]]|$) ]]; then
-  REGEN_SKELETON="true"
-fi
+[[ "$ARGUMENTS" =~ (^|[[:space:]])--regenerate-skeleton([[:space:]]|$) ]] && REGEN_SKELETON="true"
 ```
 
 When `WALKING_SKELETON=true`:
