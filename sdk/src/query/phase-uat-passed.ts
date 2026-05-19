@@ -35,11 +35,23 @@ interface UatItem {
   result: string;
 }
 
+/**
+ * Strip regions from file content that could contain markdown-shaped text
+ * but should not be treated as UAT items (frontmatter, code fences, etc.).
+ * Passes are applied in order; each returns a sanitised string.
+ */
+function stripMarkdownInjection(content: string): string {
+  // Pass 1: strip YAML frontmatter region (---\n...\n---)
+  let s = content.replace(/^---\r?\n[\s\S]*?\r?\n---/m, '');
+  return s;
+}
+
 function parseAllUatItems(content: string): UatItem[] {
+  const sanitised = stripMarkdownInjection(content);
   const items: UatItem[] = [];
   UAT_ITEM_PATTERN.lastIndex = 0;
   let m: RegExpMatchArray | null;
-  while ((m = UAT_ITEM_PATTERN.exec(content)) !== null) {
+  while ((m = UAT_ITEM_PATTERN.exec(sanitised)) !== null) {
     const [, num, name, expected, result] = m;
     items.push({
       test: parseInt(num, 10),

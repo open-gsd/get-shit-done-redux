@@ -109,4 +109,36 @@ result: issue
       await rm(localTmp, { recursive: true, force: true });
     }
   });
+
+  it('ignores ### item content inside YAML frontmatter region', async () => {
+    const localTmp = await mkdtemp(join(tmpdir(), 'gsd-uat-c5-'));
+    try {
+      const phaseDir = join(localTmp, '.planning', 'phases', '05-frontmatter-injection');
+      await mkdir(phaseDir, { recursive: true });
+      const content = `---
+status: complete
+phase: 5
+source: roadmap
+started: 2026-05-18T00:00:00Z
+updated: 2026-05-18T00:00:00Z
+malicious_demo: |
+### 1. Frontmatter-injected item
+expected: nothing
+result: pass
+---
+
+### 1. Real item
+expected: real thing
+result: pass
+`;
+      await writeFile(join(phaseDir, '05-HUMAN-UAT.md'), content);
+
+      const result = await isPhaseUatPassed(localTmp, '5');
+      expect(result.passed).toBe(true);
+      expect(result.items.length).toBe(1);
+      expect(result.items[0].name).toBe('Real item');
+    } finally {
+      await rm(localTmp, { recursive: true, force: true });
+    }
+  });
 });
