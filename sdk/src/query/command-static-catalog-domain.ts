@@ -19,7 +19,7 @@ import { uatRenderCheckpoint, auditUat } from './uat.js';
 // by the `case 'intel':` branch in get-shit-done/bin/gsd-tools.cjs which
 // requires('./lib/intel.cjs') and calls the CJS functions in-process.
 import { writeProfile, generateClaudeProfile, generateDevPreferences, generateClaudeMd } from './profile-output.js';
-import { phaseMvpMode, taskIsBehaviorAdding, userStoryValidate, phaseWalkingSkeletonTrigger, taskTddGateCheck } from './mvp.js';
+import { phaseMvpMode, phaseTddMode, taskIsBehaviorAdding, userStoryValidate, phaseWalkingSkeletonTrigger, taskTddGateCheck } from './mvp.js';
 import { worktreeCleanupWave, worktreeReapOrphans } from './worktree.js';
 import { promptBudget } from './prompt-budget.js';
 
@@ -103,6 +103,8 @@ export const DOMAIN_STATIC_CATALOG: ReadonlyArray<readonly [string, QueryHandler
   // ── MVP umbrella (#2826) — centralized resolution seams ──
   ['phase.mvp-mode', phaseMvpMode],
   ['phase mvp-mode', phaseMvpMode],
+  ['phase.tdd-mode', phaseTddMode],
+  ['phase tdd-mode', phaseTddMode],
   ['task.is-behavior-adding', taskIsBehaviorAdding],
   ['task is-behavior-adding', taskIsBehaviorAdding],
   ['user-story.validate', userStoryValidate],

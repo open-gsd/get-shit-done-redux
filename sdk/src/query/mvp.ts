@@ -121,6 +121,95 @@ export const phaseMvpMode: QueryHandler<MvpModeResult> = async (args, projectDir
   };
 };
 
+// ─── phase.tdd-mode ─────────────────────────────────────────────────────────
+
+export type TddModeSource = 'cli_no_flag' | 'cli_flag' | 'roadmap' | 'config' | 'none';
+
+interface TddModeResult {
+  /** True when TDD mode applies to the phase. */
+  active: boolean;
+  /** Which signal in the precedence chain decided the result. */
+  source: TddModeSource;
+  /** The literal value seen in ROADMAP.md `**TDD:**` (lowercased), or null when the field is absent. */
+  roadmap_tdd: string | null;
+  /** The `workflow.tdd_mode` config value seen at resolution time. */
+  config_tdd_mode: boolean;
+  /** True when the caller indicated the `--tdd` CLI flag was present. */
+  cli_flag_present: boolean;
+  /** True when the caller indicated the `--no-tdd` CLI flag was present (deactivation override). */
+  cli_no_flag_present: boolean;
+}
+
+/**
+ * Resolve TDD mode for a phase. Precedence (first hit wins):
+ *   1. `--cli-no-flag` arg on this verb (caller asserts the user passed `--no-tdd`) — deactivates
+ *   2. `--cli-flag` arg on this verb (caller asserts the user passed `--tdd`) — activates
+ *   3. ROADMAP.md `**TDD:** true` for the phase
+ *   4. `workflow.tdd_mode` config (project-wide default)
+ *   5. false
+ *
+ * Conflict: if BOTH `--cli-no-flag` and `--cli-flag` are passed, `--cli-no-flag` wins
+ * (restrictive-wins, consistent with conventional CLI patterns).
+ *
+ * Symmetric with `phase.mvp-mode`. Closes E4 from #2826 audit.
+ *
+ * @example
+ *   gsd-sdk query phase.tdd-mode 1                    # roadmap + config check
+ *   gsd-sdk query phase.tdd-mode 1 --cli-flag         # caller saw --tdd on CLI
+ *   gsd-sdk query phase.tdd-mode 1 --cli-no-flag      # caller saw --no-tdd on CLI (opt-out)
+ */
+export const phaseTddMode: QueryHandler<TddModeResult> = async (args, projectDir, workstream) => {
+  const phaseNum = args[0];
+  if (!phaseNum) {
+    throw new GSDError(
+      'Usage: phase.tdd-mode <phase-number> [--cli-flag] [--cli-no-flag]',
+      ErrorClassification.Validation,
+    );
+  }
+  const cliNoFlagPresent = args.includes('--cli-no-flag');
+  const cliFlagPresent = args.includes('--cli-flag');
+
+  // Precedence #2: ROADMAP.md
+  const phaseResult = await roadmapGetPhase([phaseNum], projectDir, workstream);
+  const phaseData = phaseResult.data as { found?: boolean; tdd?: string | null };
+  const roadmapTdd = phaseData.found && typeof phaseData.tdd === 'string'
+    ? phaseData.tdd.trim().toLowerCase()
+    : null;
+
+  // Precedence #3: config
+  const config = await loadConfig(projectDir, workstream);
+  const wf = (config.workflow ?? {}) as unknown as Record<string, unknown>;
+  const configTddMode = Boolean(wf.tdd_mode ?? false);
+
+  let active = false;
+  let source: TddModeSource = 'none';
+  if (cliNoFlagPresent) {
+    // Highest priority: explicit deactivation opt-out. Wins over cli_flag, roadmap, and config.
+    active = false;
+    source = 'cli_no_flag';
+  } else if (cliFlagPresent) {
+    active = true;
+    source = 'cli_flag';
+  } else if (roadmapTdd === 'true') {
+    active = true;
+    source = 'roadmap';
+  } else if (configTddMode) {
+    active = true;
+    source = 'config';
+  }
+
+  return {
+    data: {
+      active,
+      source,
+      roadmap_tdd: roadmapTdd,
+      config_tdd_mode: configTddMode,
+      cli_flag_present: cliFlagPresent,
+      cli_no_flag_present: cliNoFlagPresent,
+    },
+  };
+};
+
 // ─── task.is-behavior-adding ────────────────────────────────────────────────
 
 interface BehaviorAddingResult {
@@ -557,23 +646,6 @@ function parsePlanPath(planPath: string): { phaseNum: string; phasePad: string; 
 }
 
 /**
- * Resolve TDD mode. Precedence (first hit wins):
- *   1. `--cli-tdd-flag` arg on this verb
- *   2. `workflow.tdd_mode` config
- *   3. false
- */
-async function resolveTddMode(
-  args: string[],
-  projectDir: string,
-  workstream?: string,
-): Promise<boolean> {
-  if (args.includes('--cli-tdd-flag')) return true;
-  const config = await loadConfig(projectDir, workstream);
-  const wf = (config.workflow ?? {}) as unknown as Record<string, unknown>;
-  return Boolean(wf.tdd_mode ?? false);
-}
-
-/**
  * Search git log for a RED commit whose subject matches `test(<phasePad>-<planId>):` and
  * which touches at least one test file (`*.test.*`, `*.spec.*`, files under `tests/`).
  *
@@ -668,8 +740,15 @@ export const taskTddGateCheck: QueryHandler<TddGateCheckResult> = async (
   const mvpResult = await phaseMvpMode([phaseNum, ...(args.filter(a => a === '--cli-flag'))], projectRoot, workstream);
   const mvpModeActive = mvpResult.data.active;
 
-  // Signal 2: TDD mode
-  const tddModeActive = await resolveTddMode(args, projectRoot, workstream);
+  // Signal 2: TDD mode — delegate to the canonical phaseTddMode resolver.
+  // Translate gate-check flag names → phaseTddMode flag names:
+  //   --cli-tdd-flag    → --cli-flag
+  //   --cli-no-tdd-flag → --cli-no-flag
+  const tddModeArgs: string[] = [phaseNum];
+  if (args.includes('--cli-tdd-flag')) tddModeArgs.push('--cli-flag');
+  if (args.includes('--cli-no-tdd-flag')) tddModeArgs.push('--cli-no-flag');
+  const tddResult = await phaseTddMode(tddModeArgs, projectRoot, workstream);
+  const tddModeActive = tddResult.data.active;
 
   // Signal 3: behavior-adding predicate (reuse existing handler)
   const behaviorResult = await taskIsBehaviorAdding([resolvedPlanPath], projectRoot);

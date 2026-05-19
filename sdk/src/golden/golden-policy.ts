@@ -55,6 +55,8 @@ const NO_CJS_SUBPROCESS_REASON: Record<string, string> = {
     'SDK-only registry introspection (no gsd-tools.cjs equivalent — the CJS layer has no self-describing verb). Covered in sdk/src/query/commands-list.test.ts. Closes #3121.',
   'phase.mvp-mode':
     'SDK-only MVP precedence resolver (CLI flag → roadmap → config → false). Centralizes the chain previously duplicated across plan-phase/execute-phase/verify-work/progress workflows. Covered in sdk/src/query/mvp.test.ts.',
+  'phase.tdd-mode':
+    'SDK-only TDD precedence resolver (CLI flag → roadmap **TDD:** → config → false). Symmetric with phase.mvp-mode. Closes E4 from #2826 audit. Covered in sdk/src/query/mvp.test.ts.',
   'task.is-behavior-adding':
     'SDK-only Behavior-Adding Task predicate for the MVP+TDD Gate (tdd=true + <behavior> block + non-test source files). Replaces prose-only specification in references/execute-mvp-tdd.md. Covered in sdk/src/query/mvp.test.ts.',
   'user-story.validate':

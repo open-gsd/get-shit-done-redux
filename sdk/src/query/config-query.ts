@@ -60,6 +60,7 @@ const SCHEMA_DEFAULTS: Readonly<Record<string, string | number | boolean>> = Obj
   // Allows `config-get workflow.<flag>` on a fresh project to return exit 0
   // with empty output rather than CONFIG_NO_FILE / CONFIG_KEY_NOT_FOUND.
   'workflow.mvp_mode': '',
+  'workflow.tdd_mode': '',
 });
 
 // ─── configGet ──────────────────────────────────────────────────────────────

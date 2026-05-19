@@ -37,7 +37,6 @@ AGENT_SKILLS_RESEARCHER=$(gsd-sdk query agent-skills gsd-phase-researcher)
 AGENT_SKILLS_PLANNER=$(gsd-sdk query agent-skills gsd-planner)
 AGENT_SKILLS_CHECKER=$(gsd-sdk query agent-skills gsd-plan-checker)
 CONTEXT_WINDOW=$(gsd-sdk query config-get context_window 2>/dev/null || echo "200000")
-TDD_MODE=$(gsd-sdk query config-get workflow.tdd_mode 2>/dev/null || echo "false")
 MVP_MODE_CFG=$(gsd-sdk query config-get workflow.mvp_mode 2>/dev/null || echo "false")
 ```
 
@@ -130,8 +129,17 @@ if [[ "$ARGUMENTS" =~ (^|[[:space:]])--no-mvp([[:space:]]|$) ]]; then MVP_FLAG_A
 elif [[ "$ARGUMENTS" =~ (^|[[:space:]])--mvp([[:space:]]|$) ]]; then MVP_FLAG_ARG="--cli-flag"; fi
 ```
 
-Defer the `phase.mvp-mode` query until `PHASE` is finalized (after explicit argument parsing/fallback phase detection + validation).
-The verb returns `true|false`. Full result also exposes `source` (`cli_no_flag` | `cli_flag` | `roadmap` | `config` | `none`) for diagnostics. The mode is **all-or-nothing per phase** (PRD decision Q1) — never selective per task.
+**TDD_MODE resolution.** Resolve `TDD_MODE` once via the centralized `phase.tdd-mode` query verb. Precedence (first hit wins): CLI no-flag → CLI flag → ROADMAP.md `**TDD:** true` → `workflow.tdd_mode` config → false. Symmetric with MVP_MODE resolution above.
+
+```bash
+TDD_FLAG_ARG=""
+# IMPORTANT: check --no-tdd BEFORE --tdd; use word-boundary regex to avoid --tdd matching inside --no-tdd
+if [[ "$ARGUMENTS" =~ (^|[[:space:]])--no-tdd([[:space:]]|$) ]]; then TDD_FLAG_ARG="--cli-no-flag";
+elif [[ "$ARGUMENTS" =~ (^|[[:space:]])--tdd([[:space:]]|$) ]]; then TDD_FLAG_ARG="--cli-flag"; fi
+```
+
+Defer the `phase.mvp-mode` and `phase.tdd-mode` queries until `PHASE` is finalized (after explicit argument parsing/fallback phase detection + validation).
+The verbs return `true|false`. Full result also exposes `source` (`cli_no_flag` | `cli_flag` | `roadmap` | `config` | `none`) for diagnostics. The mode is **all-or-nothing per phase** (PRD decision Q1) — never selective per task.
 
 **Walking Skeleton gate.** When `MVP_MODE=true` AND `phase_number == 1` AND there are zero prior phase summaries AND no existing source files (new project, not brownfield), the planner runs in **Walking Skeleton mode** (per PRD decision Q2 — new projects only, per ADR `docs/adr/2826-vertical-mvp-slice-planning-mode.md:34`). Detect with:
 
@@ -199,9 +207,10 @@ PHASE_INFO=$(gsd-sdk query roadmap.get-phase "${PHASE}")
 
 **If `found` is false:** Error with available phases. **If `found` is true:** Extract `phase_number`, `phase_name`, `goal` from JSON.
 
-Now that `PHASE` is finalized, resolve MVP mode:
+Now that `PHASE` is finalized, resolve MVP and TDD modes:
 ```bash
 MVP_MODE=$(gsd-sdk query phase.mvp-mode "${PHASE}" $MVP_FLAG_ARG --pick active)
+TDD_MODE=$(gsd-sdk query phase.tdd-mode "${PHASE}" $TDD_FLAG_ARG --pick active 2>/dev/null || echo "false")
 ```
 
 ## 3.5. Handle PRD Express Path

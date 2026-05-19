@@ -16,6 +16,7 @@ import { join, dirname } from 'node:path';
 
 import {
   phaseMvpMode,
+  phaseTddMode,
   taskIsBehaviorAdding,
   userStoryValidate,
   USER_STORY_REGEX,
@@ -689,6 +690,94 @@ describe('task.tdd-gate-check', () => {
       const result = await taskTddGateCheck([planPath], dir);
       expect(result.data.signals.tdd_mode_active).toBe(true);
       expect(result.data.gate_active).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// ─── phase.tdd-mode ──────────────────────────────────────────────────────────
+
+describe('phase.tdd-mode', () => {
+  it('reads **TDD:** true from roadmap', async () => {
+    const dir = tmpProject();
+    try {
+      writeFileSync(join(dir, '.planning', 'ROADMAP.md'),
+        `## Phase 1: Test\n\n**Goal:** ...\n\n**TDD:** true\n`);
+      const result = await phaseTddMode(['1'], dir);
+      expect(result.data.active).toBe(true);
+      expect(result.data.source).toBe('roadmap');
+      expect(result.data.roadmap_tdd).toBe('true');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('tdd absent → active=false, source=none', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**Goal:** Test.\n`);
+      writeConfig(dir, { workflow: {} });
+      const result = await phaseTddMode(['1'], dir);
+      expect(result.data.active).toBe(false);
+      expect(result.data.source).toBe('none');
+      expect(result.data.roadmap_tdd).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('roadmap **TDD:** false → active=false', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**TDD:** false\n**Goal:** Test.\n`);
+      writeConfig(dir, { workflow: {} });
+      const result = await phaseTddMode(['1'], dir);
+      expect(result.data.active).toBe(false);
+      expect(result.data.source).toBe('none');
+      expect(result.data.roadmap_tdd).toBe('false');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('cli_flag activates without roadmap', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**Goal:** Test.\n`);
+      writeConfig(dir, { workflow: { tdd_mode: false } });
+      const result = await phaseTddMode(['1', '--cli-flag'], dir);
+      expect(result.data.active).toBe(true);
+      expect(result.data.source).toBe('cli_flag');
+      expect(result.data.cli_flag_present).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('cli_no_flag deactivates roadmap tdd', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**TDD:** true\n**Goal:** Test.\n`);
+      const result = await phaseTddMode(['1', '--cli-no-flag'], dir);
+      expect(result.data.active).toBe(false);
+      expect(result.data.source).toBe('cli_no_flag');
+      expect(result.data.roadmap_tdd).toBe('true');
+      expect(result.data.cli_no_flag_present).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('cli_no_flag wins over cli_flag (restrictive-wins)', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**Goal:** Test.\n`);
+      const result = await phaseTddMode(['1', '--cli-flag', '--cli-no-flag'], dir);
+      expect(result.data.active).toBe(false);
+      expect(result.data.source).toBe('cli_no_flag');
+      expect(result.data.cli_flag_present).toBe(true);
+      expect(result.data.cli_no_flag_present).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('config workflow.tdd_mode=true activates without roadmap', async () => {
+    const dir = tmpProject();
+    try {
+      writeRoadmap(dir, `## Phase 1: X\n\n**Goal:** Test.\n`);
+      writeConfig(dir, { workflow: { tdd_mode: true } });
+      const result = await phaseTddMode(['1'], dir);
+      expect(result.data.active).toBe(true);
+      expect(result.data.source).toBe('config');
+      expect(result.data.config_tdd_mode).toBe(true);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
