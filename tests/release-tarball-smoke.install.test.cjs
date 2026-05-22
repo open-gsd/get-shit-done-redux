@@ -32,9 +32,16 @@ describe('release-tarball-smoke', () => {
     installPrefix = createTempDir('gsd-smoke-prefix-');
     fixtureDir = createTempDir('gsd-smoke-fixture-');
 
+    // npm pack + npm install -g on a large tarball (1499 files, ~10 MB) can take
+    // 3–6 minutes on slow Docker hosts (cold disk, constrained CPU). The runNpm
+    // default timeout of 180 s is sufficient on fast machines but insufficient on
+    // cartographer-class hosts. 600 s (10 min) gives a safe ceiling without
+    // masking genuine hangs.
+    const SLOW_HOST_TIMEOUT = 600_000;
+
     const packOutput = runNpm(
       ['pack', '--pack-destination', packDir],
-      { cwd: path.join(__dirname, '..') },
+      { cwd: path.join(__dirname, '..'), timeout: SLOW_HOST_TIMEOUT },
     );
 
     // npm pack prints the filename as the last line of stdout.
@@ -48,7 +55,7 @@ describe('release-tarball-smoke', () => {
     }
 
     // Install once into installPrefix. All tests share this install.
-    runNpm(['install', '-g', '--prefix', installPrefix, tarballPath]);
+    runNpm(['install', '-g', '--prefix', installPrefix, tarballPath], { timeout: SLOW_HOST_TIMEOUT });
   });
 
   after(() => {

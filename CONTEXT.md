@@ -255,7 +255,6 @@ Five-axis story decomposition discipline (**S**pike, **P**aths, **I**nterfaces, 
 `RELEASE-NOTES.STANDARD.subgroups=phase-planning-state | workstream | query-dispatch-cli | code-review | install | capture | docs | architecture | security`
 `RELEASE-NOTES.STANDARD.footer.hotfix=Install/upgrade: \`npx @opengsd/get-shit-done-redux@latest\``
 `RELEASE-NOTES.STANDARD.footer.rc=Install for testing: \`npx @opengsd/get-shit-done-redux@next\` (per branch->dist-tag policy)`
-`RELEASE-NOTES.STANDARD.footer.canary=Install: \`npx @opengsd/get-shit-done-redux@canary\``
 `RELEASE-NOTES.STANDARD.footer.full-changelog=**Full Changelog**: https://github.com/open-gsd/get-shit-done-redux/compare/<prev>...<this>`
 `RELEASE-NOTES.STANDARD.intro=optional one-paragraph framing for RC/feature releases; omit for pure-fix hotfixes`
 
@@ -280,9 +279,8 @@ Five-axis story decomposition discipline (**S**pike, **P**aths, **I**nterfaces, 
 `RELEASE-NOTES.TEMPLATE.hotfix=## Fixed\n\n### <subgroup>\n- **<bold change>** — <explanation>. (#<PR>)\n\n---\n\nInstall/upgrade: \`npx @opengsd/get-shit-done-redux@latest\`\n\n**Full Changelog**: <compare-url>`
 `RELEASE-NOTES.TEMPLATE.rc=<one-paragraph intro>\n\n## Added\n### <subgroup>\n- **<change>** — <explanation>. (#<PR>)\n\n## Changed\n### Architecture\n- **<refactor>** — <user-visible benefit>. (#<PR>)\n\n## Fixed\n### <subgroup>\n- **<fix>** — <explanation>. (#<PR>)\n\n## Documentation\n- **<docs change>** — <reason>. (#<PR>)\n\n---\n\nThis is a release candidate. Install for testing:\n\`\`\`bash\nnpx @opengsd/get-shit-done-redux@next\n\`\`\`\n\n**Full Changelog**: <compare-url>`
 
-`RELEASE-NOTES.RELEASE-STREAM.dev-branch=canary dist-tag (only); install via @canary`
 `RELEASE-NOTES.RELEASE-STREAM.main-branch=next (RCs) + latest (stable); install via @next or @latest`
-`RELEASE-NOTES.RELEASE-STREAM.rule=streams do not mix; do not document @canary install in RC notes or @next in canary notes`
+`RELEASE-NOTES.RELEASE-STREAM.rule=streams do not mix; do not document @next in hotfix/stable notes`
 
 ---
 
@@ -556,8 +554,6 @@ Migration plan: Phase 1 (#3465) seam additions complete; Phase 2 (#3466) targets
 `DEFECT.CANARY-VERSION-LEAK.examples=2026-05-16 audit found origin/main + origin/feat/3575-enforcement-hardening both at "version": "1.50.0-canary.0" in sdk/package.json AND root package.json; npm view @opengsd/gsd-sdk versions returned ["0.1.0"] only, dist-tag latest=0.1.0, @1.50.0-canary.0 404 — confirms the string is metadata-only, never published. git log -S '"version": "1.50.0-canary.0"' origin/main blamed commit 2d32ad82 fix(plan-phase)... (#3206), a fix PR that accidentally carried the version bump from a dev-branch base`
 `DEFECT.CANARY-VERSION-LEAK.detect=jq -r .version package.json sdk/package.json on origin/main shows a -canary suffix; OR npm view <pkg> dist-tags shows latest != main's version`
 `DEFECT.CANARY-VERSION-LEAK.fix-forward=open a chore/* PR against main that resets the version strings to the canonical pre-canary stable; rebase open PRs to pick it up; gate at PR open with a CI check that rejects -canary versions on PRs targeting main`
-`DEFECT.CANARY-VERSION-LEAK.cross-ref=RELEASE-NOTES.RELEASE-STREAM.dev-branch=canary dist-tag (only); this defect is the live counter-example to that rule`
-
 `DEFECT.GSD-TEST-HOST-MID-RUN-DEATH.symptom=pick_host succeeds at probe time (ssh -o ConnectTimeout=3 -o BatchMode=yes "$h" true); subsequent ssh "$h" 'docker run ...' hangs indefinitely because the chosen host went unreachable between probe and exec; gsd-test-summary buffers stderr until the wrapper exits, so the operator sees no progress at all`
 `DEFECT.GSD-TEST-HOST-MID-RUN-DEATH.examples=2026-05-16 redshirt probed up at 12:48 UTC, gsd-test-summary picked it, docker container spawned, then redshirt's ssh daemon stopped responding — banner-exchange timeout. Test stalled 20+ minutes with the wrapper's output file at 0 bytes`
 `DEFECT.GSD-TEST-HOST-MID-RUN-DEATH.detect=gsd-test-summary's task output file at /private/tmp/claude-*/tasks/<id>.output stays 0 bytes for >5 min after launch; ps shows the test still alive; ssh -o ConnectTimeout=5 <probed-host> true now times out`
