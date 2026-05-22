@@ -759,26 +759,26 @@ Invalid flag tokens are sanitized and logged as warnings. Only recognized GSD fl
 
 ### Profile Definitions
 
-| Agent | `quality` | `balanced` | `budget` | `inherit` |
-|-------|-----------|------------|----------|-----------|
-| gsd-planner | Opus | Opus | Sonnet | Inherit |
-| gsd-roadmapper | Opus | Sonnet | Sonnet | Inherit |
-| gsd-executor | Opus | Sonnet | Sonnet | Inherit |
-| gsd-phase-researcher | Opus | Sonnet | Haiku | Inherit |
-| gsd-project-researcher | Opus | Sonnet | Haiku | Inherit |
-| gsd-research-synthesizer | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-debugger | Opus | Sonnet | Sonnet | Inherit |
-| gsd-codebase-mapper | Sonnet | Haiku | Haiku | Inherit |
-| gsd-verifier | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-plan-checker | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-integration-checker | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-nyquist-auditor | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-pattern-mapper | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-ui-researcher | Opus | Sonnet | Haiku | Inherit |
-| gsd-ui-checker | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-ui-auditor | Sonnet | Sonnet | Haiku | Inherit |
-| gsd-doc-writer | Opus | Sonnet | Haiku | Inherit |
-| gsd-doc-verifier | Sonnet | Sonnet | Haiku | Inherit |
+| Agent | `quality` | `balanced` | `budget` | `adaptive` | `inherit` |
+|-------|-----------|------------|----------|------------|-----------|
+| gsd-planner | Opus | Opus | Sonnet | Opus | Inherit |
+| gsd-roadmapper | Opus | Sonnet | Sonnet | Opus | Inherit |
+| gsd-executor | Opus | Sonnet | Sonnet | Sonnet | Inherit |
+| gsd-phase-researcher | Opus | Sonnet | Haiku | Sonnet | Inherit |
+| gsd-project-researcher | Opus | Sonnet | Haiku | Sonnet | Inherit |
+| gsd-research-synthesizer | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-debugger | Opus | Sonnet | Sonnet | Opus | Inherit |
+| gsd-codebase-mapper | Sonnet | Haiku | Haiku | Haiku | Inherit |
+| gsd-verifier | Sonnet | Sonnet | Haiku | Sonnet | Inherit |
+| gsd-plan-checker | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-integration-checker | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-nyquist-auditor | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-pattern-mapper | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-ui-researcher | Opus | Sonnet | Haiku | Sonnet | Inherit |
+| gsd-ui-checker | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-ui-auditor | Sonnet | Sonnet | Haiku | Haiku | Inherit |
+| gsd-doc-writer | Opus | Sonnet | Haiku | Sonnet | Inherit |
+| gsd-doc-verifier | Sonnet | Sonnet | Haiku | Haiku | Inherit |
 
 > **All 33 shipped agents have explicit per-profile tier assignments** in the catalog (`sdk/shared/model-catalog.json`). The table above shows a representative subset of the most-used agents. For agents not listed here, `model_overrides` accepts any shipped agent name. The authoritative profile data is derived from `sdk/shared/model-catalog.json` via `get-shit-done/bin/lib/model-catalog.cjs` and `sdk/src/model-catalog.ts`.
 

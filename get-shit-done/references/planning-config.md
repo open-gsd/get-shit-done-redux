@@ -226,7 +226,7 @@ Generated from `CONFIG_DEFAULTS` (core.cjs) and `VALID_CONFIG_KEYS` (config.cjs)
 
 | Key | Type | Default | Allowed Values | Description |
 |-----|------|---------|----------------|-------------|
-| `model_profile` | string | `"balanced"` | `"quality"`, `"balanced"`, `"budget"`, `"inherit"` | Model selection preset for subagents |
+| `model_profile` | string | `"balanced"` | `"quality"`, `"balanced"`, `"budget"`, `"adaptive"`, `"inherit"` | Model selection preset for subagents |
 | `mode` | string | `"interactive"` | `"interactive"`, `"yolo"` | Operation mode: `"interactive"` shows gates and confirmations; `"yolo"` runs autonomously without prompts |
 | `granularity` | string | (none) | `"coarse"`, `"standard"`, `"fine"` | Planning depth for phase plans (migrated from deprecated `depth`) |
 | `commit_docs` | boolean | `true` | `true`, `false` | Commit .planning/ artifacts to git (auto-false if .planning/ is gitignored) |
