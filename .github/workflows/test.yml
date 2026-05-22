@@ -21,8 +21,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
-      - '.github/workflows/test.yml'
-      - '.github/workflows/test-skip.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 concurrency:

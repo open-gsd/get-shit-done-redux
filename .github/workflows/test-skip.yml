@@ -23,8 +23,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig*.json'
-      - '.github/workflows/test.yml'
-      - '.github/workflows/test-skip.yml'
+      - '.github/workflows/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
