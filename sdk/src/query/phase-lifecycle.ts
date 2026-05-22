@@ -409,15 +409,29 @@ export const phaseInsert: QueryHandler = async (args, projectDir, workstream) =>
     const unpadded = normalizedAfter.replace(/^0+/, '');
     const afterPhaseEscaped = unpadded.replace(/\./g, '\\.');
     const targetPattern = new RegExp(`#{2,4}\\s*Phase\\s+0*${afterPhaseEscaped}:`, 'i');
-    if (!targetPattern.test(content)) {
-      // Bug #3098 parity: when only the summary checklist exists for this
+    const headingMatch = targetPattern.test(content);
+
+    // #3815: also recognise the checked-bullet phase format used by projects
+    // that list phases as `- [ ] **Phase N: name**` or `- [ ] Phase N: name`
+    // (both bold and plain variants).  This mirrors the patterns already used
+    // by phaseRemove / phaseComplete so insert is consistent with its siblings.
+    const bulletPattern = new RegExp(
+      `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+0*${afterPhaseEscaped}[:\\s]`,
+      'i',
+    );
+    const isBulletStyle = !headingMatch && bulletPattern.test(content);
+
+    if (!headingMatch && !isBulletStyle) {
+      // Bug #3098 parity: when only the bold-summary checklist exists for this
       // phase (no `### Phase N:` detail section), point the user at the
       // missing detail section rather than implying the phase is absent.
-      const checklistPattern = new RegExp(
+      // The bold-summary pattern is a subset of bulletPattern, so we check
+      // whether the bold form specifically matches to decide which error to emit.
+      const boldChecklistPattern = new RegExp(
         `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+0*${afterPhaseEscaped}:`,
         'i',
       );
-      if (checklistPattern.test(content)) {
+      if (boldChecklistPattern.test(content)) {
         throw new GSDError(
           `Phase ${afterPhase} exists in roadmap summary but is missing a detail section (### Phase ${afterPhase}: ...).`,
           ErrorClassification.Validation,
@@ -459,6 +473,46 @@ export const phaseInsert: QueryHandler = async (args, projectDir, workstream) =>
     // Create directory with .gitkeep
     await ensureDirectoryWithGitkeep(dirPath);
 
+    if (isBulletStyle) {
+      // #3815: Insert in checked-bullet format, mirroring the style of the
+      // surrounding entries.  Detect whether the matched bullet uses bold
+      // (`**Phase N: …**`) to preserve file-internal format consistency.
+      const boldBulletPattern = new RegExp(
+        `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+0*${afterPhaseEscaped}:`,
+        'i',
+      );
+      const useBold = boldBulletPattern.test(content);
+      const phaseLabel = useBold
+        ? `**Phase ${decimalPhase}: ${description}**`
+        : `Phase ${decimalPhase}: ${description}`;
+      const bulletEntry = `\n- [ ] ${phaseLabel}`;
+
+      // Locate the target bullet line in the raw content
+      const targetBulletPattern = new RegExp(
+        `(-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+0*${afterPhaseEscaped}[:\\s][^\\n]*)`,
+        'i',
+      );
+      const bulletMatchResult = rawContent.match(targetBulletPattern);
+      if (!bulletMatchResult) {
+        throw new GSDError(`Could not find Phase ${afterPhase} bullet line`, ErrorClassification.Execution);
+      }
+
+      const bulletLineEnd = rawContent.indexOf(bulletMatchResult[0]) + bulletMatchResult[0].length;
+      // Find where the next phase bullet starts (or use end of content)
+      const afterBullet = rawContent.slice(bulletLineEnd);
+      const nextBulletMatch = afterBullet.match(/\n-\s*\[[ x]\]\s*(?:\*\*)?Phase\s+\d/i);
+
+      let insertIdx: number;
+      if (nextBulletMatch && nextBulletMatch.index !== undefined) {
+        insertIdx = bulletLineEnd + nextBulletMatch.index;
+      } else {
+        insertIdx = bulletLineEnd;
+      }
+
+      return rawContent.slice(0, insertIdx) + bulletEntry + rawContent.slice(insertIdx);
+    }
+
+    // Heading-style insert (original path)
     // Build phase entry
     const phaseEntry = `\n### Phase ${decimalPhase}: ${description} (INSERTED)\n\n**Goal:** [Urgent work - to be planned]\n**Requirements**: TBD\n**Depends on:** Phase ${afterPhase}\n**Plans:** 0 plans\n\nPlans:\n- [ ] TBD (run /gsd-plan-phase ${decimalPhase} to break down)\n`;
 

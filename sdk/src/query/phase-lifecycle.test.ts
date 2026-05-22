@@ -705,6 +705,109 @@ describe('phaseInsert', () => {
 
     await expect(phaseInsert([], tmpDir)).rejects.toThrow('after-phase and description required');
   });
+
+  // ─── #3815: checked-bullet ROADMAP format ─────────────────────────────
+
+  const BULLET_ONLY_ROADMAP = `# Roadmap
+
+## Current Milestone: v2.0 Agent Skills
+
+- [x] **Phase 01: bootstrap** — completed 2026-04-01
+- [ ] **Phase 02: core-loop**
+- [ ] **Phase 03: persistence**
+
+---
+*Last updated: 2026-05-01*
+`;
+
+  it('#3815: inserts decimal phase between bullets in a checked-bullet ROADMAP', async () => {
+    const { phaseInsert } = await import('./phase-lifecycle.js');
+    await setupTestProject(tmpDir, {
+      roadmap: BULLET_ONLY_ROADMAP,
+      phases: ['01-bootstrap', '02-core-loop', '03-persistence'],
+    });
+
+    const result = await phaseInsert(['02', 'hot patch'], tmpDir);
+    const data = result.data as Record<string, unknown>;
+
+    expect(data.phase_number).toBe('02.1');
+    expect(data.after_phase).toBe('02');
+    expect(data.name).toBe('hot patch');
+
+    const roadmap = await readFile(join(tmpDir, '.planning', 'ROADMAP.md'), 'utf-8');
+
+    // New bullet must be present
+    expect(roadmap).toMatch(/- \[ \].*Phase 02\.1:.*hot patch/i);
+
+    // New bullet must appear AFTER the Phase 02 bullet
+    const phase02Idx = roadmap.indexOf('Phase 02: core-loop');
+    const insertedIdx = roadmap.search(/Phase 02\.1:/i);
+    expect(phase02Idx).toBeGreaterThanOrEqual(0);
+    expect(insertedIdx).toBeGreaterThan(phase02Idx);
+
+    // New bullet must appear BEFORE the Phase 03 bullet (positional assertion)
+    const phase03Idx = roadmap.indexOf('Phase 03: persistence');
+    expect(insertedIdx).toBeLessThan(phase03Idx);
+
+    // Must NOT corrupt the surrounding bullet structure
+    expect(roadmap).toContain('- [x] **Phase 01: bootstrap**');
+    expect(roadmap).toContain('- [ ] **Phase 02: core-loop**');
+    expect(roadmap).toContain('- [ ] **Phase 03: persistence**');
+  });
+
+  it('#3815: inserts at end of bullet list when target is the last phase', async () => {
+    const { phaseInsert } = await import('./phase-lifecycle.js');
+    await setupTestProject(tmpDir, {
+      roadmap: BULLET_ONLY_ROADMAP,
+      phases: ['01-bootstrap', '02-core-loop', '03-persistence'],
+    });
+
+    const result = await phaseInsert(['03', 'final extra'], tmpDir);
+    const data = result.data as Record<string, unknown>;
+
+    expect(data.phase_number).toBe('03.1');
+
+    const roadmap = await readFile(join(tmpDir, '.planning', 'ROADMAP.md'), 'utf-8');
+    expect(roadmap).toMatch(/- \[ \].*Phase 03\.1:.*final extra/i);
+
+    // Must appear after Phase 03 bullet
+    const phase03Idx = roadmap.indexOf('Phase 03: persistence');
+    const insertedIdx = roadmap.search(/Phase 03\.1:/i);
+    expect(insertedIdx).toBeGreaterThan(phase03Idx);
+  });
+
+  it('#3815: plain bullet format (no bold) also works', async () => {
+    const { phaseInsert } = await import('./phase-lifecycle.js');
+    const PLAIN_BULLET_ROADMAP = `# Roadmap
+
+## Current Milestone: v2.0
+
+- [ ] Phase 01: foo
+- [ ] Phase 02: bar
+- [ ] Phase 03: baz
+
+---
+*Last updated: 2026-05-01*
+`;
+    await setupTestProject(tmpDir, {
+      roadmap: PLAIN_BULLET_ROADMAP,
+      phases: ['01-foo', '02-bar', '03-baz'],
+    });
+
+    const result = await phaseInsert(['02', 'inserted'], tmpDir);
+    const data = result.data as Record<string, unknown>;
+
+    expect(data.phase_number).toBe('02.1');
+
+    const roadmap = await readFile(join(tmpDir, '.planning', 'ROADMAP.md'), 'utf-8');
+    expect(roadmap).toMatch(/- \[ \].*Phase 02\.1:.*inserted/i);
+
+    const phase02Idx = roadmap.indexOf('Phase 02: bar');
+    const insertedIdx = roadmap.search(/Phase 02\.1:/i);
+    const phase03Idx = roadmap.indexOf('Phase 03: baz');
+    expect(insertedIdx).toBeGreaterThan(phase02Idx);
+    expect(insertedIdx).toBeLessThan(phase03Idx);
+  });
 });
 
 // ─── phaseScaffold ──────────────────────────────────────────────────────
@@ -1599,6 +1702,11 @@ describe('milestoneComplete help-flag defense', () => {
 // ─── Registry integration ──────────────────────────────────────────────────
 
 describe('lifecycle handlers in registry', () => {
+  // Registry assembly (invariant checks + large handler map) routinely takes
+  // 5–10 s on a cold ESM module cache.  The second test below reuses the
+  // cached import and completes instantly, but the first import is the cold
+  // path.  Raise the per-test timeout so the warm-up doesn't surface as a
+  // spurious "Test timed out" failure (pre-existing: STACK_TRACE_ERROR mask).
   it('registers all 7 lifecycle handlers with dot notation', async () => {
     const { createRegistry } = await import('./index.js');
     const registry = createRegistry();
@@ -1612,7 +1720,7 @@ describe('lifecycle handlers in registry', () => {
       const handler = registry.getHandler(cmd);
       expect(handler, `${cmd} should be registered`).toBeDefined();
     }
-  });
+  }, 30_000);
 
   it('registers space-delimited aliases', async () => {
     const { createRegistry } = await import('./index.js');

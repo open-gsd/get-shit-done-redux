@@ -759,9 +759,26 @@ function cmdPhaseInsert(cwd, afterPhase, description, raw) {
     const normalizedAfter = normalizePhaseName(afterPhase);
     const afterPhaseEscaped = phaseMarkdownRegexSource(normalizedAfter);
     const targetPattern = new RegExp(`#{2,4}\\s*Phase\\s+${afterPhaseEscaped}:`, 'i');
-    if (!targetPattern.test(content)) {
-      const checklistPattern = new RegExp(`-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+${afterPhaseEscaped}:`, 'i');
-      if (checklistPattern.test(content)) {
+    const headingMatch = targetPattern.test(content);
+
+    // #3815: also recognise the checked-bullet phase format used by projects
+    // that list phases as `- [ ] **Phase N: name**` or `- [ ] Phase N: name`
+    // (both bold and plain variants).  Mirrors phaseRemove / phaseComplete.
+    const bulletPattern = new RegExp(
+      `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+${afterPhaseEscaped}[:\\s]`,
+      'i',
+    );
+    const isBulletStyle = !headingMatch && bulletPattern.test(content);
+
+    if (!headingMatch && !isBulletStyle) {
+      // Bug #3098 parity: when only the bold-summary checklist exists for this
+      // phase (no `### Phase N:` detail section), point the user at the missing
+      // detail section rather than implying the phase is absent.
+      const boldChecklistPattern = new RegExp(
+        `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+${afterPhaseEscaped}:`,
+        'i',
+      );
+      if (boldChecklistPattern.test(content)) {
         error(`Phase ${afterPhase} exists in roadmap summary but is missing a detail section (### Phase ${afterPhase}: ...).`);
       }
       error(`Phase ${afterPhase} not found in ROADMAP.md`);
@@ -806,28 +823,70 @@ function cmdPhaseInsert(cwd, afterPhase, description, raw) {
     platformEnsureDir(dirPath);
     platformWriteSync(path.join(dirPath, '.gitkeep'), '');
 
-    // Build phase entry
-    const phaseEntry = `\n### Phase ${_decimalPhase}: ${description} (INSERTED)\n\n**Goal:** [Urgent work - to be planned]\n**Requirements**: TBD\n**Depends on:** Phase ${afterPhase}\n**Plans:** 0 plans\n\nPlans:\n- [ ] TBD (run ${formatGsdSlash('plan-phase', resolveRuntime(cwd))} ${_decimalPhase} to break down)\n`;
+    let updatedContent;
 
-    // Insert after the target phase section
-    const headerPattern = new RegExp(`(#{2,4}\\s*Phase\\s+${afterPhaseEscaped}:[^\\n]*\\n)`, 'i');
-    const headerMatch = rawContent.match(headerPattern);
-    if (!headerMatch) {
-      error(`Could not find Phase ${afterPhase} header`);
-    }
+    if (isBulletStyle) {
+      // #3815: Insert in checked-bullet format, mirroring the style of the
+      // surrounding entries.  Detect whether the matched bullet uses bold
+      // (`**Phase N: …**`) to preserve file-internal format consistency.
+      const boldBulletPattern = new RegExp(
+        `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+${afterPhaseEscaped}:`,
+        'i',
+      );
+      const useBold = boldBulletPattern.test(content);
+      const phaseLabel = useBold
+        ? `**Phase ${_decimalPhase}: ${description}**`
+        : `Phase ${_decimalPhase}: ${description}`;
+      const bulletEntry = `\n- [ ] ${phaseLabel}`;
 
-    const headerIdx = rawContent.indexOf(headerMatch[0]);
-    const afterHeader = rawContent.slice(headerIdx + headerMatch[0].length);
-    const nextPhaseMatch = afterHeader.match(/\n#{2,4}\s+Phase\s+\d/i);
+      // Locate the target bullet line in the raw content
+      const targetBulletPattern = new RegExp(
+        `(-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+${afterPhaseEscaped}[:\\s][^\\n]*)`,
+        'i',
+      );
+      const bulletMatchResult = rawContent.match(targetBulletPattern);
+      if (!bulletMatchResult) {
+        error(`Could not find Phase ${afterPhase} bullet line`);
+      }
 
-    let insertIdx;
-    if (nextPhaseMatch) {
-      insertIdx = headerIdx + headerMatch[0].length + nextPhaseMatch.index;
+      const bulletLineEnd = rawContent.indexOf(bulletMatchResult[0]) + bulletMatchResult[0].length;
+      const afterBullet = rawContent.slice(bulletLineEnd);
+      const nextBulletMatch = afterBullet.match(/\n-\s*\[[ x]\]\s*(?:\*\*)?Phase\s+\d/i);
+
+      let insertIdx;
+      if (nextBulletMatch) {
+        insertIdx = bulletLineEnd + nextBulletMatch.index;
+      } else {
+        insertIdx = bulletLineEnd;
+      }
+
+      updatedContent = rawContent.slice(0, insertIdx) + bulletEntry + rawContent.slice(insertIdx);
     } else {
-      insertIdx = rawContent.length;
+      // Heading-style insert (original path)
+      // Build phase entry
+      const phaseEntry = `\n### Phase ${_decimalPhase}: ${description} (INSERTED)\n\n**Goal:** [Urgent work - to be planned]\n**Requirements**: TBD\n**Depends on:** Phase ${afterPhase}\n**Plans:** 0 plans\n\nPlans:\n- [ ] TBD (run ${formatGsdSlash('plan-phase', resolveRuntime(cwd))} ${_decimalPhase} to break down)\n`;
+
+      // Insert after the target phase section
+      const headerPattern = new RegExp(`(#{2,4}\\s*Phase\\s+${afterPhaseEscaped}:[^\\n]*\\n)`, 'i');
+      const headerMatch = rawContent.match(headerPattern);
+      if (!headerMatch) {
+        error(`Could not find Phase ${afterPhase} header`);
+      }
+
+      const headerIdx = rawContent.indexOf(headerMatch[0]);
+      const afterHeader = rawContent.slice(headerIdx + headerMatch[0].length);
+      const nextPhaseMatch = afterHeader.match(/\n#{2,4}\s+Phase\s+\d/i);
+
+      let insertIdx;
+      if (nextPhaseMatch) {
+        insertIdx = headerIdx + headerMatch[0].length + nextPhaseMatch.index;
+      } else {
+        insertIdx = rawContent.length;
+      }
+
+      updatedContent = rawContent.slice(0, insertIdx) + phaseEntry + rawContent.slice(insertIdx);
     }
 
-    const updatedContent = rawContent.slice(0, insertIdx) + phaseEntry + rawContent.slice(insertIdx);
     platformWriteSync(roadmapPath, updatedContent);
     return { decimalPhase: _decimalPhase, dirName: _dirName };
   });
