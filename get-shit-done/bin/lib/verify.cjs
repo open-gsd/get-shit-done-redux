@@ -594,6 +594,16 @@ function cmdValidateConsistency(cwd, raw) {
   output({ passed, errors, warnings, warning_count: warnings.length }, raw, passed ? 'passed' : 'failed');
 }
 
+/**
+ * Canonical plan stem used for PLAN/SUMMARY matching.
+ * Mirrors canonicalPlanStem in sdk/src/query/validate.ts (#3479 / #3806).
+ * Example: `68-01-scaffolding` -> `68-01`.
+ */
+function canonicalPlanStem(stem) {
+  const m = stem.match(/^(\d+[A-Z]?(?:\.\d+)*-\d+)/i);
+  return m ? m[1] : stem;
+}
+
 function cmdValidateHealth(cwd, options, raw) {
   // Guard: detect if CWD is the home directory (likely accidental)
   const resolved = path.resolve(cwd);
@@ -776,7 +786,7 @@ function cmdValidateHealth(cwd, options, raw) {
 
   // ─── Check 6: Phase directory naming (NN-name format) ─────────────────────
   for (const e of phaseDirEntries) {
-    if (!e.name.match(/^\d{2}(?:\.\d+)*-[\w-]+$/)) {
+    if (!e.name.match(/^\d{2,}(?:\.\d+)*-[\w-]+$/)) {
       addIssue('warning', 'W005', `Phase directory "${e.name}" doesn't follow NN-name format`, 'Rename to match pattern (e.g., 01-setup)');
     }
   }
@@ -786,11 +796,17 @@ function cmdValidateHealth(cwd, options, raw) {
     const phaseFiles = phaseDirFiles.get(e.name) || [];
     const plans = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md');
     const summaries = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
-    const summaryBases = new Set(summaries.map(s => s.replace('-SUMMARY.md', '').replace('SUMMARY.md', '')));
+    const summaryBases = new Set();
+    for (const s of summaries) {
+      const summaryBase = s.replace('-SUMMARY.md', '').replace('SUMMARY.md', '');
+      summaryBases.add(summaryBase);
+      summaryBases.add(canonicalPlanStem(summaryBase));
+    }
 
     for (const plan of plans) {
       const planBase = plan.replace('-PLAN.md', '').replace('PLAN.md', '');
-      if (!summaryBases.has(planBase)) {
+      const canonicalBase = canonicalPlanStem(planBase);
+      if (!summaryBases.has(planBase) && !summaryBases.has(canonicalBase)) {
         addIssue('info', 'I001', `${e.name}/${plan} has no SUMMARY.md`, 'May be in progress');
       }
     }
@@ -831,12 +847,13 @@ function cmdValidateHealth(cwd, options, raw) {
   } catch { /* intentionally empty — agent check is non-blocking */ }
 
   // ─── Check 8: Run existing consistency checks ─────────────────────────────
-  // Inline subset of cmdValidateConsistency. Note: unlike Check 4 (W002),
-  // this check intentionally filters ROADMAP.md through extractCurrentMilestone
-  // first — shipped milestones (whether collapsed in <details> or not) are
-  // stripped before the heading scan, so archived phase numbers never reach
-  // `roadmapPhases` and W006/W007 cannot fire for them. That is why the
-  // #3652 archive-union added to Check 4 is NOT mirrored here.
+  // Inline subset of cmdValidateConsistency. Unlike Check 4 (W002), this
+  // check filters ROADMAP.md through extractCurrentMilestone first — shipped
+  // milestones are stripped before the heading scan. However, a phase can
+  // appear in the CURRENT milestone AND have its directory inside a milestone
+  // archive (completed + archived). forEachArchivedPhaseToken is therefore
+  // called below to add archived dirs to diskPhases so W006 does not fire
+  // for them. (#3652, #3806)
   if (fs.existsSync(roadmapPath)) {
     const roadmapContentRaw = fs.readFileSync(roadmapPath, 'utf-8');
     const roadmapContent = extractCurrentMilestone(roadmapContentRaw, cwd);
@@ -848,6 +865,10 @@ function cmdValidateHealth(cwd, options, raw) {
     }
 
     const diskPhases = collectDiskPhases(planBase);
+    // Include archived milestone phase directories as valid on-disk locations.
+    // Mirrors forEachArchivedPhaseToken call in sdk/src/query/validate.ts
+    // Check 8. (#3806)
+    forEachArchivedPhaseToken(planBase, (token) => diskPhases.add(token));
 
     // Build a set of phases explicitly marked not-yet-started in the ROADMAP
     // summary list (- [ ] **Phase N:**). These phases are intentionally absent
