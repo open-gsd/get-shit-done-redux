@@ -35,12 +35,12 @@
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
           { "context": "lint-tests" },
-          { "context": "test (22, ubuntu-latest)" },
-          { "context": "test (22, macos-latest)" },
-          { "context": "test (22, windows-latest)" },
-          { "context": "test (24, ubuntu-latest)" },
-          { "context": "test (24, macos-latest)" },
-          { "context": "test (24, windows-latest)" },
+          { "context": "test (ubuntu-latest, 22)" },
+          { "context": "test (macos-latest, 22)" },
+          { "context": "test (windows-latest, 22)" },
+          { "context": "test (ubuntu-latest, 24)" },
+          { "context": "test (macos-latest, 24)" },
+          { "context": "test (windows-latest, 24)" },
           { "context": "Changeset Required" },
           { "context": "require-issue-link" },
           { "context": "pr-template-format" }
