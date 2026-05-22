@@ -109,27 +109,31 @@ export function detectRuntime(config?: { runtime?: unknown }): Runtime {
  *
  * Precedence:
  *   1. `GSD_AGENTS_DIR` — explicit SDK override (wins over runtime selection)
- *   2. `<getRuntimeConfigDir(runtime)>/agents` — installer-parity default (when the dir exists)
- *   3. `<projectDir>/.claude/agents` — repo-local fallback for `--local` Claude installs
- *      (only probed when the global runtime dir is absent or empty, and `projectDir` is given)
+ *   2. `<projectDir>/.claude/agents` — project-local install (Claude Code `--local`,
+ *      `npx get-shit-done-cc@latest`); checked first to match Claude Code's own
+ *      local-first agent resolution at spawn (#3799)
+ *   3. `<getRuntimeConfigDir(runtime)>/agents` — global installer-parity default
  *
  * Defaults to Claude when no runtime is passed, matching prior behavior
  * (see `init-runner.ts`, which is Claude-only by design).
  *
- * The repo-local fallback was added for bug #3751: Claude Code `--local` installs
- * place agent definitions under `./.claude/agents` rather than `~/.claude/agents`,
- * but the SDK agent-detection path only probed the global directory.
+ * Local-first resolution was introduced for bug #3799: when both a project-local
+ * `.claude/agents/` and a global `~/.claude/agents/` exist (the global may be
+ * auto-created empty by Claude Code), the SDK must resolve to the project-local
+ * directory to match where the agents are actually installed.
+ *
+ * The repo-local fallback itself was added for bug #3751.
  */
 export function resolveAgentsDir(runtime: Runtime = 'claude', projectDir?: string): string {
   if (process.env.GSD_AGENTS_DIR) return process.env.GSD_AGENTS_DIR;
-  const globalDir = join(getRuntimeConfigDir(runtime), 'agents');
-  if (existsSync(globalDir)) return globalDir;
-  // Repo-local fallback: <projectDir>/.claude/agents for --local Claude installs (#3751).
+  // Project-local first: <projectDir>/.claude/agents for --local / npx installs (#3799).
   // Only applicable when a projectDir is known; other runtimes don't use .claude/.
   if (projectDir && runtime === 'claude') {
     const localDir = join(projectDir, '.claude', 'agents');
     if (existsSync(localDir)) return localDir;
   }
+  const globalDir = join(getRuntimeConfigDir(runtime), 'agents');
+  if (existsSync(globalDir)) return globalDir;
   return globalDir;
 }
 

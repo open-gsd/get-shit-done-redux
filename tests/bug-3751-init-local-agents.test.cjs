@@ -74,11 +74,12 @@ describe('#3751: resolveAgentsDir() repo-local fallback — structural contracts
     );
   });
 
-  // ─── Contract 3: global takes precedence over repo-local ────────────────
-  test('resolveAgentsDir checks global path BEFORE repo-local path', () => {
-    // The function must return the global path when it exists (non-empty)
-    // Verified structurally: global resolution (getRuntimeConfigDir) must appear
-    // before the repo-local fallback reference in the function body.
+  // ─── Contract 3: local takes precedence over global (#3799) ────────────
+  // Supersedes the original #3751 "global-first" contract. Claude Code resolves
+  // agents local-first at spawn; the SDK must mirror that ordering so a project-
+  // local install with agents in <projectDir>/.claude/agents always wins over an
+  // empty or stale global ~/.claude/agents directory.
+  test('resolveAgentsDir checks project-local path BEFORE global path (#3799)', () => {
     const fnStart = helpersTs.indexOf('export function resolveAgentsDir');
     const fnEnd = helpersTs.indexOf('\nexport function', fnStart + 1);
     const fnBody = helpersTs.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
@@ -86,11 +87,15 @@ describe('#3751: resolveAgentsDir() repo-local fallback — structural contracts
     const localIdx = fnBody.search(/projectDir.*claude|\.claude.*projectDir/);
     assert.ok(
       globalIdx !== -1,
-      'resolveAgentsDir must still call getRuntimeConfigDir for the global path (#3751)',
+      'resolveAgentsDir must still call getRuntimeConfigDir for the global path (#3799)',
     );
     assert.ok(
-      localIdx === -1 || globalIdx < localIdx,
-      'global path resolution must appear before repo-local fallback in resolveAgentsDir (#3751)',
+      localIdx !== -1,
+      'resolveAgentsDir must reference the project-local path (#3799)',
+    );
+    assert.ok(
+      localIdx < globalIdx,
+      'project-local path check must appear BEFORE global path in resolveAgentsDir — local-first matches Claude Code agent resolution (#3799)',
     );
   });
 
@@ -253,5 +258,200 @@ describe('#3751: resolveAgentsDir() repo-local fallback — runtime behaviour', 
       !fnBody.match(/throw\s+new\s+Error.*agents/),
       'resolveAgentsDir must NOT throw when agents dirs are absent (#3751)',
     );
+  });
+});
+
+// ─── #3799: local-first resolution when both local and global dirs exist ─────
+//
+// Bug: with a project-local install (agents in <project>/.claude/agents) and an
+// empty or stale global ~/.claude/agents, the SDK reported agents_installed: false
+// because global-first resolution returned the empty global dir before probing local.
+//
+// Fix contract: resolveAgentsDir must check <projectDir>/.claude/agents BEFORE
+// the global runtime dir. This mirrors Claude Code's own local-first agent
+// resolution at spawn time.
+
+describe('#3799: resolveAgentsDir() local-first resolution — structural contracts', () => {
+  // ─── Contract A: local-first ordering in function body ──────────────────
+  test('resolveAgentsDir function body checks project-local .claude/agents before global dir (#3799)', () => {
+    const fnStart = helpersTs.indexOf('export function resolveAgentsDir');
+    const fnEnd = helpersTs.indexOf('\nexport function', fnStart + 1);
+    const fnBody = helpersTs.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+
+    // Both references must exist
+    const globalIdx = fnBody.indexOf('getRuntimeConfigDir');
+    const localIdx = fnBody.search(/join\([^)]*projectDir[^)]*['".]claude['"]|join\([^)]*projectDir[^)]*\.claude|projectDir.*\.claude.*agents|\.claude.*agents.*projectDir/);
+
+    assert.ok(globalIdx !== -1, 'resolveAgentsDir must still call getRuntimeConfigDir (#3799)');
+    assert.ok(localIdx !== -1, 'resolveAgentsDir must reference project-local path (#3799)');
+    assert.ok(
+      localIdx < globalIdx,
+      `project-local path (idx ${localIdx}) must appear before global path (idx ${globalIdx}) in resolveAgentsDir — local-first matches Claude Code resolution (#3799)`,
+    );
+  });
+
+  // ─── Contract B: GSD_AGENTS_DIR still short-circuits both ───────────────
+  test('GSD_AGENTS_DIR still appears before both local and global checks (#3799)', () => {
+    const fnStart = helpersTs.indexOf('export function resolveAgentsDir');
+    const fnEnd = helpersTs.indexOf('\nexport function', fnStart + 1);
+    const fnBody = helpersTs.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+
+    const envIdx = fnBody.indexOf('GSD_AGENTS_DIR');
+    const localIdx = fnBody.search(/join\([^)]*projectDir[^)]*['".]claude['"]|join\([^)]*projectDir[^)]*\.claude/);
+    const globalIdx = fnBody.indexOf('getRuntimeConfigDir');
+
+    assert.ok(envIdx !== -1, 'GSD_AGENTS_DIR check must still be present (#3799)');
+    assert.ok(envIdx < localIdx || localIdx === -1, 'GSD_AGENTS_DIR must appear before local path check (#3799)');
+    assert.ok(envIdx < globalIdx, 'GSD_AGENTS_DIR must appear before global path check (#3799)');
+  });
+});
+
+describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour', () => {
+  let tmpDir;
+  let savedEnv;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3799-'));
+    savedEnv = {
+      GSD_AGENTS_DIR: process.env.GSD_AGENTS_DIR,
+      CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
+    };
+    delete process.env.GSD_AGENTS_DIR;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (savedEnv.GSD_AGENTS_DIR !== undefined) process.env.GSD_AGENTS_DIR = savedEnv.GSD_AGENTS_DIR;
+    else delete process.env.GSD_AGENTS_DIR;
+    if (savedEnv.CLAUDE_CONFIG_DIR !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv.CLAUDE_CONFIG_DIR;
+    else delete process.env.CLAUDE_CONFIG_DIR;
+  });
+
+  const { runGsdTools } = require('./helpers.cjs');
+
+  /**
+   * RED test (local wins over empty global): When the project has .claude/agents
+   * populated and the global dir exists but is EMPTY, the SDK must resolve to the
+   * local dir and report agents_installed: true.
+   *
+   * This is the canonical #3799 scenario: npx install puts agents in project-local,
+   * but Claude auto-creates an empty ~/.claude/agents at startup — old global-first
+   * code picked up the empty global dir and reported false.
+   */
+  test('reports agents_installed: true when local .claude/agents has agents and global dir is empty (#3799)', () => {
+    // Set up fake global config dir WITH an empty agents/ subdir
+    const fakeGlobalConfig = path.join(tmpDir, 'fake-global-claude');
+    const fakeGlobalAgents = path.join(fakeGlobalConfig, 'agents');
+    fs.mkdirSync(fakeGlobalAgents, { recursive: true });
+    // global agents/ exists but is EMPTY — simulates Claude auto-creating the dir
+    process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
+
+    // Set up project-local .claude/agents with a GSD agent definition
+    const repoRoot = path.join(tmpDir, 'repo');
+    const repoLocalAgentsDir = path.join(repoRoot, '.claude', 'agents');
+    fs.mkdirSync(repoLocalAgentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoLocalAgentsDir, 'gsd-project-researcher.md'),
+      '---\nname: gsd-project-researcher\ndescription: test\ntools: Read\n---\nAgent content.\n',
+    );
+
+    const result = runGsdTools(
+      ['query', 'init.new-project', '--raw'],
+      repoRoot,
+      {
+        CLAUDE_CONFIG_DIR: fakeGlobalConfig,
+      },
+    );
+
+    if (result.success) {
+      let parsed;
+      try { parsed = JSON.parse(result.output); } catch { return; }
+      if (parsed && typeof parsed.agents_dir !== 'undefined') {
+        // agents_dir must point to the local dir, not the empty global dir
+        assert.strictEqual(
+          parsed.agents_dir,
+          repoLocalAgentsDir,
+          `agents_dir must resolve to project-local path, got: ${parsed.agents_dir} (#3799)`,
+        );
+      }
+    }
+    // Structural contract (Contract A above) is the authoritative RED gate when
+    // gsd-tools query is not available.
+  });
+
+  /**
+   * Global-only regression: when no project-local .claude/agents exists but a
+   * populated global dir does, the global dir must still be used (no regression).
+   */
+  test('global-only install: resolves to global dir when no project-local .claude/agents (#3799 no-regression)', () => {
+    const fakeGlobalConfig = path.join(tmpDir, 'fake-global-claude-populated');
+    const fakeGlobalAgents = path.join(fakeGlobalConfig, 'agents');
+    fs.mkdirSync(fakeGlobalAgents, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeGlobalAgents, 'gsd-project-researcher.md'),
+      '---\nname: gsd-project-researcher\n---\n',
+    );
+    process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
+
+    // Repo with NO .claude/agents
+    const repoRoot = path.join(tmpDir, 'repo-global-only');
+    fs.mkdirSync(repoRoot, { recursive: true });
+
+    const result = runGsdTools(
+      ['query', 'init.new-project', '--raw'],
+      repoRoot,
+      {
+        CLAUDE_CONFIG_DIR: fakeGlobalConfig,
+      },
+    );
+
+    if (result.success) {
+      let parsed;
+      try { parsed = JSON.parse(result.output); } catch { return; }
+      if (parsed && typeof parsed.agents_dir !== 'undefined') {
+        assert.strictEqual(
+          parsed.agents_dir,
+          fakeGlobalAgents,
+          `agents_dir must resolve to global path when no local dir exists, got: ${parsed.agents_dir} (#3799)`,
+        );
+      }
+    }
+    // Structural contracts provide the authoritative gate when gsd-tools is unavailable.
+  });
+
+  /**
+   * Both local and global populated: local wins (Claude Code parity).
+   */
+  test('local wins over populated global when both .claude/agents dirs exist (#3799)', () => {
+    const fakeGlobalConfig = path.join(tmpDir, 'fake-global-both');
+    const fakeGlobalAgents = path.join(fakeGlobalConfig, 'agents');
+    fs.mkdirSync(fakeGlobalAgents, { recursive: true });
+    fs.writeFileSync(path.join(fakeGlobalAgents, 'gsd-project-researcher.md'), '# global agent\n');
+    process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
+
+    const repoRoot = path.join(tmpDir, 'repo-both');
+    const repoLocalAgentsDir = path.join(repoRoot, '.claude', 'agents');
+    fs.mkdirSync(repoLocalAgentsDir, { recursive: true });
+    fs.writeFileSync(path.join(repoLocalAgentsDir, 'gsd-project-researcher.md'), '# local agent\n');
+
+    const result = runGsdTools(
+      ['query', 'init.new-project', '--raw'],
+      repoRoot,
+      {
+        CLAUDE_CONFIG_DIR: fakeGlobalConfig,
+      },
+    );
+
+    if (result.success) {
+      let parsed;
+      try { parsed = JSON.parse(result.output); } catch { return; }
+      if (parsed && typeof parsed.agents_dir !== 'undefined') {
+        assert.strictEqual(
+          parsed.agents_dir,
+          repoLocalAgentsDir,
+          `agents_dir must resolve to local path when both exist, got: ${parsed.agents_dir} (#3799)`,
+        );
+      }
+    }
   });
 });
