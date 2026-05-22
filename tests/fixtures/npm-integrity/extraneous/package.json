@@ -1,0 +1,7 @@
+{
+  "name": "integrity-test-extraneous",
+  "version": "1.0.0",
+  "dependencies": {
+    "legit-dep": "1.0.0"
+  }
+}

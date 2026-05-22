@@ -1,0 +1,7 @@
+{
+  "name": "integrity-test-missing",
+  "version": "1.0.0",
+  "dependencies": {
+    "absent-dep": "5.1.0"
+  }
+}

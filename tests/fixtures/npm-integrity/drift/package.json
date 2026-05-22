@@ -1,0 +1,7 @@
+{
+  "name": "integrity-test-drift",
+  "version": "1.0.0",
+  "dependencies": {
+    "stable-dep": "8.20.1"
+  }
+}

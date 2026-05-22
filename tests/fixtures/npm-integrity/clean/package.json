@@ -1,0 +1,7 @@
+{
+  "name": "integrity-test-clean",
+  "version": "1.0.0",
+  "dependencies": {
+    "stable-dep": "2.3.1"
+  }
+}
