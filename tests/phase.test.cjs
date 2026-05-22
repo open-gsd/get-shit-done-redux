@@ -1357,13 +1357,20 @@ describe('phase insert command', () => {
   });
 
   test('reports actionable error for summary-only placeholder phase without detail section (#3098)', () => {
+    // #3098: a hybrid ROADMAP that has heading-style phases for some phases
+    // but only a bullet summary entry for phase 5 (the detail section is
+    // missing).  Insert must fail with "missing a detail section" rather than
+    // silently inserting in bullet-style — because the surrounding ROADMAP
+    // uses headings, so the absent `### Phase 5:` is a genuine omission.
+    // (Compare with the #3815 case below: a purely bullet-style ROADMAP that
+    // has NO heading-style phases at all is valid and insert should succeed.)
     fs.writeFileSync(
       path.join(tmpDir, '.planning', 'ROADMAP.md'),
-      `# Roadmap\n\n- [ ] **Phase 5: Placeholder**\n`
+      `# Roadmap\n\n### Phase 4: Foundation\n**Goal:** Setup\n\n- [ ] **Phase 5: Placeholder**\n`
     );
 
     const result = runGsdTools('phase insert 5 Hotfix', tmpDir);
-    assert.ok(!result.success, 'should fail when phase is summary-only placeholder');
+    assert.ok(!result.success, 'should fail when phase is summary-only placeholder in a heading-style ROADMAP');
     assert.ok(result.error.includes('missing a detail section'));
   });
 

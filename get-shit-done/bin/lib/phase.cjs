@@ -764,21 +764,28 @@ function cmdPhaseInsert(cwd, afterPhase, description, raw) {
     // #3815: also recognise the checked-bullet phase format used by projects
     // that list phases as `- [ ] **Phase N: name**` or `- [ ] Phase N: name`
     // (both bold and plain variants).  Mirrors phaseRemove / phaseComplete.
+    //
+    // Bullet-style only activates when there are NO heading-style phases in the
+    // milestone content.  A bullet entry in a hybrid (headings + bullets) ROADMAP
+    // means the detail section is missing — that is the #3098 case and must keep
+    // producing the "missing a detail section" error.
     const bulletPattern = new RegExp(
       `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+${afterPhaseEscaped}[:\\s]`,
       'i',
     );
-    const isBulletStyle = !headingMatch && bulletPattern.test(content);
+    const anyHeadingPattern = /#{2,4}\s*Phase\s+\d/i;
+    const roadmapHasHeadingPhases = anyHeadingPattern.test(content);
+    const isBulletStyle = !headingMatch && bulletPattern.test(content) && !roadmapHasHeadingPhases;
 
     if (!headingMatch && !isBulletStyle) {
-      // Bug #3098 parity: when only the bold-summary checklist exists for this
-      // phase (no `### Phase N:` detail section), point the user at the missing
-      // detail section rather than implying the phase is absent.
-      const boldChecklistPattern = new RegExp(
-        `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+${afterPhaseEscaped}:`,
+      // Bug #3098 parity: when the ROADMAP uses heading-style phases and only
+      // the summary checklist exists for this phase (no `### Phase N:` detail
+      // section), point the user at the missing detail section.
+      const checklistPattern = new RegExp(
+        `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+${afterPhaseEscaped}[:\\s]`,
         'i',
       );
-      if (boldChecklistPattern.test(content)) {
+      if (checklistPattern.test(content)) {
         error(`Phase ${afterPhase} exists in roadmap summary but is missing a detail section (### Phase ${afterPhase}: ...).`);
       }
       error(`Phase ${afterPhase} not found in ROADMAP.md`);

@@ -415,23 +415,31 @@ export const phaseInsert: QueryHandler = async (args, projectDir, workstream) =>
     // that list phases as `- [ ] **Phase N: name**` or `- [ ] Phase N: name`
     // (both bold and plain variants).  This mirrors the patterns already used
     // by phaseRemove / phaseComplete so insert is consistent with its siblings.
+    //
+    // Bullet-style is only used when there are NO heading-style phases at all in
+    // the milestone content.  If the ROADMAP mixes headings + bullets (hybrid
+    // format), a bullet-only match means the detail section is missing — that
+    // is the #3098 case and must continue to produce the "missing a detail
+    // section" error.  Only a purely bullet-style ROADMAP (zero heading-style
+    // phase entries in the milestone) goes through the bullet insert path.
     const bulletPattern = new RegExp(
       `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+0*${afterPhaseEscaped}[:\\s]`,
       'i',
     );
-    const isBulletStyle = !headingMatch && bulletPattern.test(content);
+    const anyHeadingPattern = /#{2,4}\s*Phase\s+\d/i;
+    const roadmapHasHeadingPhases = anyHeadingPattern.test(content);
+    const isBulletStyle = !headingMatch && bulletPattern.test(content) && !roadmapHasHeadingPhases;
 
     if (!headingMatch && !isBulletStyle) {
-      // Bug #3098 parity: when only the bold-summary checklist exists for this
-      // phase (no `### Phase N:` detail section), point the user at the
-      // missing detail section rather than implying the phase is absent.
-      // The bold-summary pattern is a subset of bulletPattern, so we check
-      // whether the bold form specifically matches to decide which error to emit.
-      const boldChecklistPattern = new RegExp(
-        `-\\s*\\[[ x]\\]\\s*\\*\\*Phase\\s+0*${afterPhaseEscaped}:`,
+      // Bug #3098 parity: when the ROADMAP uses heading-style phases and only
+      // the summary checklist exists for this phase (no `### Phase N:` detail
+      // section), point the user at the missing detail section rather than
+      // implying the phase is absent.
+      const checklistPattern = new RegExp(
+        `-\\s*\\[[ x]\\]\\s*(?:\\*\\*)?Phase\\s+0*${afterPhaseEscaped}[:\\s]`,
         'i',
       );
-      if (boldChecklistPattern.test(content)) {
+      if (checklistPattern.test(content)) {
         throw new GSDError(
           `Phase ${afterPhase} exists in roadmap summary but is missing a detail section (### Phase ${afterPhase}: ...).`,
           ErrorClassification.Validation,

@@ -706,6 +706,20 @@ describe('phaseInsert', () => {
     await expect(phaseInsert([], tmpDir)).rejects.toThrow('after-phase and description required');
   });
 
+  it('#3098 preserved: throws when bullet-only entry in a heading-style ROADMAP (hybrid = missing detail section)', async () => {
+    // A hybrid ROADMAP: phase 9 has a heading but phase 10 only has a bullet
+    // summary entry.  Insert must still reject with "missing a detail section"
+    // because the surrounding ROADMAP uses heading-style phases.
+    const { phaseInsert } = await import('./phase-lifecycle.js');
+    const hybridRoadmap = `# Roadmap\n\n## Current Milestone\n\n### Phase 9: Foundation\n\n- [ ] **Phase 10: Queries**\n`;
+    await setupTestProject(tmpDir, {
+      roadmap: hybridRoadmap,
+      phases: ['09-foundation'],
+    });
+
+    await expect(phaseInsert(['10', 'Hotfix'], tmpDir)).rejects.toThrow('missing a detail section');
+  });
+
   // ─── #3815: checked-bullet ROADMAP format ─────────────────────────────
 
   const BULLET_ONLY_ROADMAP = `# Roadmap
