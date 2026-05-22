@@ -1,7 +1,7 @@
 /**
  * Regression tests for bug #3231.
  *
- * `npx get-shit-done-redux@latest` prints `✓ GSD SDK ready (sdk/dist/cli.js)` on
+ * `npx @opengsd/get-shit-done-redux@latest` prints `✓ GSD SDK ready (sdk/dist/cli.js)` on
  * Linux but no persistent `gsd-sdk` shim is created. Two sub-bugs:
  *
  * 1. Transient npx PATH + null login-shell PATH → false success
@@ -244,7 +244,7 @@ describe('bug #3231: stale legacy symlink to deprecated gsd-tools.cjs',
       modernFile,
       [
         '#!/usr/bin/env node',
-        "require('/usr/local/lib/node_modules/get-shit-done-redux/bin/gsd-sdk.js');",
+        "require('/usr/local/lib/node_modules/@opengsd/get-shit-done-redux/bin/gsd-sdk.js');",
         '',
       ].join('\n'),
     );

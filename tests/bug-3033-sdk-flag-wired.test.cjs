@@ -2,7 +2,7 @@
  * Regression test for #3033: --sdk flag parsed but never used.
  *
  * `hasSdk` was set in bin/install.js but never passed to `installSdkIfNeeded`,
- * so `npx get-shit-done-redux@latest --sdk` produced a misleading "✓ GSD SDK ready"
+ * so `npx @opengsd/get-shit-done-redux@latest --sdk` produced a misleading "✓ GSD SDK ready"
  * message while still silently skipping SDK deployment for local installs.
  *
  * Fix: `installSdkIfNeeded` now accepts `opts.forceSdk`. When true, the

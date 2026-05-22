@@ -18,7 +18,7 @@ Display the complete GSD command reference. Output ONLY the reference content. D
 GSD evolves fast. Update periodically:
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 ## Core Workflow

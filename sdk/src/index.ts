@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { GSD } from '@gsd-redux/sdk';
+ * import { GSD } from '@opengsd/gsd-sdk';
  *
  * const gsd = new GSD({ projectDir: '/path/to/project' });
  * const result = await gsd.executePlan('.planning/phases/01-auth/01-auth-01-PLAN.md');

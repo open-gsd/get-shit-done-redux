@@ -78,14 +78,14 @@ const SMOKE = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /**
- * Locate the lib/node_modules/get-shit-done-redux package root inside an
- * npm --prefix install directory.
+ * Locate the lib/node_modules/@opengsd/get-shit-done-redux package root inside
+ * an npm --prefix install directory.
  */
 function pkgRoot(installPrefix) {
-  // POSIX: <prefix>/lib/node_modules/get-shit-done-redux
-  // Windows: <prefix>/node_modules/get-shit-done-redux
-  const posix = path.join(installPrefix, 'lib', 'node_modules', 'get-shit-done-redux');
-  const win = path.join(installPrefix, 'node_modules', 'get-shit-done-redux');
+  // POSIX: <prefix>/lib/node_modules/@opengsd/get-shit-done-redux
+  // Windows: <prefix>/node_modules/@opengsd/get-shit-done-redux
+  const posix = path.join(installPrefix, 'lib', 'node_modules', '@opengsd', 'get-shit-done-redux');
+  const win = path.join(installPrefix, 'node_modules', '@opengsd', 'get-shit-done-redux');
   return fs.existsSync(posix) ? posix : win;
 }
 

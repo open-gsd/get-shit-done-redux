@@ -3,7 +3,7 @@
 Hotfix release. Published to npm under the `latest` tag.
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 ---
@@ -11,7 +11,7 @@ npx get-shit-done-redux@latest
 ## What's in this release
 
 1.42.3 is a stability hotfix on top of 1.42.2. The headline is **Codex
-CLI 0.130.0 install routability** — after `npx get-shit-done-redux@latest
+CLI 0.130.0 install routability** — after `npx @opengsd/get-shit-done-redux@latest
 --codex`, `$gsd-*` skills now resolve correctly under Codex 0.130.0 and
 later, where the previous build left users with zero routable
 entrypoints. The release also ships **runtime-aware slash formatting**
@@ -136,13 +136,13 @@ SDK install readiness, and decimal-phase dependencies.
 
 ```bash
 # npm (global)
-npm install -g get-shit-done-redux@latest
+npm install -g @opengsd/get-shit-done-redux@latest
 
 # npx (one-shot)
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 
 # Pin to this exact version
-npm install -g get-shit-done-redux@1.42.3
+npm install -g @opengsd/get-shit-done-redux@1.42.3
 ```
 
 The installer is idempotent — re-running on an existing install

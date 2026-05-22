@@ -3,7 +3,7 @@
 Pre-release candidate. Published to npm under the `next` tag.
 
 ```bash
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 ---
@@ -112,16 +112,16 @@ and nine additional correctness fixes across OpenCode, Codex, and Gemini runtime
 
 ```bash
 # npm
-npm install -g get-shit-done-redux@next
+npm install -g @opengsd/get-shit-done-redux@next
 
 # npx (one-shot)
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 To pin to this exact RC:
 
 ```bash
-npm install -g get-shit-done-redux@1.40.0-rc.1
+npm install -g @opengsd/get-shit-done-redux@1.40.0-rc.1
 ```
 
 ---

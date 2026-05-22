@@ -8,7 +8,7 @@
  * Result: the published tarball had no `sdk/dist/cli.js`. The `gsd-sdk`
  * bin shim in `bin/gsd-sdk.js` resolves `<pkg>/sdk/dist/cli.js`, which
  * didn't exist, so PATH fell through to the separately installed
- * `@gsd-redux/sdk@0.1.0` (predates the `query` subcommand).
+ * `@opengsd/gsd-sdk@0.1.0` (predates the `query` subcommand).
  *
  * Every `gsd-sdk query <noun>` call in workflow docs thus failed on
  * fresh installs of 1.38.3.

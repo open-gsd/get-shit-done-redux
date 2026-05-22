@@ -17,9 +17,9 @@
 >
 > | | Before | After |
 > |---|---|---|
-> | GitHub | `gsd-build/get-shit-done` | `GSD-redux/get-shit-done-redux` |
-> | npm (main) | `get-shit-done-cc` | `get-shit-done-redux` |
-> | npm (sdk) | `@gsd-build/sdk` | `@gsd-redux/sdk` |
+> | GitHub | `gsd-build/get-shit-done` | `open-gsd/get-shit-done-redux` |
+> | npm (main) | `get-shit-done-cc` → `get-shit-done-redux` | `@opengsd/get-shit-done-redux` |
+> | npm (sdk) | `@gsd-build/sdk` → `@gsd-redux/sdk` | `@opengsd/gsd-sdk` |
 > | Issue numbers | per source | renumbered; original is in body as `[from gsd-build/get-shit-done#N]` |
 >
 > If you can reach the original maintainer, please open an issue here and CC them. If you have technical evidence that materially changes the picture above, please share it in an issue.
@@ -38,8 +38,8 @@
 
 **Solves context rot — the quality degradation that happens as your AI fills its context window.**
 
-[![npm version](https://img.shields.io/npm/v/get-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-redux)
-[![npm downloads](https://img.shields.io/npm/dm/get-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-redux)
+[![npm version](https://img.shields.io/npm/v/%40opengsd%2Fget-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@opengsd/get-shit-done-redux)
+[![npm downloads](https://img.shields.io/npm/dm/%40opengsd%2Fget-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@opengsd/get-shit-done-redux)
 [![Tests](https://img.shields.io/github/actions/workflow/status/open-gsd/get-shit-done-redux/test.yml?branch=main&style=for-the-badge&logo=github&label=Tests)](https://github.com/open-gsd/get-shit-done-redux/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/mYgfVNfA2r)
 [![GitHub stars](https://img.shields.io/github/stars/open-gsd/get-shit-done-redux?style=for-the-badge&logo=github&color=181717)](https://github.com/open-gsd/get-shit-done-redux)
@@ -48,7 +48,7 @@
 <br>
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 **Works on Mac, Windows, and Linux.**
@@ -159,7 +159,7 @@ Loop discuss → plan → execute → verify → ship until the milestone is don
 ## Getting Started
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 The installer prompts for your runtime (Claude Code, OpenCode, Gemini CLI, Kilo, Codex, Copilot, Cursor, Windsurf, and more) and whether to install globally or locally.
@@ -254,12 +254,12 @@ For the full configuration reference — all settings, git branching strategies,
 
 **Something broken?** Re-run the installer — it's idempotent:
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 **Containers or Docker?** Set `CLAUDE_CONFIG_DIR` before installing to avoid tilde-expansion issues:
 ```bash
-CLAUDE_CONFIG_DIR=/home/youruser/.claude npx get-shit-done-redux --global
+CLAUDE_CONFIG_DIR=/home/youruser/.claude npx @opengsd/get-shit-done-redux --global
 ```
 
 Full troubleshooting and uninstall instructions in **[docs/USER-GUIDE.md](docs/USER-GUIDE.md#troubleshooting)**.

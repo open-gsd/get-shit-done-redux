@@ -253,9 +253,9 @@ Five-axis story decomposition discipline (**S**pike, **P**aths, **I**nterfaces, 
 `RELEASE-NOTES.STANDARD.heading-level=## for category, ### for subgroup (area), - for bullet`
 `RELEASE-NOTES.STANDARD.bullet-shape=**Bold user-visible change** — explanation of what was broken or what's new, leading with symptom not implementation. Trailing (#NNN) PR ref.`
 `RELEASE-NOTES.STANDARD.subgroups=phase-planning-state | workstream | query-dispatch-cli | code-review | install | capture | docs | architecture | security`
-`RELEASE-NOTES.STANDARD.footer.hotfix=Install/upgrade: \`npx get-shit-done-redux@latest\``
-`RELEASE-NOTES.STANDARD.footer.rc=Install for testing: \`npx get-shit-done-redux@next\` (per branch->dist-tag policy)`
-`RELEASE-NOTES.STANDARD.footer.canary=Install: \`npx get-shit-done-redux@canary\``
+`RELEASE-NOTES.STANDARD.footer.hotfix=Install/upgrade: \`npx @opengsd/get-shit-done-redux@latest\``
+`RELEASE-NOTES.STANDARD.footer.rc=Install for testing: \`npx @opengsd/get-shit-done-redux@next\` (per branch->dist-tag policy)`
+`RELEASE-NOTES.STANDARD.footer.canary=Install: \`npx @opengsd/get-shit-done-redux@canary\``
 `RELEASE-NOTES.STANDARD.footer.full-changelog=**Full Changelog**: https://github.com/open-gsd/get-shit-done-redux/compare/<prev>...<this>`
 `RELEASE-NOTES.STANDARD.intro=optional one-paragraph framing for RC/feature releases; omit for pure-fix hotfixes`
 
@@ -277,8 +277,8 @@ Five-axis story decomposition discipline (**S**pike, **P**aths, **I**nterfaces, 
 `RELEASE-NOTES.EXAMPLE.rc=v1.42.0-rc1 (https://github.com/open-gsd/get-shit-done-redux/releases/tag/v1.42.0-rc1) - intro + Added/Changed/Fixed/Documentation taxonomy`
 `RELEASE-NOTES.EXAMPLE.minor-auto-acceptable=v1.41.0 - kept auto-generated body; many small fixes with clean conventional-commit titles`
 
-`RELEASE-NOTES.TEMPLATE.hotfix=## Fixed\n\n### <subgroup>\n- **<bold change>** — <explanation>. (#<PR>)\n\n---\n\nInstall/upgrade: \`npx get-shit-done-redux@latest\`\n\n**Full Changelog**: <compare-url>`
-`RELEASE-NOTES.TEMPLATE.rc=<one-paragraph intro>\n\n## Added\n### <subgroup>\n- **<change>** — <explanation>. (#<PR>)\n\n## Changed\n### Architecture\n- **<refactor>** — <user-visible benefit>. (#<PR>)\n\n## Fixed\n### <subgroup>\n- **<fix>** — <explanation>. (#<PR>)\n\n## Documentation\n- **<docs change>** — <reason>. (#<PR>)\n\n---\n\nThis is a release candidate. Install for testing:\n\`\`\`bash\nnpx get-shit-done-redux@next\n\`\`\`\n\n**Full Changelog**: <compare-url>`
+`RELEASE-NOTES.TEMPLATE.hotfix=## Fixed\n\n### <subgroup>\n- **<bold change>** — <explanation>. (#<PR>)\n\n---\n\nInstall/upgrade: \`npx @opengsd/get-shit-done-redux@latest\`\n\n**Full Changelog**: <compare-url>`
+`RELEASE-NOTES.TEMPLATE.rc=<one-paragraph intro>\n\n## Added\n### <subgroup>\n- **<change>** — <explanation>. (#<PR>)\n\n## Changed\n### Architecture\n- **<refactor>** — <user-visible benefit>. (#<PR>)\n\n## Fixed\n### <subgroup>\n- **<fix>** — <explanation>. (#<PR>)\n\n## Documentation\n- **<docs change>** — <reason>. (#<PR>)\n\n---\n\nThis is a release candidate. Install for testing:\n\`\`\`bash\nnpx @opengsd/get-shit-done-redux@next\n\`\`\`\n\n**Full Changelog**: <compare-url>`
 
 `RELEASE-NOTES.RELEASE-STREAM.dev-branch=canary dist-tag (only); install via @canary`
 `RELEASE-NOTES.RELEASE-STREAM.main-branch=next (RCs) + latest (stable); install via @next or @latest`
@@ -553,7 +553,7 @@ Migration plan: Phase 1 (#3465) seam additions complete; Phase 2 (#3466) targets
 `DEFECT.STACKED-PR-CANNOT-STAND-ALONE.anti-pattern=blindly running git rebase --onto origin/main on the patch branch — produces "conflicts" that are really "the scaffolding doesn't exist yet"; resolving them means reinventing the upstream PR's contribution, which duplicates work and creates merge hazards. Recognize the shape early via cat-file probe before rebasing`
 
 `DEFECT.CANARY-VERSION-LEAK.symptom=package.json version on main carries a -canary.<N> suffix that per release policy belongs to the dev branch only; nothing publishable depends on the version string at runtime, but every consumer of the version metadata (release flow, install banners, statusline) sees the dev-channel label`
-`DEFECT.CANARY-VERSION-LEAK.examples=2026-05-16 audit found origin/main + origin/feat/3575-enforcement-hardening both at "version": "1.50.0-canary.0" in sdk/package.json AND root package.json; npm view @gsd-redux/sdk versions returned ["0.1.0"] only, dist-tag latest=0.1.0, @1.50.0-canary.0 404 — confirms the string is metadata-only, never published. git log -S '"version": "1.50.0-canary.0"' origin/main blamed commit 2d32ad82 fix(plan-phase)... (#3206), a fix PR that accidentally carried the version bump from a dev-branch base`
+`DEFECT.CANARY-VERSION-LEAK.examples=2026-05-16 audit found origin/main + origin/feat/3575-enforcement-hardening both at "version": "1.50.0-canary.0" in sdk/package.json AND root package.json; npm view @opengsd/gsd-sdk versions returned ["0.1.0"] only, dist-tag latest=0.1.0, @1.50.0-canary.0 404 — confirms the string is metadata-only, never published. git log -S '"version": "1.50.0-canary.0"' origin/main blamed commit 2d32ad82 fix(plan-phase)... (#3206), a fix PR that accidentally carried the version bump from a dev-branch base`
 `DEFECT.CANARY-VERSION-LEAK.detect=jq -r .version package.json sdk/package.json on origin/main shows a -canary suffix; OR npm view <pkg> dist-tags shows latest != main's version`
 `DEFECT.CANARY-VERSION-LEAK.fix-forward=open a chore/* PR against main that resets the version strings to the canonical pre-canary stable; rebase open PRs to pick it up; gate at PR open with a CI check that rejects -canary versions on PRs targeting main`
 `DEFECT.CANARY-VERSION-LEAK.cross-ref=RELEASE-NOTES.RELEASE-STREAM.dev-branch=canary dist-tag (only); this defect is the live counter-example to that rule`

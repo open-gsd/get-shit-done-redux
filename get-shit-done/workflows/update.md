@@ -326,7 +326,7 @@ fi
 ```text
 Couldn't check for updates (reason: {LATEST_REASON}, exit: {LATEST_STATUS}).
 
-To update manually: `npx -y --package=get-shit-done-redux@latest -- get-shit-done-redux --global`
+To update manually: `npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux --global`
 ```
 
 Exit.
@@ -547,17 +547,17 @@ RUNTIME_FLAG="--$TARGET_RUNTIME"
 
 **If LOCAL install:**
 ```bash
-npx -y --package=get-shit-done-redux@latest -- get-shit-done-redux "$RUNTIME_FLAG" --local
+npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux "$RUNTIME_FLAG" --local
 ```
 
 **If GLOBAL install:**
 ```bash
-npx -y --package=get-shit-done-redux@latest -- get-shit-done-redux "$RUNTIME_FLAG" --global
+npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux "$RUNTIME_FLAG" --global
 ```
 
 **If UNKNOWN install:**
 ```bash
-npx -y --package=get-shit-done-redux@latest -- get-shit-done-redux --claude --global
+npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux --claude --global
 ```
 
 Capture output. If install fails, show error and exit.

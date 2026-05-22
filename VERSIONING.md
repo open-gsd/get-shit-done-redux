@@ -6,9 +6,9 @@ GSD follows [Semantic Versioning 2.0.0](https://semver.org/) with three release 
 
 | Tier | What ships | Version format | npm tag | Branch | Install |
 |------|-----------|---------------|---------|--------|---------|
-| **Patch** | Bug fixes only | `1.27.1` | `latest` | `hotfix/1.27.1` | `npx get-shit-done-redux@latest` |
-| **Minor** | Fixes + enhancements | `1.28.0` | `latest` (after RC) | `release/1.28.0` | `npx get-shit-done-redux@next` (RC) |
-| **Major** | Fixes + enhancements + features | `2.0.0` | `latest` (after beta) | `release/2.0.0` | `npx get-shit-done-redux@next` (beta) |
+| **Patch** | Bug fixes only | `1.27.1` | `latest` | `hotfix/1.27.1` | `npx @opengsd/get-shit-done-redux@latest` |
+| **Minor** | Fixes + enhancements | `1.28.0` | `latest` (after RC) | `release/1.28.0` | `npx @opengsd/get-shit-done-redux@next` (RC) |
+| **Major** | Fixes + enhancements + features | `2.0.0` | `latest` (after beta) | `release/2.0.0` | `npx @opengsd/get-shit-done-redux@next` (beta) |
 
 ## npm Dist-Tags
 
@@ -16,8 +16,8 @@ Only two tags, following Angular/Next.js convention:
 
 | Tag | Meaning | Installed by |
 |-----|---------|-------------|
-| `latest` | Stable production release | `npm install get-shit-done-redux` (default) |
-| `next` | Pre-release (RC or beta) | `npm install get-shit-done-redux@next` (opt-in) |
+| `latest` | Stable production release | `npm install @opengsd/get-shit-done-redux` (default) |
+| `next` | Pre-release (RC or beta) | `npm install @opengsd/get-shit-done-redux@next` (opt-in) |
 
 The version string (`-rc.1` vs `-beta.1`) communicates stability level. Users never get pre-releases unless they explicitly opt in.
 
@@ -91,7 +91,7 @@ A hotfix `vX.YY.Z` cumulatively includes everything in `vX.YY.{Z-1}` plus every 
 
 **Path B — `release-sdk.yml` (stopgap, one-shot):**
 
-Active while the `@gsd-redux/sdk` npm token is unavailable; bundles the SDK inside the CC tarball.
+Active while the `@opengsd/gsd-sdk` npm token is unavailable; bundles the SDK inside the CC tarball.
 
 1. Trigger `release-sdk.yml` with `action=hotfix`, `version=1.27.1`, `auto_cherry_pick=true`.
    - The `prepare` job creates the branch and cherry-picks (same logic as Path A).
@@ -107,7 +107,7 @@ For accumulated fixes and enhancements.
 1. Trigger `release.yml` with action `create` and version (e.g., `1.28.0`)
 2. Workflow creates `release/1.28.0` branch from main, bumps package.json
 3. Trigger `release.yml` with action `rc` to publish `1.28.0-rc.1` to `next`
-4. Test the RC: `npx get-shit-done-redux@next`
+4. Test the RC: `npx @opengsd/get-shit-done-redux@next`
 5. If issues found: fix on release branch, publish `rc.2`, `rc.3`, etc.
 6. Trigger `release.yml` with action `finalize` — publishes `1.28.0` to `latest`
 7. Merge release branch to main
@@ -145,5 +145,5 @@ npm publish
 npm publish --tag next
 
 # Verify what latest and next point to
-npm dist-tag ls get-shit-done-redux
+npm dist-tag ls @opengsd/get-shit-done-redux
 ```

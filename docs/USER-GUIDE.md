@@ -1263,10 +1263,10 @@ Cline uses a rules-based integration — GSD installs as `.clinerules` rather th
 
 ```bash
 # Global install (applies to all projects)
-npx get-shit-done-redux --cline --global
+npx @opengsd/get-shit-done-redux --cline --global
 
 # Local install (this project only)
-npx get-shit-done-redux --cline --local
+npx @opengsd/get-shit-done-redux --cline --local
 ```
 
 Global installs write to `~/.cline/`. Local installs write to `./.cline/`. No custom slash commands are registered — GSD rules are loaded automatically by Cline from the rules file.
@@ -1276,7 +1276,7 @@ Global installs write to `~/.cline/`. Local installs write to `./.cline/`. No cu
 CodeBuddy uses a skills-based integration.
 
 ```bash
-npx get-shit-done-redux --codebuddy --global
+npx @opengsd/get-shit-done-redux --codebuddy --global
 ```
 
 Skills are installed to `~/.codebuddy/skills/gsd-*/SKILL.md`.
@@ -1286,7 +1286,7 @@ Skills are installed to `~/.codebuddy/skills/gsd-*/SKILL.md`.
 Qwen Code uses the same open skills standard as Claude Code 2.1.88+.
 
 ```bash
-npx get-shit-done-redux --qwen --global
+npx @opengsd/get-shit-done-redux --qwen --global
 ```
 
 Skills are installed to `~/.qwen/skills/gsd-*/SKILL.md`. Use the `QWEN_CONFIG_DIR` environment variable to override the default install path.
@@ -1300,7 +1300,7 @@ GSD does not enumerate prerelease editions as separate named runtimes. They are 
 **Pattern.** Set the runtime's `*_CONFIG_DIR` env var to the prerelease directory before running the installer:
 
 ```bash
-WINDSURF_CONFIG_DIR=~/.codeium/windsurf-next npx get-shit-done-redux@latest --windsurf --global
+WINDSURF_CONFIG_DIR=~/.codeium/windsurf-next npx @opengsd/get-shit-done-redux@latest --windsurf --global
 ```
 
 Select the corresponding stable runtime in the installer prompt. Skills land in the prerelease directory; commands appear in the prerelease editor.
@@ -1340,7 +1340,7 @@ Since v1.17, the installer backs up locally modified files to `gsd-local-patches
 
 ### Cannot Update via npm
 
-If `npx get-shit-done-redux` fails due to npm outages or network restrictions, see [docs/manual-update.md](manual-update.md) for a step-by-step manual update procedure that works without npm access.
+If `npx @opengsd/get-shit-done-redux` fails due to npm outages or network restrictions, see [docs/manual-update.md](manual-update.md) for a step-by-step manual update procedure that works without npm access.
 
 ### Surface GSD Update Notifications Without GSD's Statusline
 
@@ -1362,7 +1362,7 @@ GSD update available: 1.39.0 → 1.40.0. Run /gsd-update.
 
 The banner is silent when no update is available. If the cache file is corrupt, GSD emits one diagnostic line (`GSD update check failed.`) and stays silent for 24 hours so a broken cache does not nag every session.
 
-**Opt-out / removal:** delete the SessionStart hook entry that references `gsd-update-banner.js` from your runtime's `settings.json` (Claude Code: `~/.claude/settings.json`; Gemini: `~/.gemini/settings.json`). `npx get-shit-done-redux --uninstall` removes both the script and the registration in one pass.
+**Opt-out / removal:** delete the SessionStart hook entry that references `gsd-update-banner.js` from your runtime's `settings.json` (Claude Code: `~/.claude/settings.json`; Gemini: `~/.gemini/settings.json`). `npx @opengsd/get-shit-done-redux --uninstall` removes both the script and the registration in one pass.
 
 The banner is not offered when GSD's statusline is installed — that channel already surfaces update info, so re-prompting would be noise.
 

@@ -3,7 +3,7 @@
 Stable release. Published to npm under the `latest` tag.
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 ---
@@ -186,13 +186,13 @@ colon-form slash-command conversion.
 
 ```bash
 # npm (global)
-npm install -g get-shit-done-redux@latest
+npm install -g @opengsd/get-shit-done-redux@latest
 
 # npx (one-shot)
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 
 # Pin to this exact version
-npm install -g get-shit-done-redux@1.41.0
+npm install -g @opengsd/get-shit-done-redux@1.41.0
 ```
 
 The installer is idempotent — re-running on an existing install updates in-place,

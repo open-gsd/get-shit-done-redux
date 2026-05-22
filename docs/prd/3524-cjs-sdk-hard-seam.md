@@ -209,7 +209,7 @@ Phase 5 specifically preserves the in-process model: `QueryRuntimeBridge.execute
 ### Build/install pipeline impact
 
 - Each generator runs at build time on the developer machine (and in CI for the freshness check). No runtime generator execution.
-- The published `get-shit-done-redux` package already includes both `get-shit-done/bin/` and `sdk/dist/`. The generated `.cjs` files are committed to the repo (like `command-aliases.generated.cjs` today), so the install flow is unchanged — no on-install code generation.
+- The published `@opengsd/get-shit-done-redux` package already includes both `get-shit-done/bin/` and `sdk/dist/`. The generated `.cjs` files are committed to the repo (like `command-aliases.generated.cjs` today), so the install flow is unchanged — no on-install code generation.
 - `npm run build:sdk` continues to do what it does. Generators are invoked via `npm run gen:<module>` per the existing precedent.
 
 ### Risks

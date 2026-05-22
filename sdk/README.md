@@ -1,17 +1,17 @@
-# @gsd-redux/sdk
+# @opengsd/gsd-sdk
 
 TypeScript SDK for **Get Shit Done**: deterministic query/mutation handlers, plan execution, and event-stream telemetry so agents focus on judgment, not shell plumbing.
 
 ## Install
 
 ```bash
-npm install @gsd-redux/sdk
+npm install @opengsd/gsd-sdk
 ```
 
 ## Quickstart — programmatic
 
 ```typescript
-import { GSD, createRegistry } from '@gsd-redux/sdk';
+import { GSD, createRegistry } from '@opengsd/gsd-sdk';
 
 const gsd = new GSD({ projectDir: process.cwd(), sessionId: 'my-run' });
 const tools = gsd.createTools();
@@ -25,8 +25,8 @@ const { data } = await registry.dispatch('state.json', [], process.cwd());
 From a project that depends on this package, **invoke the CLI with Node** (recommended in CI and local dev):
 
 ```bash
-node ./node_modules/@gsd-redux/sdk/dist/cli.js query state.json
-node ./node_modules/@gsd-redux/sdk/dist/cli.js query roadmap.analyze
+node ./node_modules/@opengsd/gsd-sdk/dist/cli.js query state.json
+node ./node_modules/@opengsd/gsd-sdk/dist/cli.js query roadmap.analyze
 ```
 
 If no native handler is registered for a command, the CLI can transparently shell out to `get-shit-done/bin/gsd-tools.cjs` (see stderr warning), unless `GSD_QUERY_FALLBACK=off`.

@@ -116,8 +116,8 @@ jobs:
           PUBLISHED="NOT_FOUND"
           SDK_PUBLISHED="NOT_FOUND"
           for delay in 5 10 20 30 45; do
-            PUBLISHED=$(npm view get-shit-done-redux@"$CANARY_VERSION" version 2>/dev/null || echo "NOT_FOUND")
-            SDK_PUBLISHED=$(npm view @gsd-redux/sdk@"$CANARY_VERSION" version 2>/dev/null || echo "NOT_FOUND")
+            PUBLISHED=$(npm view @opengsd/get-shit-done-redux@"$CANARY_VERSION" version 2>/dev/null || echo "NOT_FOUND")
+            SDK_PUBLISHED=$(npm view @opengsd/gsd-sdk@"$CANARY_VERSION" version 2>/dev/null || echo "NOT_FOUND")
             if [ "$PUBLISHED" = "$CANARY_VERSION" ] && [ "$SDK_PUBLISHED" = "$CANARY_VERSION" ]; then
               break
             fi
@@ -128,13 +128,13 @@ jobs:
             echo "::error::Published version verification failed. Expected $CANARY_VERSION, got $PUBLISHED"
             exit 1
           fi
-          echo "Verified: get-shit-done-redux@$CANARY_VERSION is live on npm"
+          echo "Verified: @opengsd/get-shit-done-redux@$CANARY_VERSION is live on npm"
           if [ "$SDK_PUBLISHED" != "$CANARY_VERSION" ]; then
             echo "::error::SDK version verification failed. Expected $CANARY_VERSION, got $SDK_PUBLISHED"
             exit 1
           fi
-          echo "Verified: @gsd-redux/sdk@$CANARY_VERSION is live on npm"
-          CANARY_TAG=$(npm dist-tag ls get-shit-done-redux 2>/dev/null | grep "canary:" | awk '{print $2}')
+          echo "Verified: @opengsd/gsd-sdk@$CANARY_VERSION is live on npm"
+          CANARY_TAG=$(npm dist-tag ls @opengsd/get-shit-done-redux 2>/dev/null | grep "canary:" | awk '{print $2}')
           echo "canary dist-tag points to: $CANARY_TAG"
 
       - name: Summary
@@ -151,7 +151,7 @@ jobs:
             echo "**VALIDATION ONLY** — publish/tag skipped for \`${BRANCH_REF}\`; canary publish is gated to \`refs/heads/dev\`." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Published to npm as \`canary\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- SDK also published: \`@gsd-redux/sdk@${CANARY_VERSION}\` on \`canary\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- SDK also published: \`@opengsd/gsd-sdk@${CANARY_VERSION}\` on \`canary\`" >> "$GITHUB_STEP_SUMMARY"
             echo "- Tagged \`v${CANARY_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Install: \`npx get-shit-done-redux@canary\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Install: \`npx @opengsd/get-shit-done-redux@canary\`" >> "$GITHUB_STEP_SUMMARY"
           fi

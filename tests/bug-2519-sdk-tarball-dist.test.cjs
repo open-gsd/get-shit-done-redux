@@ -1,5 +1,5 @@
 /**
- * Regression test for #2519: @gsd-redux/sdk tarball shipped without dist/
+ * Regression test for #2519: @opengsd/gsd-sdk tarball shipped without dist/
  *
  * The published 0.1.0 tarball lacked a `files` whitelist including `dist/` and
  * a `prepublishOnly` hook to build `dist/` before publish. As a result the

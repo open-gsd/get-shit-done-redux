@@ -113,7 +113,7 @@ function missingLegacyCoreMessage(resolution: LegacySdkAssetResolution): string 
   return [
     'state load: get-shit-done/bin/lib/core.cjs not found.',
     `Checked: ${resolution.probes.join(', ')}`,
-    'Install GSD (e.g. npm i -g get-shit-done-redux) or clone with get-shit-done next to the SDK.',
+    'Install GSD (e.g. npm i -g @opengsd/get-shit-done-redux) or clone with get-shit-done next to the SDK.',
   ].join(' ');
 }
 

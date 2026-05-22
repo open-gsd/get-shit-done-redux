@@ -1,7 +1,7 @@
 /**
  * Regression test for #2829: `command not found: gsd-sdk` with local-mode install.
  *
- * Repro: a fresh `npx get-shit-done-redux@latest` install with the runtime set
+ * Repro: a fresh `npx @opengsd/get-shit-done-redux@latest` install with the runtime set
  * to local mode left every `gsd-sdk query …` call site unable to resolve the
  * binary because the installer's previous behavior was to skip SDK linking
  * entirely for local installs (#2678 over-corrected). The published tarball

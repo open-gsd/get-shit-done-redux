@@ -3,7 +3,7 @@
 Pre-release candidate. Published to npm under the `next` tag.
 
 ```
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 ---
@@ -62,16 +62,16 @@ The installer now:
 
 ```bash
 # npm
-npm install -g get-shit-done-redux@next
+npm install -g @opengsd/get-shit-done-redux@next
 
 # npx (one-shot)
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 To pin to this exact RC:
 
 ```bash
-npm install -g get-shit-done-redux@1.39.0-rc.4
+npm install -g @opengsd/get-shit-done-redux@1.39.0-rc.4
 ```
 
 ---

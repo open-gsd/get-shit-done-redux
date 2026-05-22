@@ -5,7 +5,7 @@ process.env.GSD_TEST_MODE = '1';
 /**
  * Regression test for #3011: SDK not found.
  *
- * Reporter (Windows / PowerShell 7) ran `npx get-shit-done-redux@latest`,
+ * Reporter (Windows / PowerShell 7) ran `npx @opengsd/get-shit-done-redux@latest`,
  * upgrade reported success, but `gsd-sdk` could not be resolved by Claude
  * Code, Git Bash, PowerShell, or WSL. The previous diagnostic was a
  * generic "not on your PATH" with no actionable info; the user couldn't
@@ -137,7 +137,7 @@ describe('Bug #3011: formatSdkPathDiagnostic — fallback when shimDir is null',
       platform: 'win32',
       runDir: 'C:\\some\\path',
     });
-    assert.ok(ir.actionLines.some(l => l.includes('npm install -g get-shit-done-redux')));
+    assert.ok(ir.actionLines.some(l => l.includes('npm install -g @opengsd/get-shit-done-redux')));
   });
 });
 

@@ -47,7 +47,7 @@ Previously `state.json` and `state.load` were easy to confuse: CJS has two diffe
 
 - `stateJson` — `sdk/src/query/state.ts`; registry key `state.json`.
 - `stateProjectLoad` — `sdk/src/query/state-project-load.ts`; registry key `state.load`. Uses `createRequire` to call `core.cjs` `loadConfig(projectDir)` from the same resolution paths as a normal install (bundled monorepo path, `projectDir/.claude/get-shit-done/...`, `~/.claude/get-shit-done/...`). `GSDTools.stateLoad()` and `formatRegistryRawStdout` for `--raw` no longer force a subprocess solely for this command.
-- **Risk:** If `core.cjs` is absent (e.g. some `@gsd-redux/sdk`-only layouts), `state.load` throws `GSDError` — document; future option is a TS `loadConfig` port or bundling.
+- **Risk:** If `core.cjs` is absent (e.g. some `@opengsd/gsd-sdk`-only layouts), `state.load` throws `GSDError` — document; future option is a TS `loadConfig` port or bundling.
 - **Goldens:** `read-only-parity.integration.test.ts` — one block compares `state.json` to `state json` (strip `last_updated`); another compares `state.load` to `state load` (full `toEqual`). `read-only-golden-rows.ts` `readOnlyGoldenCanonicals()` includes both `state.json` and `state.load`.
 
 ---
@@ -140,7 +140,7 @@ Source: `.planning/research/decision-routing-audit.md` §3. **Tier** = priority 
 (Strategic ordering of **parity vs decision offloading** is in **Roadmap** above.)
 
 1. ~~**Golden test for `phase.add-batch`**~~ — Done: `sdk/src/golden/mutation-subprocess.integration.test.ts` (`phase.add-batch` JSON parity vs CJS).
-2. ~~**Re-export `normalizeQueryCommand`**~~ — Done: exported from `sdk/src/query/index.ts` and `sdk/src/index.ts` (`@gsd-redux/sdk`).
+2. ~~**Re-export `normalizeQueryCommand`**~~ — Done: exported from `sdk/src/query/index.ts` and `sdk/src/index.ts` (`@opengsd/gsd-sdk`).
 3. **Issue #2302 follow-ups** — Runner alignment (`GSDTools` → registry where appropriate). **`configGet`** now uses `dispatchNativeJson` with canonical `config-get` (fixes subprocess argv vs real `gsd-tools.cjs`, which has no `config` + `get` top-level). Keep `graphify` / `from-gsd2` out of scope unless product reopens.
 4. **Drift check** — When adding CJS commands, update `QUERY-HANDLERS.md` matrix and golden docs in the same PR.
 

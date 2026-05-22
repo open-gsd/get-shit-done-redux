@@ -66,10 +66,10 @@ describe('bug #2334: quick workflow gsd-sdk pre-flight check', () => {
     }
     const step2Section = content.slice(step2Start, firstSdkCall);
 
-    const hasInstallHint = step2Section.includes('get-shit-done-redux') || step2Section.includes('gsd-update') || step2Section.includes('/gsd-update');
+    const hasInstallHint = step2Section.includes('@opengsd/get-shit-done-redux') || step2Section.includes('gsd-update') || step2Section.includes('/gsd-update');
     assert.ok(
       hasInstallHint,
-      'Pre-flight error must include a hint on how to install query-capable gsd-sdk (npm install -g get-shit-done-redux or /gsd-update)'
+      'Pre-flight error must include a hint on how to install query-capable gsd-sdk (npm install -g @opengsd/get-shit-done-redux or /gsd-update)'
     );
   });
 });

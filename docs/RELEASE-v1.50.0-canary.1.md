@@ -3,9 +3,9 @@
 First canary cut for the **1.50.0** train. Published to npm under the `canary` dist-tag.
 
 ```bash
-npx get-shit-done-redux@canary
+npx @opengsd/get-shit-done-redux@canary
 # or pin exact:
-npm install -g get-shit-done-redux@1.50.0-canary.1
+npm install -g @opengsd/get-shit-done-redux@1.50.0-canary.1
 ```
 
 > **Canary stream caveat.** Canary builds come from the long-lived `dev` integration branch and may carry rough edges that the `next` (RC) and `latest` (stable) channels never see. Use canary when you want to exercise in-flight features early and report findings; do NOT pin production projects to it. See [CANARY.md](CANARY.md) for the stream policy and rollback path.
@@ -72,10 +72,10 @@ The MVP slice closes out with read-side surfaces:
 
 ```bash
 # Try the canary
-npx get-shit-done-redux@canary
+npx @opengsd/get-shit-done-redux@canary
 
 # Or pin exact
-npm install -g get-shit-done-redux@1.50.0-canary.1
+npm install -g @opengsd/get-shit-done-redux@1.50.0-canary.1
 ```
 
 The installer's defensive purge will rewrite stale config blocks left by older GSD versions on first run. No manual cleanup needed.

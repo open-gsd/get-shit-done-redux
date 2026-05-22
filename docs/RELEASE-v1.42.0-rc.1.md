@@ -3,9 +3,9 @@
 First release candidate for the **1.42.0** train. Published to npm under the `next` dist-tag.
 
 ```bash
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 # or pin exact:
-npm install -g get-shit-done-redux@1.42.0-rc1
+npm install -g @opengsd/get-shit-done-redux@1.42.0-rc1
 ```
 
 > **Release-candidate stream caveat.** RCs come from `main` and are the staging stream for the next stable `latest`. They are stable enough for everyday use but may carry bake items resolved before the matching `vX.Y.0` is published. See [CANARY.md](CANARY.md) for the stream policy.
@@ -82,13 +82,13 @@ Closes [#3270](https://github.com/GSD-redux/get-shit-done-redux/issues/3270).
 
 ```bash
 # npm (global, RC channel)
-npm install -g get-shit-done-redux@next
+npm install -g @opengsd/get-shit-done-redux@next
 
 # npx (one-shot)
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 
 # Pin to this exact RC
-npm install -g get-shit-done-redux@1.42.0-rc1
+npm install -g @opengsd/get-shit-done-redux@1.42.0-rc1
 ```
 
 The installer is idempotent — re-running on an existing install updates in-place, preserving your `.planning/` directory and local patches.
@@ -96,5 +96,5 @@ The installer is idempotent — re-running on an existing install updates in-pla
 To roll back to the latest stable, install with `@latest`:
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```

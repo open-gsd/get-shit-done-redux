@@ -128,6 +128,12 @@ const INTERNAL_COMPONENT_SLUGS = new Set([
   // the URL path. Not a user-typable slash command in this product.
   'opencode',
 
+  // gsd-sdk — the @opengsd/gsd-sdk npm package and `gsd-sdk query` CLI binary.
+  // Docs reference it as a package name (e.g. `@opengsd/gsd-sdk`) and CLI tool
+  // (e.g. `gsd-sdk query init phase-op 12`). The regex captures "/gsd-sdk" from
+  // the npm scope path separator in `@opengsd/gsd-sdk`. Not a user-typable slash command.
+  'sdk',
+
   // Smoke-test directory path — locale docs reference "/tmp/gsd-smoke-$(date +%s)"
   // as a temporary directory path in bash code-block examples. The regex captures
   // "/gsd-smoke-" from the filesystem path. Not a slash command.

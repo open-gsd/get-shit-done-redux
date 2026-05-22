@@ -2,7 +2,7 @@
  * Regression guard for #2636 — `gsd-sdk query agent-skills <slug>` calls in
  * workflows must NOT silently swallow failures via a bare `2>/dev/null`.
  *
- * Root cause of #2636: when the installed npm `@gsd-redux/sdk` was stale and
+ * Root cause of #2636: when the installed npm `@opengsd/gsd-sdk` was stale and
  * the `agent-skills` handler was missing, every workflow line of the form
  *   AGENT_SKILLS_X=$(gsd-sdk query agent-skills <slug> 2>/dev/null)
  * resolved to empty string, and the `agent_skills.<slug>` config was never

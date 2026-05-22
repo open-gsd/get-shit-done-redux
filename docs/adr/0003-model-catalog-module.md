@@ -30,8 +30,8 @@ The catalog owns:
 - agent → dynamic-routing default tier mapping
 
 The canonical file lives in a location both packages ship:
-- repo root package (`get-shit-done-redux`) includes it
-- standalone SDK package (`@gsd-redux/sdk`) includes it
+- repo root package (`@opengsd/get-shit-done-redux`) includes it
+- standalone SDK package (`@opengsd/gsd-sdk`) includes it
 
 Both CJS and SDK load this exact file. Neither package keeps its own independent list.
 

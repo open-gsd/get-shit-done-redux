@@ -11,7 +11,7 @@
  * stop, applied to the SDK-load logic itself).
  *
  * Load path policy: the bridge resolves the bundled SDK by package-relative
- * filesystem path, NOT by the `@gsd-redux/sdk` package name. The package name
+ * filesystem path, NOT by the `@opengsd/gsd-sdk` package name. The package name
  * is not installed in the root `node_modules` (it lives as a sibling workspace
  * package, not a dependency), and the SDK's public entry doesn't re-export
  * `executeForCjs` or `formatStateLoadRawStdout` anyway. Using the relative
@@ -21,7 +21,7 @@
  * `package.json` keeps `sdk/dist` at the same path inside the published
  * tarball.
  *
- * The previous implementation used `require('@gsd-redux/sdk')`, which always
+ * The previous implementation used `require('@opengsd/gsd-sdk')`, which always
  * failed because the package was unresolvable from the consumer location.
  * That cached `_loadFailed = true` for the lifetime of the process and made
  * every router silently fall through to CJS — defeating Phase 5/6's entire

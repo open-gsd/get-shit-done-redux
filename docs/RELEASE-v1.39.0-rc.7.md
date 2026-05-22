@@ -3,7 +3,7 @@
 Pre-release candidate. Published to npm under the `next` tag.
 
 ```bash
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 ---
@@ -19,7 +19,7 @@ reaches the registry.
 ### Added
 
 - **Manual canary release workflow** — `.github/workflows/canary.yml` publishes
-  `{base}-canary.{N}` builds of `get-shit-done-redux` under the `canary` dist-tag on
+  `{base}-canary.{N}` builds of `@opengsd/get-shit-done-redux` under the `canary` dist-tag on
   demand via `workflow_dispatch` (manual trigger only). Optional `dry_run` boolean.
   ([#2828](https://github.com/GSD-redux/get-shit-done-redux/issues/2828))
 
@@ -39,7 +39,7 @@ reaches the registry.
   `argument-hint:`, `Triggers:` keyword-stuffing lists, and numbered enumeration. New
   CI lint gate `npm run lint:descriptions` fails if any description exceeds 100
   chars. ([#2789](https://github.com/GSD-redux/get-shit-done-redux/issues/2789))
-- **`gsd-sdk` binary collision with `@gsd-redux/sdk` resolved** — workstream-aware
+- **`gsd-sdk` binary collision with `@opengsd/gsd-sdk` resolved** — workstream-aware
   query registry now respects the `GSD_WORKSTREAM` env var; `gsd-tools` bin alias
   added. ([#2791](https://github.com/GSD-redux/get-shit-done-redux/issues/2791))
 - **`OpenCode` agents embed `model_profile_overrides.opencode.<tier>`** — per-tier
@@ -165,16 +165,16 @@ with a strict TOML parser.
 
 ```bash
 # npm
-npm install -g get-shit-done-redux@next
+npm install -g @opengsd/get-shit-done-redux@next
 
 # npx (one-shot)
-npx get-shit-done-redux@next
+npx @opengsd/get-shit-done-redux@next
 ```
 
 To pin to this exact RC:
 
 ```bash
-npm install -g get-shit-done-redux@1.39.0-rc.7
+npm install -g @opengsd/get-shit-done-redux@1.39.0-rc.7
 ```
 
 ---

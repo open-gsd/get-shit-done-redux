@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * Regression tests for #3406 — stale globally-installed `@gsd-redux/sdk@0.1.0`
+ * Regression tests for #3406 — stale globally-installed `@opengsd/gsd-sdk@0.1.0`
  * shadows the `gsd-sdk` shim that `get-shit-done-redux` installs. The standalone
  * 0.1.0 binary only knows `run | auto | init` (no `query` subcommand), so
  * every workflow that calls `gsd-sdk query <command>` fails until the user
- * runs `npm uninstall -g @gsd-redux/sdk`.
+ * runs `npm uninstall -g @opengsd/gsd-sdk`.
  *
  * Maintainer decision (per triage): option 2 — detect-and-warn during
  * install. This test pins the pure detection helper so the install-time
@@ -13,7 +13,7 @@
  *
  * Test surface is the exported helper `detectStaleStandaloneSdk(runNpmLs)`.
  * `runNpmLs` is an injected executor: in production it spawns
- * `npm ls -g @gsd-redux/sdk --json --depth=0`; in tests we hand it a stub
+ * `npm ls -g @opengsd/gsd-sdk --json --depth=0`; in tests we hand it a stub
  * that returns canned stdout / throws, so the test never touches the host
  * npm state.
  */
@@ -35,7 +35,7 @@ describe('#3406: detectStaleStandaloneSdk', () => {
   });
 
   test('returns { stale: false } when npm ls reports the package is not installed', () => {
-    // `npm ls -g @gsd-redux/sdk --json --depth=0` exit code 1 with this
+    // `npm ls -g @opengsd/gsd-sdk --json --depth=0` exit code 1 with this
     // JSON shape is the standard "not present" signal.
     const stub = () => JSON.stringify({
       name: 'lib',
@@ -45,13 +45,13 @@ describe('#3406: detectStaleStandaloneSdk', () => {
     assert.deepStrictEqual(result, { stale: false });
   });
 
-  test('returns { stale: true, version, path? } when @gsd-redux/sdk is present', () => {
+  test('returns { stale: true, version, path? } when @opengsd/gsd-sdk is present', () => {
     const stub = () => JSON.stringify({
       name: 'lib',
       dependencies: {
-        '@gsd-redux/sdk': {
+        '@opengsd/gsd-sdk': {
           version: '0.1.0',
-          resolved: 'file:/Users/REDACTED/.nvm/versions/node/v24.15.0/lib/node_modules/@gsd-redux/sdk',
+          resolved: 'file:/Users/REDACTED/.nvm/versions/node/v24.15.0/lib/node_modules/@opengsd/gsd-sdk',
         },
       },
     });
@@ -90,8 +90,8 @@ describe('#3406: detectStaleStandaloneSdk', () => {
     // version is an intentional install (or a future republish) and must
     // NOT be flagged. Without this gate, every maintainer with a local-link
     // or any future publish would trigger a misleading warning on install.
-    const stubNewer = () => JSON.stringify({ dependencies: { '@gsd-redux/sdk': { version: '1.50.0-canary.0' } } });
-    const stubFuture = () => JSON.stringify({ dependencies: { '@gsd-redux/sdk': { version: '2.0.0' } } });
+    const stubNewer = () => JSON.stringify({ dependencies: { '@opengsd/gsd-sdk': { version: '1.50.0-canary.0' } } });
+    const stubFuture = () => JSON.stringify({ dependencies: { '@opengsd/gsd-sdk': { version: '2.0.0' } } });
     assert.deepStrictEqual(detectStaleStandaloneSdk(stubNewer), { stale: false });
     assert.deepStrictEqual(detectStaleStandaloneSdk(stubFuture), { stale: false });
   });
@@ -100,7 +100,7 @@ describe('#3406: detectStaleStandaloneSdk', () => {
 describe('#3406: install-time wiring stays silent when no stale package is found', () => {
   // We can't easily stub npm inside a spawned install subprocess without
   // shelling around it, so the install-side coverage here verifies the
-  // negative case: when @gsd-redux/sdk is NOT installed globally (the npm
+  // negative case: when @opengsd/gsd-sdk is NOT installed globally (the npm
   // dependency tree on CI is irrelevant — we use a doctored PATH that points
   // npm at an empty prefix), the install run prints NO #3406 warning. The
   // positive case is exhaustively covered by detectStaleStandaloneSdk above.
@@ -131,8 +131,8 @@ describe('#3406: install-time wiring stays silent when no stale package is found
         }
       );
       assert.ok(
-        !stdout.includes('@gsd-redux/sdk'),
-        'install output must not mention @gsd-redux/sdk when the package is absent'
+        !stdout.includes('@opengsd/gsd-sdk'),
+        'install output must not mention @opengsd/gsd-sdk when the package is absent'
       );
       assert.ok(
         !stdout.includes('#3406'),
@@ -158,10 +158,10 @@ describe('#3406: formatStaleStandaloneSdkWarning', () => {
 
   test('message names the stale package, the version, and the uninstall command', () => {
     const out = formatStaleStandaloneSdkWarning({ stale: true, version: '0.1.0' });
-    assert.ok(out.includes('@gsd-redux/sdk'), 'must name the shadowing package');
+    assert.ok(out.includes('@opengsd/gsd-sdk'), 'must name the shadowing package');
     assert.ok(out.includes('0.1.0'), 'must show the stale version');
     assert.ok(
-      out.includes('npm uninstall -g @gsd-redux/sdk'),
+      out.includes('npm uninstall -g @opengsd/gsd-sdk'),
       'must include the remediation command verbatim'
     );
     assert.ok(out.includes('#3406'), 'must reference the issue for traceability');

@@ -20,13 +20,13 @@ A canary build NEVER becomes a `next` build directly, and a `next` build NEVER b
 
 ```bash
 # One-off invocation (npx)
-npx get-shit-done-redux@canary
+npx @opengsd/get-shit-done-redux@canary
 
 # Pin to the canary dist-tag globally
-npm install -g get-shit-done-redux@canary
+npm install -g @opengsd/get-shit-done-redux@canary
 
 # Pin to an exact canary version
-npm install -g get-shit-done-redux@1.50.0-canary.1
+npm install -g @opengsd/get-shit-done-redux@1.50.0-canary.1
 ```
 
 The CC installer's defensive purge rewrites stale config blocks left by older GSD versions, so reinstalling on top of an existing project is safe.
@@ -47,10 +47,10 @@ The CC installer's defensive purge rewrites stale config blocks left by older GS
 
 ```bash
 # Back to the current stable
-npm install -g get-shit-done-redux@latest
+npm install -g @opengsd/get-shit-done-redux@latest
 
 # Or to the next/RC train
-npm install -g get-shit-done-redux@next
+npm install -g @opengsd/get-shit-done-redux@next
 ```
 
 If you have a local project that interacted with canary-only features (for instance, an MVP-mode phase planned by 1.50.0-canary), the planner artifacts in `.planning/` remain valid — older GSD versions will just ignore the `**Mode:** mvp` field on phases.

@@ -1054,7 +1054,7 @@ When the user declines (or keeps a non-GSD) statusline, the installer offers a S
 GSD update available: 1.39.0 → 1.40.0. Run /gsd-update.
 ```
 
-The banner is silent when up-to-date and rate-limits "check failed" diagnostics to once per 24 hours. Removed cleanly by `npx get-shit-done-redux --uninstall` or by deleting the SessionStart entry that references `gsd-update-banner.js`.
+The banner is silent when up-to-date and rate-limits "check failed" diagnostics to once per 24 hours. Removed cleanly by `npx @opengsd/get-shit-done-redux --uninstall` or by deleting the SessionStart entry that references `gsd-update-banner.js`.
 
 ### 38. Developer Profiling
 
@@ -1436,7 +1436,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 55. Multi-Runtime Installer Selection
 
-**Part of:** `npx get-shit-done-redux`
+**Part of:** `npx @opengsd/get-shit-done-redux`
 
 **Purpose:** Select multiple runtimes in a single interactive install session.
 
@@ -1455,7 +1455,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 56. Windsurf Runtime Support
 
-**Part of:** `npx get-shit-done-redux`
+**Part of:** `npx @opengsd/get-shit-done-redux`
 
 **Purpose:** Add Windsurf as a supported AI CLI runtime for GSD installation and execution.
 
@@ -1695,7 +1695,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 68. Claude Code Skills Migration
 
-**Part of:** `npx get-shit-done-redux`
+**Part of:** `npx @opengsd/get-shit-done-redux`
 
 **Purpose:** Migrate GSD commands to Claude Code 2.1.88+ skills format with backward compatibility.
 
@@ -1959,7 +1959,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 85. New Runtime Support (Trae, Cline, Augment Code)
 
-**Part of:** `npx get-shit-done-redux`
+**Part of:** `npx @opengsd/get-shit-done-redux`
 
 **Purpose:** Extend GSD installation to Trae IDE, Cline, and Augment Code runtimes.
 
@@ -2301,7 +2301,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 104. New Runtime Support (Cline, CodeBuddy, Qwen Code)
 
-**Part of:** `npx get-shit-done-redux`
+**Part of:** `npx @opengsd/get-shit-done-redux`
 
 **Purpose:** Extend GSD installation to Cline, CodeBuddy, and Qwen Code runtimes.
 
@@ -2778,7 +2778,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - The hook reads the existing `~/.cache/gsd/gsd-update-check.json` cache — the same cache used by the statusline — and prints a banner only when an update is available.
 - Silent when up-to-date.
 - Failure diagnostics rate-limited to once per 24 h.
-- Cleanly removed by `npx get-shit-done-redux --uninstall`.
+- Cleanly removed by `npx @opengsd/get-shit-done-redux --uninstall`.
 
 **Requirements:**
 - REQ-BANNER-01: Banner does not install without explicit opt-in.

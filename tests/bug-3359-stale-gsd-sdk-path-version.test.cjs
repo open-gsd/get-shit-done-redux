@@ -1,7 +1,7 @@
 /**
  * Regression test for bug #3359.
  *
- * `npx get-shit-done-redux@latest` can refresh runtime files while an older
+ * `npx @opengsd/get-shit-done-redux@latest` can refresh runtime files while an older
  * global `gsd-sdk` earlier on PATH remains the executable workflows call.
  * The installer must not report SDK readiness when the resolved `gsd-sdk`
  * version differs from the package/runtime version being installed.
@@ -91,7 +91,7 @@ describe('bug #3359: installer detects stale gsd-sdk earlier on PATH',
       `warning must include detected and installer versions. Output:\n${combined}`,
     );
     assert.ok(
-      /npm install -g get-shit-done-redux@latest/.test(combined),
+      /npm install -g @opengsd\/get-shit-done-redux@latest/.test(combined),
       `warning must include global update remediation. Output:\n${combined}`,
     );
     assert.ok(

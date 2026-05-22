@@ -133,7 +133,7 @@ elif command -v gsd-sdk >/dev/null 2>&1; then
   GSD_SDK="gsd-sdk"
 else
   echo "ERROR: gsd-sdk not found on PATH and $GSD_TOOLS does not exist." >&2
-  echo "Run: npx get-shit-done-redux@latest --claude --local" >&2
+  echo "Run: npx @opengsd/get-shit-done-redux@latest --claude --local" >&2
   exit 1
 fi
 INIT=$($GSD_SDK query init.quick "$DESCRIPTION")

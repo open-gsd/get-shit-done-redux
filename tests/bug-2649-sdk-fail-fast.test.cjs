@@ -155,7 +155,7 @@ describe('installer SDK dist-missing fail-fast (#2649)', () => {
       assert.strictEqual(ir.reason, 'sdk_fail_fast');
       assert.strictEqual(ir.context, 'npx-cache');
       assert.strictEqual(ir.missing_artifact, 'sdk/dist');
-      assert.strictEqual(ir.fix_command, 'npm install -g get-shit-done-redux@latest');
+      assert.strictEqual(ir.fix_command, 'npm install -g @opengsd/get-shit-done-redux@latest');
       assert.strictEqual(ir.attempted_nested_install, false,
         'IR contract: nested-install must always be false (this is a hard invariant)');
     } finally {

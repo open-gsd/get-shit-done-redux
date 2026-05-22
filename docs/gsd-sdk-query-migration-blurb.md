@@ -4,7 +4,7 @@ Copy-paste friendly for Discord and GitHub comments.
 
 ---
 
-**@gsd-redux/sdk** replaces the untyped, monolithic `gsd-tools.cjs` subprocess with a typed, tested, registry-based query system and **`gsd-sdk query`**, giving GSD structured results, classified errors (`GSDError` with `ErrorClassification`), and golden-verified parity with the old CLI. That gives the framework one stable contract instead of a fragile, very large CLI that every workflow had to spawn and parse by hand.
+**@opengsd/gsd-sdk** replaces the untyped, monolithic `gsd-tools.cjs` subprocess with a typed, tested, registry-based query system and **`gsd-sdk query`**, giving GSD structured results, classified errors (`GSDError` with `ErrorClassification`), and golden-verified parity with the old CLI. That gives the framework one stable contract instead of a fragile, very large CLI that every workflow had to spawn and parse by hand.
 
 **What users can expect**
 

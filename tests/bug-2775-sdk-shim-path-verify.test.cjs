@@ -6,7 +6,7 @@
 /**
  * Regression test for bug #2775
  *
- * `npx get-shit-done-redux@latest --global` runs the installer, which prints
+ * `npx @opengsd/get-shit-done-redux@latest --global` runs the installer, which prints
  * `✓ GSD SDK ready` even though the secondary `gsd-sdk` bin is not on the
  * user's PATH. Root cause: `npx` only links the package's primary bin into
  * the ephemeral cache; secondary bins are not symlinked. The installer's

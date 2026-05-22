@@ -350,12 +350,12 @@ function formatSdkPathDiagnostic({ shimDir, platform, runDir }) {
   } else {
     actionLines.push('Could not locate a writable PATH directory to install the shim.');
     actionLines.push('Install globally to materialize the bin symlink:');
-    actionLines.push('npm install -g get-shit-done-redux');
+    actionLines.push('npm install -g @opengsd/get-shit-done-redux');
   }
   const npxNoteLines = isNpx
     ? [
         "Note: you're running via npx. For a persistent shim,",
-        'install globally instead: npm install -g get-shit-done-redux',
+        'install globally instead: npm install -g @opengsd/get-shit-done-redux',
       ]
     : [];
   return { shimLocationLine, actionLines, shellActions, npxNoteLines, isNpx, isWin32 };

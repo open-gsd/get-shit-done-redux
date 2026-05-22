@@ -20,7 +20,7 @@ All six issues carry the `confirmed-bug` label, meaning the bug has been verifie
 | 3 | [#3496](https://github.com/open-gsd/get-shit-done-redux/issues/3496) | `/gsd:update` changelog extraction skips intermediate versions | Workflow / Update logic | `/gsd-quick` or lightweight plan | Medium-small | Not started | Needs deterministic version-range helper. |
 | 4 | [#3588](https://github.com/open-gsd/get-shit-done-redux/issues/3588) | Production `npm audit` has 1 high + 5 moderate advisories | Security / Dependencies | Direct + careful review | Medium | Not started | Transitive via `@anthropic-ai/claude-agent-sdk`. May need overrides. |
 | 5 | [#3584](https://github.com/open-gsd/get-shit-done-redux/issues/3584) | Runtime `bin/lib/*.cjs` still emit `/gsd:<cmd>` (larger piece deferred from #3583) | Runtime output / Slash formatter | Short plan first, then execute | Medium-Large | Not started | 16+ files. Design a centralized runtime-aware formatter. Do after #3583. |
-| 6 | [#3340](https://github.com/open-gsd/get-shit-done-redux/issues/3340) | SDK publish lag — agent dir fix never shipped in `@gsd-redux/sdk@0.1.0` | Release / SDK publishing | Plan + coordination | Medium (release-focused) | Not started | Oldest. Mostly a publishing/versioning task. |
+| 6 | [#3340](https://github.com/open-gsd/get-shit-done-redux/issues/3340) | SDK publish lag — agent dir fix never shipped in `@opengsd/gsd-sdk@0.1.0` | Release / SDK publishing | Plan + coordination | Medium (release-focused) | Not started | Oldest. Mostly a publishing/versioning task. |
 
 ## Execution Rules for This Batch
 

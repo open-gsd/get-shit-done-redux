@@ -250,20 +250,20 @@ jobs:
           PRE_VERSION: ${{ steps.prerelease.outputs.pre_version }}
         run: |
           sleep 10
-          PUBLISHED=$(npm view get-shit-done-redux@"$PRE_VERSION" version 2>/dev/null || echo "NOT_FOUND")
+          PUBLISHED=$(npm view @opengsd/get-shit-done-redux@"$PRE_VERSION" version 2>/dev/null || echo "NOT_FOUND")
           if [ "$PUBLISHED" != "$PRE_VERSION" ]; then
             echo "::error::Published version verification failed. Expected $PRE_VERSION, got $PUBLISHED"
             exit 1
           fi
-          echo "✓ Verified: get-shit-done-redux@$PRE_VERSION is live on npm"
-          SDK_PUBLISHED=$(npm view @gsd-redux/sdk@"$PRE_VERSION" version 2>/dev/null || echo "NOT_FOUND")
+          echo "✓ Verified: @opengsd/get-shit-done-redux@$PRE_VERSION is live on npm"
+          SDK_PUBLISHED=$(npm view @opengsd/gsd-sdk@"$PRE_VERSION" version 2>/dev/null || echo "NOT_FOUND")
           if [ "$SDK_PUBLISHED" != "$PRE_VERSION" ]; then
             echo "::error::SDK version verification failed. Expected $PRE_VERSION, got $SDK_PUBLISHED"
             exit 1
           fi
-          echo "✓ Verified: @gsd-redux/sdk@$PRE_VERSION is live on npm"
+          echo "✓ Verified: @opengsd/gsd-sdk@$PRE_VERSION is live on npm"
           # Also verify dist-tag
-          NEXT_TAG=$(npm dist-tag ls get-shit-done-redux 2>/dev/null | grep "next:" | awk '{print $2}')
+          NEXT_TAG=$(npm dist-tag ls @opengsd/get-shit-done-redux 2>/dev/null | grep "next:" | awk '{print $2}')
           echo "✓ next tag points to: $NEXT_TAG"
 
       - name: Summary
@@ -276,8 +276,8 @@ jobs:
             echo "**DRY RUN** — npm publish, tagging, and push skipped" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Published to npm as \`next\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- SDK also published: \`@gsd-redux/sdk@${PRE_VERSION}\` on \`next\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Install: \`npx get-shit-done-redux@next\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- SDK also published: \`@opengsd/gsd-sdk@${PRE_VERSION}\` on \`next\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Install: \`npx @opengsd/get-shit-done-redux@next\`" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "To publish another pre-release: run \`rc\` again" >> "$GITHUB_STEP_SUMMARY"
@@ -426,8 +426,8 @@ jobs:
         run: |
           # Point next to the stable release so @next never returns something
           # older than @latest. This prevents stale pre-release installs.
-          npm dist-tag add "get-shit-done-redux@${VERSION}" next 2>/dev/null || true
-          npm dist-tag add "@gsd-redux/sdk@${VERSION}" next 2>/dev/null || true
+          npm dist-tag add "@opengsd/get-shit-done-redux@${VERSION}" next 2>/dev/null || true
+          npm dist-tag add "@opengsd/gsd-sdk@${VERSION}" next 2>/dev/null || true
           echo "✓ next dist-tag updated to v${VERSION}"
 
       - name: Verify publish
@@ -436,20 +436,20 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           sleep 10
-          PUBLISHED=$(npm view get-shit-done-redux@"$VERSION" version 2>/dev/null || echo "NOT_FOUND")
+          PUBLISHED=$(npm view @opengsd/get-shit-done-redux@"$VERSION" version 2>/dev/null || echo "NOT_FOUND")
           if [ "$PUBLISHED" != "$VERSION" ]; then
             echo "::error::Published version verification failed. Expected $VERSION, got $PUBLISHED"
             exit 1
           fi
-          echo "✓ Verified: get-shit-done-redux@$VERSION is live on npm"
-          SDK_PUBLISHED=$(npm view @gsd-redux/sdk@"$VERSION" version 2>/dev/null || echo "NOT_FOUND")
+          echo "✓ Verified: @opengsd/get-shit-done-redux@$VERSION is live on npm"
+          SDK_PUBLISHED=$(npm view @opengsd/gsd-sdk@"$VERSION" version 2>/dev/null || echo "NOT_FOUND")
           if [ "$SDK_PUBLISHED" != "$VERSION" ]; then
             echo "::error::SDK version verification failed. Expected $VERSION, got $SDK_PUBLISHED"
             exit 1
           fi
-          echo "✓ Verified: @gsd-redux/sdk@$VERSION is live on npm"
+          echo "✓ Verified: @opengsd/gsd-sdk@$VERSION is live on npm"
           # Verify latest tag
-          LATEST_TAG=$(npm dist-tag ls get-shit-done-redux 2>/dev/null | grep "latest:" | awk '{print $2}')
+          LATEST_TAG=$(npm dist-tag ls @opengsd/get-shit-done-redux 2>/dev/null | grep "latest:" | awk '{print $2}')
           echo "✓ latest tag points to: $LATEST_TAG"
 
       - name: Summary
@@ -462,8 +462,8 @@ jobs:
             echo "**DRY RUN** — npm publish, tagging, and push skipped" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Published to npm as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- SDK also published: \`@gsd-redux/sdk@${VERSION}\` as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- SDK also published: \`@opengsd/gsd-sdk@${VERSION}\` as \`latest\`" >> "$GITHUB_STEP_SUMMARY"
             echo "- Tagged \`v${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
             echo "- PR created to merge back to main" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Install: \`npx get-shit-done-redux@latest\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Install: \`npx @opengsd/get-shit-done-redux@latest\`" >> "$GITHUB_STEP_SUMMARY"
           fi

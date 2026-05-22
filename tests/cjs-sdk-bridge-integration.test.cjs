@@ -4,7 +4,7 @@
  * Integration test for `get-shit-done/bin/lib/cjs-sdk-bridge.cjs` — locks the
  * load-success invariant that Phase 5/6 silently violated before this PR.
  *
- * Original bug: the bridge used `require('@gsd-redux/sdk')` to load the
+ * Original bug: the bridge used `require('@opengsd/gsd-sdk')` to load the
  * runtime-bridge module. That package name is not resolvable from the root
  * `node_modules` (the SDK lives at `./sdk/` as a sibling, not a dependency),
  * and even if it were, the public entry didn't expose `executeForCjs` or

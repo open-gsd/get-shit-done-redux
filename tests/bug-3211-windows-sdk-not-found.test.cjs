@@ -6,7 +6,7 @@ process.env.GSD_TEST_MODE = '1';
  * Regression tests for bug #3211.
  *
  * Windows 11 + PowerShell 7 + Node v22.22.1, fresh
- * `npx get-shit-done-redux@latest --global --claude`:
+ * `npx @opengsd/get-shit-done-redux@latest --global --claude`:
  *   gsd-sdk: The term 'gsd-sdk' is not recognized
  *
  * Root causes (Windows sibling of #3231):

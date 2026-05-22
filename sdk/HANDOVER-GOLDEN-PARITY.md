@@ -30,7 +30,7 @@ Use this document at the start of a new session so work continues in context wit
    - `QUERY-HANDLERS.md` is maintained and current.
 
 3. **Track D — CJS deprecation headers** (done)
-   - `gsd-tools.cjs` already has `@deprecated` JSDoc header (lines 3-6) pointing to `gsd-sdk query` and `@gsd-redux/sdk`.
+   - `gsd-tools.cjs` already has `@deprecated` JSDoc header (lines 3-6) pointing to `gsd-sdk query` and `@opengsd/gsd-sdk`.
    - No additional CJS file deletion in scope per #2302.
 
 4. **CI verification** (should run before any PR)

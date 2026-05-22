@@ -10,8 +10,8 @@
 
 **Resolve context rot — a degradação de qualidade que acontece conforme o Claude enche a janela de contexto.**
 
-[![npm version](https://img.shields.io/npm/v/get-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-redux)
-[![npm downloads](https://img.shields.io/npm/dm/get-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-redux)
+[![npm version](https://img.shields.io/npm/v/%40opengsd%2Fget-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@opengsd/get-shit-done-redux)
+[![npm downloads](https://img.shields.io/npm/dm/%40opengsd%2Fget-shit-done-redux?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/@opengsd/get-shit-done-redux)
 [![Tests](https://img.shields.io/github/actions/workflow/status/open-gsd/get-shit-done-redux/test.yml?branch=main&style=for-the-badge&logo=github&label=Tests)](https://github.com/open-gsd/get-shit-done-redux/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/mYgfVNfA2r)
 [![GitHub stars](https://img.shields.io/github/stars/open-gsd/get-shit-done-redux?style=for-the-badge&logo=github&color=181717)](https://github.com/open-gsd/get-shit-done-redux)
@@ -20,7 +20,7 @@
 <br>
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 **Funciona em Mac, Windows e Linux.**
@@ -82,7 +82,7 @@ Lista completa nas [notas de release v1.39.0](https://github.com/open-gsd/get-sh
 - **Build & test gate pós-merge** — o passo 5.6 de `execute-phase` agora detecta automaticamente o comando de build em `workflow.build_command`, com fallback para Xcode (`.xcodeproj`), Makefile, Justfile, Cargo, Go, Python ou npm. Projetos Xcode/iOS rodam `xcodebuild build` e `xcodebuild test` automaticamente. Funciona em modo paralelo e serial.
 - **Modelo de review por runtime** — `review.models.<cli>` permite que cada CLI externa de review (codex, gemini, etc.) escolha seu próprio modelo, independente do perfil de planner/executor.
 - **Herança de configuração de workstream** — quando `GSD_WORKSTREAM` está definido, o `.planning/config.json` raiz é carregado primeiro e merge-deep com o config da workstream (workstream vence em conflito). Um `null` explícito no config da workstream sobrescreve corretamente o valor raiz.
-- **Workflow manual de canary release** — `.github/workflows/canary.yml` publica builds `{base}-canary.{N}` de `get-shit-done-redux` e `@gsd-redux/sdk` na dist-tag `@canary` a partir de `dev`, sob demanda via `workflow_dispatch`.
+- **Workflow manual de canary release** — `.github/workflows/canary.yml` publica builds `{base}-canary.{N}` de `@opengsd/get-shit-done-redux` e `@opengsd/gsd-sdk` na dist-tag `@canary` a partir de `dev`, sob demanda via `workflow_dispatch`.
 - **Consolidação de skills: 86 → 59** — 4 novos skills agrupados (`capture`, `phase`, `config`, `workspace`) absorvem 31 micro-skills. 6 skills pais existentes absorvem wrap-up e sub-operações como flags: `update --sync/--reapply`, `sketch --wrap-up`, `spike --wrap-up`, `map-codebase --fast/--query`, `code-review --fix`, `progress --do/--next`. Sem perda funcional.
 
 ---
@@ -90,7 +90,7 @@ Lista completa nas [notas de release v1.39.0](https://github.com/open-gsd/get-sh
 ## Primeiros passos
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 O instalador pede:
@@ -112,7 +112,7 @@ Verifique com:
 ### Mantendo atualizado
 
 ```bash
-npx get-shit-done-redux@latest
+npx @opengsd/get-shit-done-redux@latest
 ```
 
 <details>
@@ -120,49 +120,49 @@ npx get-shit-done-redux@latest
 
 ```bash
 # Claude Code
-npx get-shit-done-redux --claude --global
-npx get-shit-done-redux --claude --local
+npx @opengsd/get-shit-done-redux --claude --global
+npx @opengsd/get-shit-done-redux --claude --local
 
 # OpenCode
-npx get-shit-done-redux --opencode --global
+npx @opengsd/get-shit-done-redux --opencode --global
 
 # Gemini CLI
-npx get-shit-done-redux --gemini --global
+npx @opengsd/get-shit-done-redux --gemini --global
 
 # Kilo
-npx get-shit-done-redux --kilo --global
-npx get-shit-done-redux --kilo --local
+npx @opengsd/get-shit-done-redux --kilo --global
+npx @opengsd/get-shit-done-redux --kilo --local
 
 # Codex
-npx get-shit-done-redux --codex --global
-npx get-shit-done-redux --codex --local
+npx @opengsd/get-shit-done-redux --codex --global
+npx @opengsd/get-shit-done-redux --codex --local
 
 # Copilot
-npx get-shit-done-redux --copilot --global
-npx get-shit-done-redux --copilot --local
+npx @opengsd/get-shit-done-redux --copilot --global
+npx @opengsd/get-shit-done-redux --copilot --local
 
 # Cursor
-npx get-shit-done-redux --cursor --global
-npx get-shit-done-redux --cursor --local
+npx @opengsd/get-shit-done-redux --cursor --global
+npx @opengsd/get-shit-done-redux --cursor --local
 
 # Antigravity
-npx get-shit-done-redux --antigravity --global
-npx get-shit-done-redux --antigravity --local
+npx @opengsd/get-shit-done-redux --antigravity --global
+npx @opengsd/get-shit-done-redux --antigravity --local
 
 # Augment
-npx get-shit-done-redux --augment --global     # Install to ~/.augment/
-npx get-shit-done-redux --augment --local      # Install to ./.augment/
+npx @opengsd/get-shit-done-redux --augment --global     # Install to ~/.augment/
+npx @opengsd/get-shit-done-redux --augment --local      # Install to ./.augment/
 
 # Trae
-npx get-shit-done-redux --trae --global        # Install to ~/.trae/
-npx get-shit-done-redux --trae --local         # Install to ./.trae/
+npx @opengsd/get-shit-done-redux --trae --global        # Install to ~/.trae/
+npx @opengsd/get-shit-done-redux --trae --local         # Install to ./.trae/
 
 # Cline
-npx get-shit-done-redux --cline --global       # Install to ~/.cline/
-npx get-shit-done-redux --cline --local        # Install to ./.clinerules
+npx @opengsd/get-shit-done-redux --cline --global       # Install to ~/.cline/
+npx @opengsd/get-shit-done-redux --cline --local        # Install to ./.clinerules
 
 # Todos
-npx get-shit-done-redux --all --global
+npx @opengsd/get-shit-done-redux --all --global
 ```
 
 Use `--global` (`-g`) ou `--local` (`-l`) para pular a pergunta de local.
@@ -415,50 +415,50 @@ Adicione padrões sensíveis ao deny list do Claude Code:
 
 **Comandos não funcionam como esperado?**
 - Rode `/gsd-help`
-- Reinstale com `npx get-shit-done-redux@latest`
+- Reinstale com `npx @opengsd/get-shit-done-redux@latest`
 
 **Em Docker/container?**
 - Defina `CLAUDE_CONFIG_DIR` antes da instalação:
 
 ```bash
-CLAUDE_CONFIG_DIR=/home/youruser/.claude npx get-shit-done-redux --global
+CLAUDE_CONFIG_DIR=/home/youruser/.claude npx @opengsd/get-shit-done-redux --global
 ```
 
 ### Desinstalar
 
 ```bash
 # Instalações globais
-npx get-shit-done-redux --claude --global --uninstall
-npx get-shit-done-redux --opencode --global --uninstall
-npx get-shit-done-redux --gemini --global --uninstall
-npx get-shit-done-redux --kilo --global --uninstall
-npx get-shit-done-redux --codex --global --uninstall
-npx get-shit-done-redux --copilot --global --uninstall
-npx get-shit-done-redux --cursor --global --uninstall
-npx get-shit-done-redux --antigravity --global --uninstall
-npx get-shit-done-redux --augment --global --uninstall
-npx get-shit-done-redux --trae --global --uninstall
-npx get-shit-done-redux --cline --global --uninstall
+npx @opengsd/get-shit-done-redux --claude --global --uninstall
+npx @opengsd/get-shit-done-redux --opencode --global --uninstall
+npx @opengsd/get-shit-done-redux --gemini --global --uninstall
+npx @opengsd/get-shit-done-redux --kilo --global --uninstall
+npx @opengsd/get-shit-done-redux --codex --global --uninstall
+npx @opengsd/get-shit-done-redux --copilot --global --uninstall
+npx @opengsd/get-shit-done-redux --cursor --global --uninstall
+npx @opengsd/get-shit-done-redux --antigravity --global --uninstall
+npx @opengsd/get-shit-done-redux --augment --global --uninstall
+npx @opengsd/get-shit-done-redux --trae --global --uninstall
+npx @opengsd/get-shit-done-redux --cline --global --uninstall
 
 # Instalações locais (projeto atual)
-npx get-shit-done-redux --claude --local --uninstall
-npx get-shit-done-redux --opencode --local --uninstall
-npx get-shit-done-redux --gemini --local --uninstall
-npx get-shit-done-redux --kilo --local --uninstall
-npx get-shit-done-redux --codex --local --uninstall
-npx get-shit-done-redux --copilot --local --uninstall
-npx get-shit-done-redux --cursor --local --uninstall
-npx get-shit-done-redux --antigravity --local --uninstall
-npx get-shit-done-redux --augment --local --uninstall
-npx get-shit-done-redux --trae --local --uninstall
-npx get-shit-done-redux --cline --local --uninstall
+npx @opengsd/get-shit-done-redux --claude --local --uninstall
+npx @opengsd/get-shit-done-redux --opencode --local --uninstall
+npx @opengsd/get-shit-done-redux --gemini --local --uninstall
+npx @opengsd/get-shit-done-redux --kilo --local --uninstall
+npx @opengsd/get-shit-done-redux --codex --local --uninstall
+npx @opengsd/get-shit-done-redux --copilot --local --uninstall
+npx @opengsd/get-shit-done-redux --cursor --local --uninstall
+npx @opengsd/get-shit-done-redux --antigravity --local --uninstall
+npx @opengsd/get-shit-done-redux --augment --local --uninstall
+npx @opengsd/get-shit-done-redux --trae --local --uninstall
+npx @opengsd/get-shit-done-redux --cline --local --uninstall
 ```
 
 ---
 
 ## Community Ports
 
-OpenCode, Gemini CLI, Kilo e Codex agora são suportados nativamente via `npx get-shit-done-redux`.
+OpenCode, Gemini CLI, Kilo e Codex agora são suportados nativamente via `npx @opengsd/get-shit-done-redux`.
 
 | Projeto | Plataforma | Descrição |
 |---------|------------|-----------|

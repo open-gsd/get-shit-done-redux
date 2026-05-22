@@ -35,7 +35,7 @@
  * ## CJS consumption
  *
  * ```js
- * const { executeForCjs } = require('@gsd-redux/sdk/dist/runtime-bridge-sync/index.js');
+ * const { executeForCjs } = require('@opengsd/gsd-sdk/dist/runtime-bridge-sync/index.js');
  * const result = executeForCjs({ registryCommand: 'generate-slug', registryArgs: ['My Phase'], ... });
  * if (result.ok) console.log(result.data); // { slug: 'my-phase' }
  * ```
@@ -135,7 +135,7 @@ function getSyncFn(): (input: RuntimeBridgeExecuteInput) => RuntimeBridgeSyncRes
  *
  * @example
  * ```js
- * const { executeForCjs } = require('@gsd-redux/sdk/dist/runtime-bridge-sync/index.js');
+ * const { executeForCjs } = require('@opengsd/gsd-sdk/dist/runtime-bridge-sync/index.js');
  * const result = executeForCjs({
  *   registryCommand: 'generate-slug',
  *   registryArgs: ['My Phase'],

@@ -2,7 +2,7 @@
 
 /**
  * @deprecated The supported programmatic surface is `gsd-sdk query` (SDK query registry)
- * and the `@gsd-redux/sdk` package. This Node CLI remains the compatibility implementation
+ * and the `@opengsd/gsd-sdk` package. This Node CLI remains the compatibility implementation
  * for shell scripts and older workflows; prefer calling the SDK from agents and automation.
  *
  * GSD Tools — CLI utility for GSD workflow operations

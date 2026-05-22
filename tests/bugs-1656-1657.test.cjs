@@ -50,7 +50,7 @@ describe('#1656: community .sh hooks must be present in hooks/dist', () => {
 // ─── #1657 ───────────────────────────────────────────────────────────────────
 //
 // Historical context: #1657 originally guarded against a broken `promptSdk()`
-// flow that shipped when `@gsd-redux/sdk` did not yet exist on npm. The
+// flow that shipped when `@opengsd/gsd-sdk` did not yet exist on npm. The
 // package was published at v0.1.0 and is now a hard runtime requirement for
 // every /gsd-* command (they all shell out to `gsd-sdk query …`).
 //
