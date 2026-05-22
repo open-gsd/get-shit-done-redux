@@ -14,8 +14,13 @@ function read(rel) {
 describe('bug #3091: sdk install guidance and agent fallbacks use query-capable CLI', () => {
   test('quick workflow install hint references get-shit-done-redux (not @gsd-redux/sdk)', () => {
     const content = read('get-shit-done/workflows/quick.md');
-    assert.ok(content.includes('npm install -g get-shit-done-redux'));
+    // After #3668: quick.md uses local-first preflight which may reference
+    // get-shit-done-redux via npx or npm install -g. Either form is acceptable.
+    const referencesGsdRedux = content.includes('npm install -g get-shit-done-redux') ||
+      content.includes('npx get-shit-done-redux');
+    assert.ok(referencesGsdRedux, 'quick.md install hint must reference get-shit-done-redux');
     assert.ok(!content.includes('npm install -g @gsd-redux/sdk'));
+    assert.ok(!content.includes('npm install -g @gsd-build/sdk'));
   });
 
   test('agent docs no longer reference node_modules/@gsd-redux/sdk/dist/cli.js query fallback', () => {
