@@ -184,6 +184,22 @@ function isUsageOutput(text) {
 }
 
 /**
+ * Isolated HOME directory used by runNpm() for the lifetime of this process.
+ *
+ * npm reads $HOME/.npmrc (user config) and writes to $HOME/.npm (default cache)
+ * when these paths are not overridden. On Docker hosts the running user's HOME
+ * may be uninitialized, unwritable, or contain stale state from a prior run —
+ * any of which causes `npm pack` / `npm install -g` to fail. Fix: create a
+ * fresh temp directory once per process, redirect HOME + cache + userconfig into
+ * it, and clean up on process exit. This makes runNpm() independent of the
+ * caller's environment. (#131)
+ */
+const _npmIsolatedHome = fs.mkdtempSync(path.join(require('os').tmpdir(), 'npm-home-'));
+process.on('exit', () => {
+  try { fs.rmSync(_npmIsolatedHome, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
+});
+
+/**
  * Run `fn` with console.log/warn/error captured, returning {stdout, stderr}
  * with ANSI colors stripped. Re-throws any exception fn threw AFTER restoring
  * the real console so the caller's assertion path sees the failure (without
@@ -248,12 +264,28 @@ function toPosixPath(p) {
 function runNpm(args, options = {}) {
   const isWindows = process.platform === 'win32';
   const npmCmd = isWindows ? 'npm.cmd' : 'npm';
+  // Inject an isolated HOME so npm never reads from or writes to the caller's
+  // $HOME. This prevents failures on Docker hosts where HOME is unwritable or
+  // uninitialized. The caller may still pass { env: {...} } in options to
+  // further override specific variables — those overrides win because they are
+  // applied after the isolated env below (via the spread in the merge). (#131)
+  const isolatedEnv = {
+    ...process.env,
+    HOME: _npmIsolatedHome,
+    npm_config_cache: path.join(_npmIsolatedHome, '.npm'),
+    npm_config_userconfig: path.join(_npmIsolatedHome, '.npmrc'),
+  };
   const defaults = {
     encoding: 'utf-8',
     shell: isWindows,
     timeout: 180000,
+    env: isolatedEnv,
   };
-  return execFileSync(npmCmd, args, { ...defaults, ...options }).trim();
+  // Merge options; if caller passes their own env, merge it on top of isolatedEnv
+  // so the isolation is preserved unless the caller explicitly overrides HOME.
+  const { env: callerEnv, ...otherOptions } = options;
+  const mergedEnv = callerEnv ? { ...isolatedEnv, ...callerEnv } : isolatedEnv;
+  return execFileSync(npmCmd, args, { ...defaults, ...otherOptions, env: mergedEnv }).trim();
 }
 
 module.exports = { runGsdTools, createTempDir, createTempProject, createTempGitProject, cleanup, parseFrontmatter, isUsageOutput, captureConsole, toPosixPath, runNpm, TOOLS_PATH };
