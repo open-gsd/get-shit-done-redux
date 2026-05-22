@@ -34,7 +34,7 @@
 
 const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, execSync } = require('child_process');
+const { execFileSync, execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -203,6 +203,37 @@ describe('prompt-injection-scan.sh', { skip: IS_WINDOWS }, () => {
 
 // ─── Base64 Obfuscation Scan ────────────────────────────────────────────────
 
+// Helper: run base64-scan.sh against a fixture directory with a given locale env.
+// Uses spawnSync (not execFileSync) so that stderr is captured even when exit code is 0.
+// execFileSync only surfaces stderr via the thrown error object (non-zero exit only).
+function runScriptOnDir(scriptPath, dirPath, env) {
+  const result = spawnSync('bash', [scriptPath, '--dir', dirPath], {
+    encoding: 'utf-8',
+    timeout: 30000,
+    env: { ...process.env, ...env },
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
+// Helper: run base64-scan.sh against a single file with a given locale env.
+// Uses spawnSync so that stderr is captured even when exit code is 0.
+function runScriptOnFile(scriptPath, filePath, env) {
+  const result = spawnSync('bash', [scriptPath, '--file', filePath], {
+    encoding: 'utf-8',
+    timeout: 30000,
+    env: { ...process.env, ...env },
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+  };
+}
+
 describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
   // Helper to encode text to base64 (cross-platform)
   function toBase64(text) {
@@ -258,6 +289,116 @@ describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
     } catch (err) {
       assert.equal(err.status, 2);
     }
+  });
+
+  // ── Locale / non-UTF8 regression tests (#116) ────────────────────────────
+  // These tests verify that the scan does not produce "Illegal byte sequence"
+  // errors or hang when encountering binary / non-UTF8 files.
+  //
+  // Root cause (empirically verified on macOS 26.5 / BSD tr):
+  //   `tr -cd '[:print:]'` under LC_CTYPE=en_US.UTF-8 (BSD tr) rejects bytes
+  //   that are not valid UTF-8 sequences with "Illegal byte sequence" and
+  //   exits non-zero. The base64-scan.sh script uses `local` for the
+  //   assignment `local printable_count=$(... | tr -cd '[:print:]' | ...)`,
+  //   which masks the tr exit code (bash: `local` always returns 0), so the
+  //   script exits 0 while emitting the error to stderr — producing incomplete
+  //   security coverage silently.
+  //   Fix: prefix the tr invocation with LC_ALL=C so tr treats input as
+  //   single-byte C locale and never rejects high bytes.
+  //
+  // Fixture directory: tests/fixtures/base64-locale/
+  //   utf8-with-injection.md     — UTF-8 file with a base64-encoded injection
+  //   non-utf8-with-b64blob.bin  — raw non-UTF8 bytes + a b64 blob that
+  //                                decodes to binary (triggers the tr path)
+  //   mixed-encoding.txt         — valid UTF-8 + lone continuation bytes
+  //   clean-text.md              — negative control
+
+  const FIXTURE_DIR = path.join(PROJECT_ROOT, 'tests', 'fixtures', 'base64-locale');
+  const NON_UTF8_FIXTURE = path.join(FIXTURE_DIR, 'non-utf8-with-b64blob.bin');
+  const INJECTION_FIXTURE = path.join(FIXTURE_DIR, 'utf8-with-injection.md');
+  const CLEAN_FIXTURE = path.join(FIXTURE_DIR, 'clean-text.md');
+  const MIXED_FIXTURE = path.join(FIXTURE_DIR, 'mixed-encoding.txt');
+
+  test('locale fixtures exist', () => {
+    assert.ok(fs.existsSync(FIXTURE_DIR), `Missing fixture dir: ${FIXTURE_DIR}`);
+    assert.ok(fs.existsSync(NON_UTF8_FIXTURE), `Missing: ${NON_UTF8_FIXTURE}`);
+    assert.ok(fs.existsSync(INJECTION_FIXTURE), `Missing: ${INJECTION_FIXTURE}`);
+    assert.ok(fs.existsSync(CLEAN_FIXTURE), `Missing: ${CLEAN_FIXTURE}`);
+    assert.ok(fs.existsSync(MIXED_FIXTURE), `Missing: ${MIXED_FIXTURE}`);
+  });
+
+  test('non-UTF8 fixture actually contains non-UTF8 bytes (fixture validity check)', () => {
+    const buf = fs.readFileSync(NON_UTF8_FIXTURE);
+    // The fixture must contain bytes in 0x80-0x9F range (lone continuation / C1 range)
+    const hasHighBytes = Array.from(buf).some(b => b >= 0x80 && b <= 0x9F);
+    assert.ok(hasHighBytes, 'non-utf8 fixture must contain bytes >= 0x80 to be a valid reproducer');
+  });
+
+  test('scans non-UTF8 file containing a b64 blob without emitting "Illegal byte sequence" to stderr', () => {
+    // On origin/main without the fix, this emits "tr: Illegal byte sequence" to stderr.
+    // The trigger: a b64 blob whose decoded output contains non-UTF8 bytes causes
+    // `tr -cd '[:print:]'` to fail under en_US.UTF-8 locale (BSD tr, macOS).
+    // Fixture: non-utf8-with-b64blob.bin contains raw 0x80–0x9F bytes AND a
+    // base64 blob that decodes to content with high bytes.
+    const result = runScriptOnFile(SCRIPTS.base64, NON_UTF8_FIXTURE, {
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    assert.ok(
+      !result.stderr.includes('Illegal byte sequence'),
+      `stderr contained "Illegal byte sequence":\n${result.stderr}`
+    );
+  });
+
+  test('dir scan with non-UTF8 files under non-C locale completes cleanly within 30s', () => {
+    // On origin/main, this scan emits tr errors to stderr for every decoded-binary blob.
+    // After the fix, it must: (a) complete within the 30s timeout, (b) produce no
+    // "Illegal byte sequence" on stderr, (c) still flag the injection fixture.
+    const result = runScriptOnDir(SCRIPTS.base64, FIXTURE_DIR, {
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    assert.ok(
+      !result.stderr.includes('Illegal byte sequence'),
+      `stderr contained "Illegal byte sequence":\n${result.stderr}`
+    );
+    // The injection fixture must still be caught (security signal preserved)
+    assert.ok(
+      result.stdout.includes('FAIL'),
+      `Injection fixture was not flagged — security signal lost:\n${result.stdout}`
+    );
+    // The scan must have exited 1 (finding) not 2 (error)
+    assert.equal(result.status, 1, `Expected exit 1 (finding), got ${result.status}`);
+  });
+
+  test('clean text file is not flagged under non-C locale', () => {
+    const result = runScriptOnFile(SCRIPTS.base64, CLEAN_FIXTURE, {
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    assert.equal(result.status, 0, `False positive on clean file: ${result.stdout}`);
+    assert.ok(!result.stderr.includes('Illegal byte sequence'), `stderr: ${result.stderr}`);
+  });
+
+  test('mixed-encoding file does not cause scan to abort or hang', () => {
+    const result = runScriptOnFile(SCRIPTS.base64, MIXED_FIXTURE, {
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    // Must complete and not contain tr errors (clean file = no finding)
+    assert.ok(!result.stderr.includes('Illegal byte sequence'), `stderr: ${result.stderr}`);
+    assert.equal(result.status, 0, `Unexpected non-zero exit on mixed-encoding file: ${result.stdout}`);
+  });
+
+  test('UTF-8 injection fixture is still detected under non-C locale', () => {
+    // Ensure fixing the locale bug does not break detection of actual injections
+    const result = runScriptOnFile(SCRIPTS.base64, INJECTION_FIXTURE, {
+      LC_ALL: 'en_US.UTF-8',
+      LANG: 'en_US.UTF-8',
+    });
+    assert.equal(result.status, 1, `Injection not detected: ${result.stdout}`);
+    assert.ok(result.stdout.includes('FAIL'), `FAIL line missing: ${result.stdout}`);
+    assert.ok(!result.stderr.includes('Illegal byte sequence'), `stderr: ${result.stderr}`);
   });
 });
 

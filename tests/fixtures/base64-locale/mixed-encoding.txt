@@ -1,0 +1,3 @@
+# Mixed encoding file
+This has valid UTF-8: √© and also invalid bytes: ÄÅ
+value = normal
