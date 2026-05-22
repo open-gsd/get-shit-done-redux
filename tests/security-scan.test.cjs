@@ -327,11 +327,21 @@ describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
     assert.ok(fs.existsSync(MIXED_FIXTURE), `Missing: ${MIXED_FIXTURE}`);
   });
 
-  test('non-UTF8 fixture actually contains non-UTF8 bytes (fixture validity check)', () => {
+  test('non-UTF8 fixture is not valid UTF-8 (fixture validity check)', () => {
+    // The property that matters for the reproducer is "the file contains bytes that
+    // BSD tr rejects under en_US.UTF-8 locale" — i.e. the file is not valid UTF-8.
+    // Checking for a specific byte range (e.g. 0x80–0x9F) is too narrow: any invalid
+    // UTF-8 byte sequence would trigger the bug.  Assert on the property itself.
     const buf = fs.readFileSync(NON_UTF8_FIXTURE);
-    // The fixture must contain bytes in 0x80-0x9F range (lone continuation / C1 range)
-    const hasHighBytes = Array.from(buf).some(b => b >= 0x80 && b <= 0x9F);
-    assert.ok(hasHighBytes, 'non-utf8 fixture must contain bytes >= 0x80 to be a valid reproducer');
+    const roundTripped = Buffer.from(buf.toString('utf8'), 'utf8');
+    // If the file were valid UTF-8, round-tripping through a UTF-8 string would be
+    // lossless and the Buffer lengths would match.  Invalid bytes are replaced with
+    // the UTF-8 replacement character (U+FFFD, 3 bytes), so the round-tripped buffer
+    // is longer when invalid bytes are present.
+    assert.ok(
+      roundTripped.length !== buf.length,
+      'non-utf8 fixture must contain invalid UTF-8 sequences to be a valid reproducer'
+    );
   });
 
   test('scans non-UTF8 file containing a b64 blob without emitting "Illegal byte sequence" to stderr', () => {
@@ -362,9 +372,10 @@ describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
       !result.stderr.includes('Illegal byte sequence'),
       `stderr contained "Illegal byte sequence":\n${result.stderr}`
     );
-    // The injection fixture must still be caught (security signal preserved)
+    // The injection fixture specifically must still be caught (security signal preserved).
+    // Assert on the exact filepath to rule out false-positives on other fixtures.
     assert.ok(
-      result.stdout.includes('FAIL'),
+      result.stdout.includes(`FAIL: ${INJECTION_FIXTURE}`),
       `Injection fixture was not flagged — security signal lost:\n${result.stdout}`
     );
     // The scan must have exited 1 (finding) not 2 (error)
@@ -380,7 +391,7 @@ describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
     assert.ok(!result.stderr.includes('Illegal byte sequence'), `stderr: ${result.stderr}`);
   });
 
-  test('mixed-encoding file does not cause scan to abort or hang', () => {
+  test('mixed-encoding file (no extractable blobs) exits cleanly under non-C locale', () => {
     const result = runScriptOnFile(SCRIPTS.base64, MIXED_FIXTURE, {
       LC_ALL: 'en_US.UTF-8',
       LANG: 'en_US.UTF-8',
@@ -391,13 +402,17 @@ describe('base64-scan.sh', { skip: IS_WINDOWS }, () => {
   });
 
   test('UTF-8 injection fixture is still detected under non-C locale', () => {
-    // Ensure fixing the locale bug does not break detection of actual injections
+    // Ensure fixing the locale bug does not break detection of actual injections.
+    // Assert on the specific file path to distinguish a real finding from a false-positive.
     const result = runScriptOnFile(SCRIPTS.base64, INJECTION_FIXTURE, {
       LC_ALL: 'en_US.UTF-8',
       LANG: 'en_US.UTF-8',
     });
     assert.equal(result.status, 1, `Injection not detected: ${result.stdout}`);
-    assert.ok(result.stdout.includes('FAIL'), `FAIL line missing: ${result.stdout}`);
+    assert.ok(
+      result.stdout.includes(`FAIL: ${INJECTION_FIXTURE}`),
+      `Expected FAIL: ${INJECTION_FIXTURE} in output:\n${result.stdout}`
+    );
     assert.ok(!result.stderr.includes('Illegal byte sequence'), `stderr: ${result.stderr}`);
   });
 });

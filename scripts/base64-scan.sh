@@ -15,8 +15,71 @@
 #   2 = usage error
 set -euo pipefail
 
+# ── Locale hardening (#116) ───────────────────────────────────────────────────
+# BSD tr (macOS) treats input bytes as multi-byte characters under any UTF-8
+# locale.  When the input to `tr -cd '[:print:]'` contains bytes that are not
+# valid UTF-8 start sequences (e.g. lone continuation bytes 0x80–0x9F), BSD tr
+# emits "Illegal byte sequence" to stderr and exits non-zero.  Setting LC_ALL=C
+# forces the C locale throughout the script so every byte 0x00–0xFF is a valid
+# character — no multi-byte interpretation, no illegal-byte errors.
+#
+# This is safe for our use-case: all injection patterns are ASCII; base64 -d
+# and grep -E POSIX classes ([:space:], [:print:]) behave correctly in C locale.
+#
+# Source: `man tr` on macOS 26.5 — ENVIRONMENT section states LC_ALL / LC_CTYPE
+# control character interpretation; BSD tr rejects invalid multi-byte sequences.
+# Empirically verified: `printf '\x80\x81hello' | LC_ALL=C tr -cd '[:print:]'`
+# exits 0 and strips the high bytes cleanly.
+export LC_ALL=C
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIN_BLOB_LENGTH=40
+# Lines longer than this byte count are skipped with a partial-scan warning.
+# This prevents `grep -oE` from spending unbounded time on e.g. minified JS or
+# single-line binary blobs.  1 MiB is large enough for any realistic text file
+# line but small enough to bound blob-extraction cost.
+MAX_LINE_BYTES=1048576
+
+# -- Portable timeout wrapper (#116) ------------------------------------------
+# macOS does not ship GNU coreutils timeout.  We probe for it (or gtimeout
+# from homebrew coreutils), falling back to perl alarm(N)+exec.
+# Exit codes: GNU timeout uses 124 on timeout; perl SIGALRM produces 142.
+# Both are treated as timeout exits by is_timeout_exit() below.
+# Usage: run_with_timeout <seconds> <command> [args...]
+_TIMEOUT_CMD=""
+_init_timeout_cmd() {
+  if [[ -n "$_TIMEOUT_CMD" ]]; then return; fi
+  if command -v timeout >/dev/null 2>&1; then
+    _TIMEOUT_CMD="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    _TIMEOUT_CMD="gtimeout"
+  else
+    _TIMEOUT_CMD="perl_alarm"
+  fi
+}
+
+run_with_timeout() {
+  local secs="$1"; shift
+  _init_timeout_cmd
+  case "$_TIMEOUT_CMD" in
+    timeout|gtimeout)
+      "$_TIMEOUT_CMD" "$secs" "$@"
+      ;;
+    perl_alarm)
+      # perl sets SIGALRM after N seconds, then exec()s the command.
+      # Exit 142 (SIGALRM) when timed out.
+      perl -e '
+        my $secs = shift @ARGV;
+        alarm($secs);
+        exec(@ARGV) or die "exec: $!\n";
+      ' -- "$secs" "$@"
+      ;;
+  esac
+}
+
+# is_timeout_exit: returns 0 (true) if rc indicates a timeout kill.
+is_timeout_exit() { [[ "$1" -eq 124 || "$1" -eq 142 ]]; }
+
 
 # ─── Injection Patterns (decoded content) ────────────────────────────────────
 # Subset of patterns — if someone base64-encoded something, check for the
@@ -150,6 +213,15 @@ extract_and_check_blobs() {
 
   while IFS= read -r line; do
     line_num=$((line_num + 1))
+
+    # Guard: skip lines that exceed MAX_LINE_BYTES.  Very long lines (e.g. a
+    # minified JS bundle stored as one line, or a binary file with no newlines)
+    # would cause `grep -oE` to spend unbounded time.  We emit a partial-scan
+    # warning to stderr so the caller can see coverage was reduced.
+    if [[ ${#line} -gt $MAX_LINE_BYTES ]]; then
+      echo "SKIP: $file line $line_num (${#line} bytes > ${MAX_LINE_BYTES} limit — partial scan)" >&2
+      continue
+    fi
 
     # Skip data URIs — legitimate base64 usage
     if is_data_uri "$line"; then
