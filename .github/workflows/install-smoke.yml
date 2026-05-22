@@ -147,8 +147,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm pack --silent
-          TARBALL=$(ls get-shit-done-redux-*.tgz | head -1)
+          TARBALL=$(npm pack --silent)
+          # npm pack --silent prints the filename on stdout; no glob needed.
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Packed: $TARBALL"
 
