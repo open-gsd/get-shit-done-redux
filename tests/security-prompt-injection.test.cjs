@@ -580,18 +580,22 @@ describe('scanForInjection: fixture files trip the scanner', () => {
     });
   }
 
-  test('malicious-markdown-link fixture is flagged by scanner', () => {
-    // Issue #113: scanForInjection must detect hostile markdown link payloads:
-    // javascript: URIs, data: text/html URIs, embedded userinfo credentials,
-    // and sensitive keys in query strings. The fixture contains one hostile
-    // example per rule class and benign negative controls that must not fire.
+  test('malicious-markdown-link fixture is flagged by scanner — all 4 rule IDs fire', () => {
+    // Issue #113: scanForInjection must detect hostile markdown link payloads.
+    // The fixture contains one hostile example per rule class (MD-LINK-JS-SCHEME,
+    // MD-LINK-DATA-SCHEME, MD-LINK-USERINFO, MD-LINK-TOKEN-IN-QUERY) and benign
+    // negative controls (data:image/png, mailto:, normal https, port-only URL).
+    // Each rule ID must appear in structuredFindings; benign lines must not add extras.
     const content = fs.readFileSync(
       path.join(FIXTURE_DIR, 'context-malicious-markdown-link.md'), 'utf-8');
-    const result = scanForInjection(content);
+    const result = scanForInjection(content, { file: 'context-malicious-markdown-link.md' });
     assert.strictEqual(result.clean, false,
       'fixture with hostile markdown links must be reported unclean');
-    assert.ok(Array.isArray(result.findings) && result.findings.length > 0,
-      'findings must be non-empty for hostile fixture');
+    const ruleIds = (result.structuredFindings || []).map(f => f.ruleId);
+    for (const expected of ['MD-LINK-JS-SCHEME', 'MD-LINK-DATA-SCHEME', 'MD-LINK-USERINFO', 'MD-LINK-TOKEN-IN-QUERY']) {
+      assert.ok(ruleIds.includes(expected),
+        `fixture must trigger ${expected}; found: [${ruleIds.join(', ')}]`);
+    }
   });
 
   test('strict-mode invisible-unicode fixture is detected', () => {
@@ -667,8 +671,9 @@ describe('scanForInjection: MD-LINK-JS-SCHEME (javascript: URI)', () => {
     const f = result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-JS-SCHEME');
     assert.ok(f, 'finding must carry ruleId MD-LINK-JS-SCHEME');
     assert.strictEqual(f.file, 'test.md', 'finding must carry file context');
-    assert.ok(typeof f.line === 'number', 'finding must carry line number');
-    assert.ok(typeof f.match === 'string' && f.match.length > 0, 'finding must carry matched substring');
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /javascript:/i.test(f.match),
+      `finding match must include the hostile scheme; got: ${f.match}`);
   });
 
   test('positive: javascript: with case variations', () => {
@@ -706,8 +711,9 @@ describe('scanForInjection: MD-LINK-DATA-SCHEME (data: non-image/font URI)', () 
     const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME');
     assert.ok(f, 'finding must carry ruleId MD-LINK-DATA-SCHEME');
     assert.strictEqual(f.file, 'plan.md');
-    assert.ok(typeof f.line === 'number');
-    assert.ok(typeof f.match === 'string' && f.match.length > 0);
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /data:/i.test(f.match),
+      `finding match must include the hostile data: scheme; got: ${f.match}`);
   });
 
   test('positive: data:application/javascript is flagged', () => {
@@ -758,8 +764,9 @@ describe('scanForInjection: MD-LINK-USERINFO (embedded credentials in URL)', () 
     const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-USERINFO');
     assert.ok(f, 'finding must carry ruleId MD-LINK-USERINFO');
     assert.strictEqual(f.file, 'doc.md');
-    assert.ok(typeof f.line === 'number');
-    assert.ok(typeof f.match === 'string' && f.match.length > 0);
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /@/.test(f.match),
+      `finding match must include the @ character from userinfo; got: ${f.match}`);
   });
 
   test('positive: http://admin:pw@192.168.1.1 is flagged', () => {
@@ -800,8 +807,9 @@ describe('scanForInjection: MD-LINK-TOKEN-IN-QUERY (sensitive key in query strin
     const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-TOKEN-IN-QUERY');
     assert.ok(f, 'finding must carry ruleId MD-LINK-TOKEN-IN-QUERY');
     assert.strictEqual(f.file, 'plan.md');
-    assert.ok(typeof f.line === 'number');
-    assert.ok(typeof f.match === 'string' && f.match.length > 0);
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /token=/i.test(f.match),
+      `finding match must include the sensitive key name; got: ${f.match}`);
   });
 
   test('positive: &access_token= is flagged', () => {
