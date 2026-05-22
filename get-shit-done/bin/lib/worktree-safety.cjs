@@ -385,6 +385,94 @@ function gitResultOk(result) {
   return result && result.exitCode === 0 && !result.timedOut;
 }
 
+/**
+ * Walk <worktreePath>/.planning/ recursively and collect absolute paths of
+ * all files whose names match *SUMMARY.md.  Returns [] when the directory
+ * does not exist or cannot be read.
+ *
+ * Mirrors the shell fallback in quick.md (#2296, #2070, #2838):
+ *   find "$WT/.planning" -name "*SUMMARY.md"
+ */
+function defaultFindSummaryFiles(worktreePath) {
+  const planningDir = path.join(worktreePath, '.planning');
+  const results = [];
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile() && entry.name.endsWith('SUMMARY.md')) {
+        results.push(full);
+      }
+    }
+  }
+  walk(planningDir);
+  return results;
+}
+
+/**
+ * Rescue uncommitted SUMMARY.md artifacts from a worktree into the main repo
+ * tree before the dirty-state check.  Mirrors the shell-fallback rescue block
+ * in quick.md (lines 878–891, #2296/#2070/#2838).
+ *
+ * For each *SUMMARY.md found under <worktreePath>/.planning/:
+ *   - compute relative path from worktree root  → .planning/<id>-SUMMARY.md
+ *   - destination = <repoRoot>/<relPath>
+ *   - copy when dest is absent or content differs
+ *
+ * Returns a Set of worktree-relative paths (e.g. ".planning/q1-SUMMARY.md")
+ * that were eligible for rescue (regardless of whether a copy was needed).
+ * These paths are filtered out of the git-status porcelain output so a
+ * SUMMARY-only dirty worktree does not block cleanup.
+ *
+ * Injected deps (all optional — falls back to real FS):
+ *   findSummaryFiles(worktreePath) → string[]
+ *   existsSync(path) → boolean
+ *   readFileSync(path) → string
+ *   mkdirSync(dir, opts)
+ *   copyFileSync(src, dest)
+ */
+function rescueSummaryArtifacts(worktreePath, repoRoot, deps) {
+  const findSummaryFiles = deps.findSummaryFiles || defaultFindSummaryFiles;
+  const existsSync = deps.existsSync || fs.existsSync;
+  const readFileSync = deps.readFileSync || ((p) => fs.readFileSync(p, 'utf8'));
+  const mkdirSync = deps.mkdirSync || ((d, o) => fs.mkdirSync(d, o));
+  const copyFileSync = deps.copyFileSync || fs.copyFileSync;
+
+  const summaryPaths = findSummaryFiles(worktreePath);
+  const rescuedRelPaths = new Set();
+
+  for (const absPath of summaryPaths) {
+    // relPath is the path relative to the worktree root (e.g. ".planning/q1-SUMMARY.md")
+    const relPath = absPath.slice(worktreePath.length).replace(/^[/\\]/, '');
+    rescuedRelPaths.add(relPath);
+
+    const dest = path.join(repoRoot, relPath);
+    let needsCopy = !existsSync(dest);
+    if (!needsCopy) {
+      try {
+        const srcContent = readFileSync(absPath);
+        const destContent = readFileSync(dest);
+        needsCopy = srcContent !== destContent;
+      } catch {
+        needsCopy = true;
+      }
+    }
+    if (needsCopy) {
+      try {
+        mkdirSync(path.dirname(dest), { recursive: true });
+        copyFileSync(absPath, dest);
+      } catch {
+        // Best-effort rescue — if it fails the dirty check below will decide fate
+      }
+    }
+  }
+
+  return rescuedRelPaths;
+}
+
 function executeWorktreeWaveCleanupPlan(plan, deps = {}) {
   const execGit = deps.execGit || execGitDefault;
   const entries = Array.isArray(plan?.entries) ? plan.entries : [];
@@ -453,11 +541,36 @@ function executeWorktreeWaveCleanupPlan(plan, deps = {}) {
       break;
     }
 
+    // Safety net: rescue uncommitted SUMMARY.md artifacts before the dirty check.
+    // The executor leaves <quick_id>-SUMMARY.md uncommitted by contract — the
+    // orchestrator commits it.  Mirrors quick.md shell fallback (#2296, #2070, #2838, #3804).
+    const rescuedRelPaths = rescueSummaryArtifacts(entry.worktree_path, plan.repoRoot, deps);
+
     const worktreeStatus = execGit(['-C', entry.worktree_path, 'status', '--porcelain', '--untracked-files=all'], { cwd: plan.repoRoot });
-    if (!gitResultOk(worktreeStatus) || worktreeStatus.stdout) {
+    if (!gitResultOk(worktreeStatus)) {
       result.status = 'blocked';
       result.reason = 'worktree_dirty';
-      result.stderr = worktreeStatus?.stdout || worktreeStatus?.stderr || '';
+      result.stderr = worktreeStatus?.stderr || '';
+      results.push(result);
+      pending.push(...entries.slice(i + 1));
+      ok = false;
+      break;
+    }
+    // Filter rescued SUMMARY paths out of the porcelain output before deciding dirty.
+    // A line like "?? .planning/q1-SUMMARY.md" should not block when the SUMMARY
+    // has already been rescued into the main tree.
+    const dirtyLines = (worktreeStatus.stdout || '')
+      .split('\n')
+      .filter((line) => {
+        if (!line.trim()) return false;
+        // porcelain v1 format: "XY path" (3-char prefix + space + path)
+        const filePath = line.slice(3).trim();
+        return !rescuedRelPaths.has(filePath);
+      });
+    if (dirtyLines.length > 0) {
+      result.status = 'blocked';
+      result.reason = 'worktree_dirty';
+      result.stderr = dirtyLines.join('\n');
       results.push(result);
       pending.push(...entries.slice(i + 1));
       ok = false;

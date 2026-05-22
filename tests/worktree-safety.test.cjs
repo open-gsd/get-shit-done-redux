@@ -651,6 +651,126 @@ describe('executeWorktreeWaveCleanupPlan', () => {
     assert.deepEqual(result.pending.map((entry) => entry.branch), ['worktree-agent-a2']);
   });
 
+  test('#3804: rescues uncommitted SUMMARY.md from worktree .planning/ before dirty check', () => {
+    // Fixture: the only dirty file is .planning/q1-SUMMARY.md (executor left it uncommitted
+    // per documented contract — orchestrator commits it).  cleanup-wave MUST rescue it
+    // (copy to main tree) and succeed, not return worktree_dirty.
+    const calls = [];
+    const rescued = [];
+    const plan = {
+      ok: true,
+      repoRoot: '/repo/main',
+      action: 'cleanup_wave',
+      discovery: 'manifest',
+      entries: [{
+        agent_id: 'a1',
+        worktree_path: '/repo/.claude/worktrees/agent-a1',
+        branch: 'worktree-agent-a1',
+        expected_base: 'abc123',
+      }],
+    };
+    const result = executeWorktreeWaveCleanupPlan(plan, {
+      execGit: (args) => {
+        calls.push(args.join(' '));
+        const key = args.join(' ');
+        if (key === '-C /repo/.claude/worktrees/agent-a1 rev-parse --abbrev-ref HEAD') {
+          return { exitCode: 0, stdout: 'worktree-agent-a1', stderr: '' };
+        }
+        if (key === 'merge-base HEAD worktree-agent-a1') {
+          return { exitCode: 0, stdout: 'abc123', stderr: '' };
+        }
+        if (key === 'diff --diff-filter=D --name-only HEAD...worktree-agent-a1') {
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (key === '-C /repo/.claude/worktrees/agent-a1 status --porcelain --untracked-files=all') {
+          // Only the SUMMARY is dirty — no other modified files
+          return { exitCode: 0, stdout: '?? .planning/q1-SUMMARY.md', stderr: '' };
+        }
+        if (key.startsWith('merge worktree-agent-a1')) {
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (key === 'worktree remove /repo/.claude/worktrees/agent-a1 --force') {
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (key === 'branch -D worktree-agent-a1') {
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      // Inject FS deps so tests don't touch the real filesystem
+      findSummaryFiles: (worktreePath) => {
+        if (worktreePath === '/repo/.claude/worktrees/agent-a1') {
+          return ['/repo/.claude/worktrees/agent-a1/.planning/q1-SUMMARY.md'];
+        }
+        return [];
+      },
+      readFileSync: (p) => {
+        if (p === '/repo/.claude/worktrees/agent-a1/.planning/q1-SUMMARY.md') return 'summary content';
+        return '';
+      },
+      existsSync: (_p) => false,
+      mkdirSync: () => {},
+      copyFileSync: (src, dest) => { rescued.push({ src, dest }); },
+    });
+
+    // SUMMARY was rescued into the main tree
+    assert.equal(rescued.length, 1, 'SUMMARY.md must be rescued (copied) to main tree');
+    assert.equal(rescued[0].src, '/repo/.claude/worktrees/agent-a1/.planning/q1-SUMMARY.md');
+    assert.equal(rescued[0].dest, '/repo/main/.planning/q1-SUMMARY.md');
+
+    // Cleanup succeeded — SUMMARY-only dirty state must not block
+    assert.equal(result.ok, true, 'cleanup must succeed when only SUMMARY.md is dirty');
+    assert.equal(result.entries[0].status, 'merged_removed');
+    assert.equal(result.entries[0].reason, 'ok');
+  });
+
+  test('#3804: still blocks when worktree has non-SUMMARY dirty files alongside SUMMARY', () => {
+    // If there are OTHER dirty files (not SUMMARY), cleanup must still block.
+    const plan = {
+      ok: true,
+      repoRoot: '/repo/main',
+      action: 'cleanup_wave',
+      discovery: 'manifest',
+      entries: [{
+        agent_id: 'a1',
+        worktree_path: '/repo/.claude/worktrees/agent-a1',
+        branch: 'worktree-agent-a1',
+        expected_base: 'abc123',
+      }],
+    };
+    const result = executeWorktreeWaveCleanupPlan(plan, {
+      execGit: (args) => {
+        const key = args.join(' ');
+        if (key === '-C /repo/.claude/worktrees/agent-a1 rev-parse --abbrev-ref HEAD') {
+          return { exitCode: 0, stdout: 'worktree-agent-a1', stderr: '' };
+        }
+        if (key === 'merge-base HEAD worktree-agent-a1') {
+          return { exitCode: 0, stdout: 'abc123', stderr: '' };
+        }
+        if (key === 'diff --diff-filter=D --name-only HEAD...worktree-agent-a1') {
+          return { exitCode: 0, stdout: '', stderr: '' };
+        }
+        if (key === '-C /repo/.claude/worktrees/agent-a1 status --porcelain --untracked-files=all') {
+          // SUMMARY plus another dirty file
+          return { exitCode: 0, stdout: '?? .planning/q1-SUMMARY.md\nM  src/foo.js', stderr: '' };
+        }
+        throw new Error(`unexpected git call after dirty check: ${key}`);
+      },
+      findSummaryFiles: (worktreePath) => {
+        if (worktreePath === '/repo/.claude/worktrees/agent-a1') {
+          return ['/repo/.claude/worktrees/agent-a1/.planning/q1-SUMMARY.md'];
+        }
+        return [];
+      },
+      readFileSync: () => 'summary content',
+      existsSync: () => false,
+      mkdirSync: () => {},
+      copyFileSync: () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.entries[0].reason, 'worktree_dirty');
+  });
+
   test('blocks dirty worktrees before merge/remove/delete', () => {
     const calls = [];
     const plan = {
