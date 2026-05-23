@@ -146,3 +146,60 @@ all RED on pre-fix `origin/main`). Covers each drift item with concrete fixtures
 **Allowlist:** `scripts/shared-module-handsync-allowlist.json` — `verify.cjs` entry updated to
 reference the generator and freshness check. Classification remains `cooperating-sibling` (verify.cjs
 is still a full implementation; only Check 8 helpers are generated).
+
+#### Extension — issue #26: W005/W006-archived/I001 generator migration
+
+PR #3479 fixed three false-positive classes in `sdk/src/query/validate.ts`. PR #3806 hand-ported
+the three fixes to `get-shit-done/bin/lib/verify.cjs` but did not route them through the generator
+— meaning they could drift again. Issue #26 closes this gap by extending `gen-validate.mjs`
+(introduced in this amendment above) to also extract and export the W005/W006-archived/I001 items.
+
+**Four additional exports added to `validate.generated.cjs` (issue #26):**
+
+1. **`phaseDirNameRe` (W005)** — The `PHASE_DIR_NAME_RE` constant `/^\d{2,}(?:\.\d+)*-[\w-]+$/`
+   is now a named export from `validate.ts` and extracted by `gen-validate.mjs`. `verify.cjs`
+   Check 6 consumes `phaseDirNameRe` from the generated artifact instead of an inline copy.
+   Reproducer: `mkdir -p .planning/phases/999.1-foo` → zero W005 (previously fired with
+   the `\d{2}` two-digits-only regex before PR #3806 / PR #3479).
+
+2. **`PHASE_TOKEN_FROM_DIR_RE` (W006-archived)** — The regex constant previously inline in
+   `verify.cjs`'s `forEachArchivedPhaseToken()` and `collectDiskPhases()`. Extracted from the
+   module-level `const` in the compiled output. `verify.cjs` inline copy removed.
+
+3. **`MILESTONE_ARCHIVE_DIR_RE` (W006-archived)** — The regex constant previously inline in
+   `verify.cjs`'s `listMilestoneArchiveDirs()`. Extracted the same way. `verify.cjs` inline copy
+   removed. Together `PHASE_TOKEN_FROM_DIR_RE` and `MILESTONE_ARCHIVE_DIR_RE` ensure the
+   archive-walking logic uses the same patterns as `validate.ts`.
+
+4. **`canonicalPlanStem` (I001)** — The top-level helper function previously inline in
+   `verify.cjs` Check 7. Extracted via `extractTopLevelFunction()` (brace-balanced parser).
+   `verify.cjs` inline copy removed. Fix: `68-01-scaffolding-PLAN.md` correctly matches
+   `68-01-SUMMARY.md` — both reduce to `68-01` via `canonicalPlanStem()`.
+
+**W006-archived coverage note:** Issue #26 describes W006-archived as "RELATED TO but DISTINCT
+FROM" PR #156's W006 fix. Investigation confirmed both fixes are ALREADY in `verify.cjs` (from
+PR #3806). The gap was generator coverage: the regex constants used by `forEachArchivedPhaseToken`
+were inline copies with no generator protection. This amendment closes that gap by extracting them.
+No new behavioral fix is required — the generator pattern extension is the deliverable.
+
+**`validate.ts` change:** `PHASE_DIR_NAME_RE` promoted from inline anonymous regex to a named
+`export const` so it appears as an extractable identifier in the compiled ESM output.
+
+**Extraction methods used:**
+- `extractConstRegExp()` (new in `gen-validate.mjs`) — handles `const` and `export const`
+  single-line RegExp assignments. Used for `phaseDirNameRe`, `PHASE_TOKEN_FROM_DIR_RE`,
+  `MILESTONE_ARCHIVE_DIR_RE`.
+- `extractTopLevelFunction()` (new in `gen-validate.mjs`) — brace-balanced parser for top-level
+  named function declarations. Used for `canonicalPlanStem`.
+
+**Parity tests:** `tests/26-w005-w006-i001-cjs-drift-regression.test.cjs` — 7 tests.
+- W005: no false positive for `999.1-foo`; W005 still fires for single-digit prefix.
+- W006-archived: no false W006 for phase archived under `milestones/v1.0-phases/`; unit tests
+  for `MILESTONE_ARCHIVE_DIR_RE` and `PHASE_TOKEN_FROM_DIR_RE` export and behavior.
+- I001: no false I001 when long-stem PLAN matches short-stem SUMMARY via `canonicalPlanStem`;
+  I001 still fires when there is genuinely no SUMMARY; unit test for `canonicalPlanStem` export.
+
+**Cross-references:** issue #26 cures the same false-positive scenarios as issue #6 but for
+the W005/W006-archived/I001 check paths. The artifact `validate.generated.cjs` now covers all
+six drift surfaces originally identified across both issues. This completes the validate.ts ↔
+verify.cjs migration scope for generator-pattern coverage.
