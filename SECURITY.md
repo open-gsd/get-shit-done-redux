@@ -31,3 +31,11 @@ Security issues in the GSD codebase that could:
 ## Recognition
 
 We appreciate responsible disclosure and will credit reporters in release notes (unless you prefer to remain anonymous).
+
+## Org-level security baseline
+
+This file covers how to report individual vulnerabilities. For the broader
+org-wide security posture — scanner controls, incident-audit checklists,
+ownership model, and rollout plan — see:
+
+[`docs/security/baseline.md`](docs/security/baseline.md)
