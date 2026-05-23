@@ -158,6 +158,10 @@ should_skip_file() {
     */base64-scan.sh) return 0 ;;
     */security-scan.test.cjs) return 0 ;;
   esac
+  # Skip scanner fixture directories — they contain deliberate injection samples
+  case "$file" in
+    tests/fixtures/*) return 0 ;;
+  esac
   return 1
 }
 
