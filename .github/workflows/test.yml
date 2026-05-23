@@ -75,34 +75,28 @@ jobs:
 
     steps:
       # actions/checkout@v6 uses includeIf.gitdir: to inject auth on Windows.
-      # On Windows git 2.54, the gitdir conditional include is unreliable for a
-      # freshly-initialised repo being fetched for the first time: the path
-      # comparison (forward-slash vs backslash, case sensitivity) can fail to
-      # match, leaving the fetch unauthenticated.
+      # On Windows git 2.54, the gitdir path comparison (forward-slash key vs
+      # backslash-resolved gitdir) is unreliable, so the conditional include
+      # intermittently fails to fire and the fetch proceeds unauthenticated.
       #
-      # Fix: pre-seed the global git config with the extraheader on Windows and
-      # use persist-credentials: false so checkout does NOT also write an
-      # includeIf entry. The Rebase check step already sets its own remote URL
-      # (x-access-token:${GITHUB_TOKEN}@github.com) for subsequent fetches.
-      - name: Seed git auth header (Windows)
+      # Fix: use actions/checkout@v4 on Windows only. v4 writes the auth token
+      # directly to .git/config (http.extraheader) instead of using includeIf,
+      # which is reliable across all git versions and platforms.
+      # Linux/macOS continue using v6 (includeIf works correctly there).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2 (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:$env:GH_TOKEN"))
-          git config --global "http.https://github.com/.extraheader" "AUTHORIZATION: basic $encoded"
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           # Fetch full history so we can merge origin/main for stale-base detection.
           fetch-depth: 0
-          # Windows: persist-credentials is set to false because the global git
-          # config was pre-seeded above. Using true here would cause checkout to
-          # also write an includeIf entry, resulting in duplicate Authorization
-          # headers on Windows git 2.54 (HTTP 400). On Linux/macOS the
-          # includeIf mechanism works correctly, so true is safe there.
-          persist-credentials: ${{ runner.os != 'Windows' }}
+          persist-credentials: true
+          token: ${{ github.token }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (Linux/macOS)
+        if: runner.os != 'Windows'
+        with:
+          # Fetch full history so we can merge origin/main for stale-base detection.
+          fetch-depth: 0
+          persist-credentials: true
           token: ${{ github.token }}
 
       - name: Guard — require GitHub-hosted runner
