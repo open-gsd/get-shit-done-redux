@@ -218,6 +218,7 @@ should_skip_file() {
   # Skip the scan scripts themselves and test files
   case "$file" in
     */secret-scan.sh) return 0 ;;
+    */secret-scan-lint.test.cjs) return 0 ;;
     */security-scan.test.cjs) return 0 ;;
     */security-prompt-injection.test.cjs) return 0 ;;
     tests/fixtures/adversarial/security/*|*/tests/fixtures/adversarial/security/*) return 0 ;;
