@@ -580,25 +580,22 @@ describe('scanForInjection: fixture files trip the scanner', () => {
     });
   }
 
-  test('PINNED: malicious-markdown-link fixture is NOT flagged by current scanner', () => {
-    // The INJECTION_PATTERNS set in security.cjs targets instruction
-    // override, role manipulation, system-prompt extraction, fake
-    // boundary tags, and base64/exfil verbs. It does NOT flag link
-    // payloads such as javascript:/data:/embedded-credentials URLs.
-    //
-    // This is a deliberate scope decision (link analysis belongs to
-    // a renderer / link-policy module, not the prompt-injection
-    // scanner) — but the issue #3596 acceptance list calls out
-    // "malicious markdown links" so we PIN the current behavior
-    // here. Negative proof: a fixture composed entirely of hostile
-    // links is reported `clean: true`. If a future change extends
-    // the scanner to catch these patterns, this assertion will fail
-    // and force a deliberate update to the acceptance map.
+  test('malicious-markdown-link fixture is flagged by scanner — all 4 rule IDs fire', () => {
+    // Issue #113: scanForInjection must detect hostile markdown link payloads.
+    // The fixture contains one hostile example per rule class (MD-LINK-JS-SCHEME,
+    // MD-LINK-DATA-SCHEME, MD-LINK-USERINFO, MD-LINK-TOKEN-IN-QUERY) and benign
+    // negative controls (data:image/png, mailto:, normal https, port-only URL).
+    // Each rule ID must appear in structuredFindings; benign lines must not add extras.
     const content = fs.readFileSync(
       path.join(FIXTURE_DIR, 'context-malicious-markdown-link.md'), 'utf-8');
-    const result = scanForInjection(content);
-    assert.strictEqual(result.clean, true,
-      'malicious link patterns are currently out of scope for scanForInjection (PINNED)');
+    const result = scanForInjection(content, { file: 'context-malicious-markdown-link.md' });
+    assert.strictEqual(result.clean, false,
+      'fixture with hostile markdown links must be reported unclean');
+    const ruleIds = (result.structuredFindings || []).map(f => f.ruleId);
+    for (const expected of ['MD-LINK-JS-SCHEME', 'MD-LINK-DATA-SCHEME', 'MD-LINK-USERINFO', 'MD-LINK-TOKEN-IN-QUERY']) {
+      assert.ok(ruleIds.includes(expected),
+        `fixture must trigger ${expected}; found: [${ruleIds.join(', ')}]`);
+    }
   });
 
   test('strict-mode invisible-unicode fixture is detected', () => {
@@ -647,6 +644,225 @@ describe('validatePath: hostile path values are rejected before write', () => {
       'a symlink whose target is outside the base must fail containment');
     // Cleanup the outside dir; the link itself is cleaned by cleanup(tmpDir).
     fs.rmSync(outside, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  });
+});
+
+// ─── scanForInjection: markdown link rules (issue #113) ─────────────────────
+//
+// Per-rule positive and negative tests for the four MARKDOWN_LINK_PATTERNS
+// added in #113. Each rule fires on a targeted positive case and stays silent
+// on the benign negative controls below.
+
+const {
+  MARKDOWN_LINK_PATTERNS,
+} = require('../get-shit-done/bin/lib/security.cjs');
+
+describe('scanForInjection: MD-LINK-JS-SCHEME (javascript: URI)', () => {
+  // Source: OWASP Cross-Site Scripting Prevention Cheat Sheet
+  // https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+  test('positive: javascript: link target is flagged', () => {
+    const text = "[click](javascript:alert('xss'))";
+    const result = scanForInjection(text, { file: 'test.md' });
+    assert.strictEqual(result.clean, false, 'javascript: link must be flagged');
+    assert.ok(
+      Array.isArray(result.structuredFindings) && result.structuredFindings.length > 0,
+      'structuredFindings must be populated',
+    );
+    const f = result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-JS-SCHEME');
+    assert.ok(f, 'finding must carry ruleId MD-LINK-JS-SCHEME');
+    assert.strictEqual(f.file, 'test.md', 'finding must carry file context');
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /javascript:/i.test(f.match),
+      `finding match must include the hostile scheme; got: ${f.match}`);
+  });
+
+  test('positive: javascript: with case variations', () => {
+    const result = scanForInjection('[x](JavaScript:void(0))');
+    assert.strictEqual(result.clean, false, 'case-insensitive javascript: must be flagged');
+  });
+
+  test('negative: https: link is not flagged as JS scheme', () => {
+    const result = scanForInjection('[repo](https://github.com/owner/repo)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-JS-SCHEME'),
+      'https: link must not trigger MD-LINK-JS-SCHEME',
+    );
+  });
+
+  test('negative: mailto: link is not flagged as JS scheme', () => {
+    const result = scanForInjection('[email](mailto:user@example.com)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-JS-SCHEME'),
+      'mailto: link must not trigger MD-LINK-JS-SCHEME',
+    );
+  });
+});
+
+describe('scanForInjection: MD-LINK-DATA-SCHEME (data: non-image/font URI)', () => {
+  // Source: OWASP File Upload Cheat Sheet — SVG Files
+  // https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html#svg-files
+  // data:image/svg+xml is unsafe (SVG can host <script>).
+  test('positive: data:text/html link target is flagged', () => {
+    const text = '[x](data:text/html;base64,PHNjcmlwdD4=)';
+    const result = scanForInjection(text, { file: 'plan.md' });
+    assert.strictEqual(result.clean, false, 'data:text/html must be flagged');
+    const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME');
+    assert.ok(f, 'finding must carry ruleId MD-LINK-DATA-SCHEME');
+    assert.strictEqual(f.file, 'plan.md');
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /data:/i.test(f.match),
+      `finding match must include the hostile data: scheme; got: ${f.match}`);
+  });
+
+  test('positive: data:application/javascript is flagged', () => {
+    const result = scanForInjection('[x](data:application/javascript,alert(1))');
+    assert.strictEqual(result.clean, false);
+    assert.ok(
+      result.structuredFindings && result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME'),
+    );
+  });
+
+  test('positive: data:image/svg+xml is flagged (SVG can host script)', () => {
+    const result = scanForInjection('[x](data:image/svg+xml;base64,PHN2Zz4=)');
+    assert.strictEqual(result.clean, false, 'data:image/svg+xml must be flagged per OWASP');
+    assert.ok(
+      result.structuredFindings && result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME'),
+    );
+  });
+
+  test('negative: data:image/png is NOT flagged (safe-list)', () => {
+    const result = scanForInjection('![logo](data:image/png;base64,iVBOR=)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME'),
+      'data:image/png must not trigger MD-LINK-DATA-SCHEME',
+    );
+  });
+
+  test('negative: data:font/woff2 is NOT flagged (safe-list)', () => {
+    const result = scanForInjection('[f](data:font/woff2;base64,AAAA=)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-DATA-SCHEME'),
+      'data:font/woff2 must not trigger MD-LINK-DATA-SCHEME',
+    );
+  });
+});
+
+describe('scanForInjection: MD-LINK-USERINFO (embedded credentials in URL)', () => {
+  // Source:
+  //   RFC 3986 §3.2.1 — userinfo syntax
+  //   https://www.rfc-editor.org/rfc/rfc3986#section-3.2.1
+  //   RFC 9110 §4.2.4 — HTTP deprecates userinfo
+  //   https://www.rfc-editor.org/rfc/rfc9110#section-4.2.4
+  test('positive: https://user:pass@host is flagged', () => {
+    const text = '[creds](https://user:secret@example.com/path)';
+    const result = scanForInjection(text, { file: 'doc.md' });
+    assert.strictEqual(result.clean, false, 'userinfo in URL must be flagged');
+    const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-USERINFO');
+    assert.ok(f, 'finding must carry ruleId MD-LINK-USERINFO');
+    assert.strictEqual(f.file, 'doc.md');
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /@/.test(f.match),
+      `finding match must include the @ character from userinfo; got: ${f.match}`);
+  });
+
+  test('positive: http://admin:pw@192.168.1.1 is flagged', () => {
+    const result = scanForInjection('[router](http://admin:password123@192.168.1.1/)');
+    assert.strictEqual(result.clean, false);
+    assert.ok(
+      result.structuredFindings && result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-USERINFO'),
+    );
+  });
+
+  test('negative: mailto:user@host is NOT flagged (no colon before @)', () => {
+    const result = scanForInjection('[email](mailto:user@example.com)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-USERINFO'),
+      'mailto: must not trigger MD-LINK-USERINFO',
+    );
+  });
+
+  test('negative: https://host:443/path is NOT flagged (port, not userinfo)', () => {
+    const result = scanForInjection('[service](https://example.com:8443/path)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-USERINFO'),
+      'port-only URL must not trigger MD-LINK-USERINFO',
+    );
+  });
+});
+
+describe('scanForInjection: MD-LINK-TOKEN-IN-QUERY (sensitive key in query string)', () => {
+  // Source: RFC 9700 OAuth 2.0 Security BCP §4.3.1
+  // https://www.rfc-editor.org/rfc/rfc9700#section-4.3.1
+  // "tokens MUST NOT be passed in URI query parameters"
+  test('positive: ?token= in link target is flagged', () => {
+    const text = '[exfil](https://attacker.example.com/?token=leaked_value)';
+    const result = scanForInjection(text, { file: 'plan.md' });
+    assert.strictEqual(result.clean, false, '?token= must be flagged');
+    const f = result.structuredFindings && result.structuredFindings.find(sf => sf.ruleId === 'MD-LINK-TOKEN-IN-QUERY');
+    assert.ok(f, 'finding must carry ruleId MD-LINK-TOKEN-IN-QUERY');
+    assert.strictEqual(f.file, 'plan.md');
+    assert.ok(typeof f.line === 'number' && f.line >= 1, 'finding must carry 1-based line number');
+    assert.ok(typeof f.match === 'string' && /token=/i.test(f.match),
+      `finding match must include the sensitive key name; got: ${f.match}`);
+  });
+
+  test('positive: &access_token= is flagged', () => {
+    const result = scanForInjection('[x](https://api.example.com/data?foo=1&access_token=secret)');
+    assert.strictEqual(result.clean, false);
+    assert.ok(
+      result.structuredFindings && result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-TOKEN-IN-QUERY'),
+    );
+  });
+
+  test('positive: ?api_key= is flagged', () => {
+    const result = scanForInjection('[x](https://api.example.com/?api_key=abc123)');
+    assert.strictEqual(result.clean, false);
+    assert.ok(
+      result.structuredFindings && result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-TOKEN-IN-QUERY'),
+    );
+  });
+
+  test('negative: ?page=2&limit=10 does not fire (benign query keys)', () => {
+    const result = scanForInjection('[page](https://api.example.com/items?page=2&limit=10)');
+    assert.ok(
+      !Array.isArray(result.structuredFindings) ||
+      !result.structuredFindings.some(sf => sf.ruleId === 'MD-LINK-TOKEN-IN-QUERY'),
+      'benign query keys must not trigger MD-LINK-TOKEN-IN-QUERY',
+    );
+  });
+});
+
+// ─── Parity test: hook MARKDOWN_LINK_PATTERNS is superset of canonical ───────
+//
+// D1: Prevents future drift between scripts/security.cjs (canonical export)
+// and hooks/gsd-read-injection-scanner.js (inlined for hook independence).
+// If the hook's inline list does not contain every pattern from the canonical
+// export, this test fails loudly and forces a deliberate update.
+
+describe('MARKDOWN_LINK_PATTERNS parity: hook inline list is superset of canonical', () => {
+  test('every canonical MARKDOWN_LINK_PATTERN source string appears in the hook source', () => {
+    assert.ok(
+      Array.isArray(MARKDOWN_LINK_PATTERNS),
+      'security.cjs must export MARKDOWN_LINK_PATTERNS array',
+    );
+
+    const hookSource = fs.readFileSync(READ_SCANNER_HOOK, 'utf-8');
+
+    for (const entry of MARKDOWN_LINK_PATTERNS) {
+      // Each entry is { pattern: RegExp, ruleId: string, safePredicate?: Function }
+      assert.ok(entry.pattern instanceof RegExp, `entry must have a RegExp .pattern`);
+      const src = entry.pattern.source;
+      assert.ok(
+        hookSource.includes(src),
+        `Hook gsd-read-injection-scanner.js must contain pattern source: ${src}`,
+      );
+    }
   });
 });
 
