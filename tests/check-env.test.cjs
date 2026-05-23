@@ -160,13 +160,33 @@ describe('check-env.sh', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: Integration smoke — exits 0 on the live worktree root
+  // Test 6: Integration smoke — script runs without tool-error on live root
+  //
+  // Verifies the script executes against a real repo without a tool error (exit 2).
+  // Exit 0 or 1 are acceptable — local Node may differ from the .nvmrc pin (22).
+  // Uses --json for structured assertion, avoiding raw output-grep.
   // -------------------------------------------------------------------------
-  test('exits 0 when run against the live worktree root', () => {
-    const { status, stdout, stderr } = runScript(LIVE_ROOT);
-    assert.equal(
-      status, 0,
-      `Expected exit 0 on live repo, got ${status}.\nstdout: ${stdout}\nstderr: ${stderr}`
+  test('script runs without tool error on the live worktree root (--json)', () => {
+    const { status, stdout, stderr } = runScript(LIVE_ROOT, ['--json']);
+    assert.notEqual(
+      status, 2,
+      `Expected exit 0 or 1 on live repo, got exit 2 (tool error).\nstdout: ${stdout}\nstderr: ${stderr}`
     );
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch (err) {
+      assert.fail(`Live repo --json was not valid JSON: ${err.message}\nstdout: ${stdout}`);
+    }
+    assert.equal(typeof parsed.pass, 'boolean', 'Live repo JSON must have boolean pass');
+    assert.ok(Array.isArray(parsed.checks), 'Live repo JSON must have checks array');
+    // Node version check must be present and pass (Node >=22 is installed)
+    const nodeCheck = parsed.checks.find((c) => c.name === 'node-version');
+    assert.ok(nodeCheck, 'node-version check must be present in live repo output');
+    assert.equal(nodeCheck.status, 'pass', `node-version should pass on live repo, got: ${nodeCheck.status} — ${nodeCheck.message}`);
+    // Lockfile checks must pass on the live repo
+    const lockfileCheck = parsed.checks.find((c) => c.name === 'lockfile-present');
+    assert.ok(lockfileCheck, 'lockfile-present check must appear in live output');
+    assert.equal(lockfileCheck.status, 'pass', `lockfile-present should pass on live repo`);
   });
 });

@@ -48,7 +48,8 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.84",
@@ -61,6 +62,7 @@
     "fallow": "^2.70.0"
   },
   "scripts": {
+    "check:env": "./scripts/check-env.sh",
     "check:integrity": "./scripts/check-npm-integrity.sh",
     "build:hooks": "node scripts/build-hooks.js",
     "build:sdk": "cd sdk && npm ci && npm run build",
