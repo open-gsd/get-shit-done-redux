@@ -278,9 +278,12 @@ for (var ki = 0; ki < pkgKeys.length; ki++) {
     continue;
   }
 
-  // Not declared in root deps → extraneous.
+  // Not declared in root deps → this is a transitive dependency (installed
+  // because a non-root package requires it). Transitive deps are valid even
+  // if absent from root declarations. Skip the range check too — we have no
+  // declared range to compare against. npm's own "extraneous: true" marker
+  // (handled above) is the authoritative signal for unwanted packages.
   if (!declaredRanges[pkgName]) {
-    extraneousFound.push({ name: pkgName, version: installedVersion });
     continue;
   }
 
