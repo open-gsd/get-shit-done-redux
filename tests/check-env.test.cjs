@@ -18,9 +18,10 @@
 
 'use strict';
 
-const { describe, test } = require('node:test');
+const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
 const SCRIPT = path.resolve(__dirname, '..', 'scripts', 'check-env.sh');
@@ -45,6 +46,37 @@ function runScript(cwd, args = []) {
 }
 
 describe('check-env.sh', () => {
+  // -------------------------------------------------------------------------
+  // Dynamic .nvmrc setup: write fixture .nvmrc files at test-run time so the
+  // tests are correct across all Node major versions in the CI matrix (Node 22,
+  // 24, 26, …).  A hardcoded value like "26" passes on Node 26 but fails on
+  // every other matrix row; using the active major makes the fixture portable.
+  //
+  // good/     → .nvmrc = active Node major  (should match → exit 0)
+  // bad-nvmrc/ → .nvmrc = active+99          (guaranteed mismatch → exit 1)
+  // -------------------------------------------------------------------------
+  const activeNodeMajor = parseInt(process.version.match(/^v(\d+)/)[1], 10);
+  const goodNvmrc = path.join(FIXTURE_ROOT, 'good', '.nvmrc');
+  const badNvmrc = path.join(FIXTURE_ROOT, 'bad-nvmrc', '.nvmrc');
+  let originalGoodNvmrc;
+  let originalBadNvmrc;
+
+  before(() => {
+    originalGoodNvmrc = fs.existsSync(goodNvmrc) ? fs.readFileSync(goodNvmrc, 'utf8') : null;
+    originalBadNvmrc = fs.existsSync(badNvmrc) ? fs.readFileSync(badNvmrc, 'utf8') : null;
+    fs.writeFileSync(goodNvmrc, `${activeNodeMajor}\n`);
+    fs.writeFileSync(badNvmrc, `${activeNodeMajor + 99}\n`);
+  });
+
+  after(() => {
+    if (originalGoodNvmrc !== null) {
+      fs.writeFileSync(goodNvmrc, originalGoodNvmrc);
+    }
+    if (originalBadNvmrc !== null) {
+      fs.writeFileSync(badNvmrc, originalBadNvmrc);
+    }
+  });
+
   // -------------------------------------------------------------------------
   // Test 1: Happy path — all checks green
   // -------------------------------------------------------------------------
@@ -87,7 +119,8 @@ describe('check-env.sh', () => {
   // -------------------------------------------------------------------------
   test('exits 1 when .nvmrc major version does not match active Node major', () => {
     const cwd = path.join(FIXTURE_ROOT, 'bad-nvmrc');
-    // Fixture .nvmrc says 22; current Node is v26.
+    // Fixture .nvmrc is set to (activeNodeMajor + 99) by the before() hook above,
+    // guaranteeing a mismatch regardless of the CI matrix Node version.
     const { status, stdout } = runScript(cwd);
     assert.equal(
       status, 1,
