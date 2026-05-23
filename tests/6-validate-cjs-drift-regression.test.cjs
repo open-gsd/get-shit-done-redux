@@ -107,7 +107,16 @@ describe('Drift item 1 — W007 activeDiskPhases: no false W007 for archived pha
     // Active phasesDir: only phase 2
     fs.mkdirSync(path.join(phasesDir, '2-api'), { recursive: true });
 
-    // Old shipped milestone archive: contains phase 1 (no longer in ROADMAP)
+    // Current active milestone archive: v1.1-phases contains phase 2 (in ROADMAP)
+    fs.mkdirSync(
+      path.join(planningDir, 'milestones', 'v1.1-phases', '2-api'),
+      { recursive: true },
+    );
+
+    // Old shipped milestone archive: v1.0-phases contains phase 1 (no longer in ROADMAP)
+    // v1.0 sorts before v1.1 so getActiveMilestoneArchiveDir returns v1.1.
+    // forEachArchivedPhaseToken walks BOTH v1.0 and v1.1, so diskPhases gets "1".
+    // collectDiskPhases (activeDiskPhases) only uses v1.1 (active archive) — "1" excluded.
     fs.mkdirSync(
       path.join(planningDir, 'milestones', 'v1.0-phases', '1-foundation'),
       { recursive: true },
@@ -119,18 +128,24 @@ describe('Drift item 1 — W007 activeDiskPhases: no false W007 for archived pha
   });
 
   test('no W007 for archived phase "1" absent from current ROADMAP', () => {
+    // validate.ts: activeDiskPhases has only "2" (from active phasesDir + v1.1 archive).
+    //   "1" is in diskPhases (forEachArchivedPhaseToken walks v1.0) but NOT activeDiskPhases.
+    //   W007 iterates activeDiskPhases → "1" never checked → no false W007. Correct.
+    // verify.cjs pre-fix: diskPhases = collectDiskPhases + forEachArchivedPhaseToken.
+    //   diskPhases includes "1" (from v1.0 archive). W007 iterates diskPhases → "1" not
+    //   in roadmapPhases → W007 fires for "1". False positive.
     const result = runGsdTools(['validate', 'health', '--json'], tmpDir);
     assert.strictEqual(result.success, true, `unexpected failure: ${result.error}`);
     const data = JSON.parse(result.output);
     const w007 = (data.warnings ?? []).filter((w) => w.code === 'W007');
-    // Filter to W007 that mentions phase "1" (not "01" or "1A" etc.)
+    // Filter to W007 that mentions only phase "1" (not "1A", "01A", etc.)
     const w007Phase1 = w007.filter(
       (w) => /\bPhase 1\b/i.test(w.message) && !/\b1[A-Z]\b/i.test(w.message),
     );
     assert.strictEqual(
       w007Phase1.length,
       0,
-      `Expected no W007 for archived phase 1, got: ${JSON.stringify(w007)}`,
+      `Expected no W007 for archived phase 1 (v1.0 archive), got: ${JSON.stringify(w007)}`,
     );
   });
 });
