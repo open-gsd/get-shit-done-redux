@@ -27,6 +27,36 @@ const { execFileSync } = require('node:child_process');
 // The helpers under test.
 const { runNpm, isolatedNpmEnv } = require('./helpers.cjs');
 
+// Resolve a filesystem path to its canonical (symlink-free) form even if the
+// leaf does not exist yet (e.g. ~/.npm before npm has written its cache).
+// Walks up to the nearest existing ancestor, resolves that, then re-appends
+// the trailing segments. This handles macOS /var → /private/var symlinks for
+// paths created under os.tmpdir() where the leaf directory may not exist yet.
+function safeRealpath(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch (_) {
+    // Leaf does not exist — resolve the nearest existing ancestor then
+    // reconstruct the original suffix so the result is still canonical.
+    const segments = [];
+    let cur = p;
+    for (;;) {
+      const parent = path.dirname(cur);
+      if (parent === cur) {
+        // Reached filesystem root — return original path unchanged.
+        return p;
+      }
+      segments.unshift(path.basename(cur));
+      cur = parent;
+      try {
+        return path.join(fs.realpathSync(cur), ...segments);
+      } catch (__) {
+        // Keep walking up.
+      }
+    }
+  }
+}
+
 describe('bug-131: runNpm isolates HOME from the caller environment', () => {
   // ── Test 1 — runNpm works with an unwritable HOME ────────────────────────
   // Spawn a child Node process that sets HOME to a chmod-0500 directory, then
@@ -142,27 +172,12 @@ describe('bug-131: runNpm isolates HOME from the caller environment', () => {
     );
 
     // It must be somewhere under the system tmp dir, confirming isolation.
-    // Use realpathSync on both sides so that macOS /var→/private/var symlinks
+    // Use safeRealpath on both sides so that macOS /var→/private/var symlinks
     // do not cause a false mismatch when os.tmpdir() and the resolved cache
     // path differ only in symlink expansion. The cache sub-directory (.npm) may
-    // not exist yet, so resolve the nearest existing ancestor and reconstruct.
-    const sysTmp = fs.realpathSync(os.tmpdir());
-    const realCacheDir = (() => {
-      try {
-        return fs.realpathSync(effectiveCacheDir);
-      } catch (_) {
-        // .npm sub-dir may not exist yet; resolve its parent (the isolated HOME
-        // temp dir) which always exists, then re-append the basename.
-        try {
-          return path.join(
-            fs.realpathSync(path.dirname(effectiveCacheDir)),
-            path.basename(effectiveCacheDir),
-          );
-        } catch (__) {
-          return effectiveCacheDir;
-        }
-      }
-    })();
+    // not exist yet; safeRealpath walks up to the nearest existing ancestor.
+    const sysTmp = safeRealpath(os.tmpdir());
+    const realCacheDir = safeRealpath(effectiveCacheDir);
     assert.ok(
       realCacheDir.startsWith(sysTmp),
       `npm cache dir ${realCacheDir} should be under tmpdir ${sysTmp}`,
@@ -192,10 +207,10 @@ describe('bug-131: runNpm isolates HOME from the caller environment', () => {
     );
 
     // Must live under the system tmpdir, confirming it is an isolated temp directory.
-    const sysTmp = fs.realpathSync(os.tmpdir());
-    const realHome = (() => {
-      try { return fs.realpathSync(env.HOME); } catch (_) { return env.HOME; }
-    })();
+    // Use safeRealpath on both sides so that macOS /var→/private/var symlinks
+    // do not cause a false mismatch.
+    const sysTmp = safeRealpath(os.tmpdir());
+    const realHome = safeRealpath(env.HOME);
     assert.ok(
       realHome.startsWith(sysTmp),
       `isolatedNpmEnv() HOME ${realHome} should be under tmpdir ${sysTmp}`,
