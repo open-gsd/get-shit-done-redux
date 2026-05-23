@@ -16,6 +16,23 @@ npm test
 
 ---
 
+## Bootstrap your environment
+
+For a step-by-step setup guide covering Node version managers, `npm ci`, the environment
+validator, daily commands, and troubleshooting, see:
+
+**[docs/contributing/bootstrap.md](docs/contributing/bootstrap.md)**
+
+Quick start:
+
+```bash
+nvm use           # activate the pinned Node version from .nvmrc
+npm run check:env # validate your environment
+npm ci            # install from lockfile
+```
+
+---
+
 ## Types of Contributions
 
 GSD accepts three types of contributions. Each type has a different process and a different bar for acceptance. **Read this section before opening anything.**
