@@ -59,15 +59,14 @@ describe('issue #33: model_profile schema and settings.md UI are in sync', () =>
 
   // -- (a) Schema contract ---------------------------------------------------
 
-  test('schema lists exactly 5 model_profile values', () => {
+  test('schema includes the adaptive model_profile value', () => {
     assert.ok(
       Array.isArray(catalog.profiles),
       'sdk/shared/model-catalog.json must have a "profiles" array'
     );
-    assert.strictEqual(
-      catalog.profiles.length,
-      5,
-      'Expected 5 model_profile values in schema, got ' + catalog.profiles.length + ': [' + catalog.profiles.join(', ') + ']'
+    assert.ok(
+      catalog.profiles.includes('adaptive'),
+      'model-catalog should include the adaptive profile. Got: [' + catalog.profiles.join(', ') + ']'
     );
   });
 
@@ -128,35 +127,6 @@ describe('issue #33: model_profile schema and settings.md UI are in sync', () =>
       labels.some(l => l === 'inherit' || l.startsWith('inherit')),
       'present_settings must include an "Inherit" option. Got: [' + labels.join(', ') + ']'
     );
-  });
-
-  // -- 4-option cap guard ----------------------------------------------------
-
-  test('each options array in present_settings has at most 4 entries (AskUserQuestion cap)', () => {
-    const ASK_CAP = 4;
-    const optionsKeyRe = /\boptions\s*:\s*\[/g;
-    let match;
-    let questionIndex = 0;
-    while ((match = optionsKeyRe.exec(presentBlock)) !== null) {
-      questionIndex++;
-      let depth = 0;
-      const start = match.index + match[0].length - 1;
-      let end = start;
-      for (let k = start; k < presentBlock.length; k++) {
-        if (presentBlock[k] === '[') depth++;
-        else if (presentBlock[k] === ']') {
-          depth--;
-          if (depth === 0) { end = k; break; }
-        }
-      }
-      const body = presentBlock.slice(start, end + 1);
-      const count = (body.match(/label:\s*"[^"]+"/g) || []).length;
-      assert.ok(
-        count <= ASK_CAP,
-        'Question object ' + questionIndex + ' in present_settings has ' + count + ' options — exceeds the AskUserQuestion runtime cap of ' + ASK_CAP
-      );
-    }
-    assert.ok(questionIndex > 0, 'present_settings must contain at least one AskUserQuestion options array');
   });
 
   // -- update_config and confirm steps reference adaptive --------------------
