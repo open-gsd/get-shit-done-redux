@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { cleanup, createTempDir, runNpm } = require('./helpers.cjs');
+const { cleanup, createTempDir, runNpm, isolatedNpmEnv } = require('./helpers.cjs');
 const { SMOKE, runSmoke } = require('../scripts/release-tarball-smoke.cjs');
 
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
@@ -71,6 +71,7 @@ describe('release-tarball-smoke', () => {
       installPrefix,
       expectedVersion: pkg.version,
       fixtureDir,
+      npmEnv: isolatedNpmEnv(),
     });
 
     assert.equal(result.code, SMOKE.OK);
@@ -84,6 +85,7 @@ describe('release-tarball-smoke', () => {
       installPrefix,
       expectedVersion: '99.99.99',
       fixtureDir,
+      npmEnv: isolatedNpmEnv(),
     });
 
     assert.equal(result.code, SMOKE.VERSION_MISMATCH);
@@ -101,6 +103,7 @@ describe('release-tarball-smoke', () => {
       expectedVersion: pkg.version,
       fixtureDir,
       lifecycleCommands: ['init', 'discuss-phase', 'plan-phase'],
+      npmEnv: isolatedNpmEnv(),
     });
 
     assert.equal(result.code, SMOKE.OK);
@@ -139,6 +142,7 @@ describe('release-tarball-smoke', () => {
       expectedVersion: pkg.version,
       fixtureDir,
       lifecycleCommands: ['init', 'nonexistent-phase-xyz'],
+      npmEnv: isolatedNpmEnv(),
     });
 
     assert.equal(result.code, SMOKE.COMMAND_FILE_MISSING);
@@ -156,6 +160,7 @@ describe('release-tarball-smoke', () => {
       expectedVersion: pkg.version,
       fixtureDir,
       lifecycleCommands: [], // skip lifecycle checks; isolate SDK check
+      npmEnv: isolatedNpmEnv(),
     });
 
     // If the binary can't be called, code would be SDK_BINARY_NOT_CALLABLE
@@ -175,6 +180,7 @@ describe('release-tarball-smoke', () => {
       expectedVersion: pkg.version,
       fixtureDir,
       lifecycleCommands: [],
+      npmEnv: isolatedNpmEnv(),
     });
 
     // Structural: the scan ran and populated the counters

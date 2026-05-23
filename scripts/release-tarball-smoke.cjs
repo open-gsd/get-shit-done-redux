@@ -282,6 +282,10 @@ function scanWorkflowMissingSdkFallback(filePath) {
  * @param {string}   [opts.fixtureDir]       - Temp dir to run `init` into (must NOT be HOME)
  * @param {string[]} [opts.lifecycleCommands] - Commands to file-check (default: see below)
  * @param {boolean}  [opts.dryRun=false]     - If true, skip actual npm install; validate input only
+ * @param {object}   [opts.npmEnv]           - Optional env dict for the internal npm install
+ *   spawnSync call. Pass an isolated HOME env (e.g. from isolatedNpmEnv() in tests/helpers.cjs)
+ *   to prevent npm from reading/writing the caller's $HOME — required on Docker hosts where HOME
+ *   may be unwritable. Defaults to process.env. (#131)
  * @returns {{ code: string, details: object }}
  */
 function runSmoke({
@@ -291,6 +295,7 @@ function runSmoke({
   fixtureDir,
   lifecycleCommands = ['init', 'discuss-phase', 'plan-phase', 'execute-phase'],
   dryRun = false,
+  npmEnv = undefined,
 }) {
   const details = {
     tarball: tarballPath,
@@ -304,10 +309,14 @@ function runSmoke({
 
   // --- Install the tarball into the temp prefix ----------------------------
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  // Use the caller-supplied npmEnv if provided (allows HOME isolation on Docker
+  // hosts where HOME may be unwritable — same pattern as runNpm() in helpers.cjs).
+  // Falls back to process.env to preserve existing CLI / programmatic behaviour. (#131)
+  const effectiveNpmEnv = npmEnv !== undefined ? npmEnv : process.env;
   const installResult = spawnSync(
     npmCmd,
     ['install', '-g', '--prefix', installPrefix, tarballPath],
-    { encoding: 'utf-8', shell: process.platform === 'win32', timeout: CHILD_TIMEOUT_MS },
+    { encoding: 'utf-8', shell: process.platform === 'win32', timeout: CHILD_TIMEOUT_MS, env: effectiveNpmEnv },
   );
 
   if (installResult.status !== 0) {
@@ -335,10 +344,12 @@ function runSmoke({
   }
 
   // --- Invoke `gsd-sdk --version` ------------------------------------------
+  // Use effectiveNpmEnv so the installed binary sees an isolated HOME on Docker
+  // hosts where HOME may be unwritable (same isolation as the npm install). (#131)
   const versionResult = spawnSync(
     process.execPath,
     [actualBin, '--version'],
-    { encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS },
+    { encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS, env: effectiveNpmEnv },
   );
 
   if (versionResult.status !== 0) {
@@ -497,11 +508,13 @@ function runSmoke({
   // ─────────────────────────────────────────────────────────────────────────
 
   // --- Verify `gsd-sdk` query is callable and returns parseable JSON -------
+  // Use effectiveNpmEnv so the installed binary sees an isolated HOME on Docker
+  // hosts where HOME may be unwritable (same isolation as the npm install). (#131)
   const sdkQueryDir = fixtureDir || os.tmpdir();
   const sdkQueryResult = spawnSync(
     process.execPath,
     [actualBin, 'query', 'state.json', '--project-dir', sdkQueryDir],
-    { encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS },
+    { encoding: 'utf-8', timeout: CHILD_TIMEOUT_MS, env: effectiveNpmEnv },
   );
 
   if (sdkQueryResult.status !== 0) {
