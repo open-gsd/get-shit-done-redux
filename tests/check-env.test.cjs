@@ -107,13 +107,56 @@ describe('check-env.sh', () => {
     } catch (err) {
       assert.fail(`--json output was not valid JSON: ${err.message}\nstdout: ${stdout}`);
     }
+    // Top-level shape
     assert.equal(typeof parsed.pass, 'boolean', 'JSON must have boolean `pass` key');
     assert.ok(Array.isArray(parsed.checks), 'JSON must have array `checks` key');
-    assert.ok(parsed.checks.length > 0, '`checks` array must not be empty');
+    // The good fixture has engines.node, .nvmrc, and package-lock.json — expect
+    // at least the node-version, lockfile-present, lockfile-sync, and
+    // version-manager-pin checks to appear.
+    const checkNames = parsed.checks.map((c) => c.name);
+    assert.ok(
+      checkNames.includes('node-version'),
+      `Expected 'node-version' check in JSON, got: ${checkNames.join(', ')}`
+    );
+    assert.ok(
+      checkNames.includes('lockfile-present'),
+      `Expected 'lockfile-present' check in JSON, got: ${checkNames.join(', ')}`
+    );
+    // Every check item must have name, status, message fields with expected types
+    for (const check of parsed.checks) {
+      assert.equal(typeof check.name, 'string', `check.name must be string in ${JSON.stringify(check)}`);
+      assert.ok(
+        ['pass', 'fail', 'skip'].includes(check.status),
+        `check.status must be pass|fail|skip in ${JSON.stringify(check)}`
+      );
+      assert.equal(typeof check.message, 'string', `check.message must be string in ${JSON.stringify(check)}`);
+    }
+    // Good fixture: overall result must be pass:true
+    assert.equal(parsed.pass, true, 'good fixture must report pass:true');
     assert.equal(
       status, 0,
       `Expected exit 0 in good fixture with --json, got ${status}`
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 5b: --json reports pass:false on failure fixtures (counter-test for 5)
+  // -------------------------------------------------------------------------
+  test('--json reports pass:false when a check fails', () => {
+    const cwd = path.join(FIXTURE_ROOT, 'bad-node-version');
+    const { status, stdout } = runScript(cwd, ['--json']);
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch (err) {
+      assert.fail(`--json output was not valid JSON: ${err.message}\nstdout: ${stdout}`);
+    }
+    assert.equal(parsed.pass, false, 'failure fixture must report pass:false');
+    assert.equal(status, 1, `Expected exit 1 with --json on failure fixture, got ${status}`);
+    // The node-version check must be present and marked fail
+    const nodeCheck = parsed.checks.find((c) => c.name === 'node-version');
+    assert.ok(nodeCheck, 'node-version check must appear in JSON output');
+    assert.equal(nodeCheck.status, 'fail', `Expected node-version status=fail, got ${nodeCheck.status}`);
   });
 
   // -------------------------------------------------------------------------
