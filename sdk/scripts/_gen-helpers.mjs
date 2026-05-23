@@ -18,8 +18,12 @@ import { statSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Resolve the repo root from this file's location (sdk/scripts/ → repo root)
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
+// Resolve the repo root from this file's location (sdk/scripts/ → repo root).
+// GSD_REPO_ROOT env override allows tests to redirect to a temp directory so
+// they can freely create/delete dist fixtures without mutating the real tree.
+const REPO_ROOT = process.env.GSD_REPO_ROOT
+  ? resolve(process.env.GSD_REPO_ROOT)
+  : resolve(fileURLToPath(import.meta.url), '..', '..', '..');
 
 /**
  * Assert that a compiled dist file is at least as new as its TypeScript source.
