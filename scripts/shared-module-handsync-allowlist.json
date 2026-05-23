@@ -72,7 +72,7 @@
       "cjs": "get-shit-done/bin/lib/verify.cjs",
       "ts": "sdk/src/query/verify.ts",
       "classification": "cooperating-sibling",
-      "justification": "CJS verify.cjs is the full verify implementation; SDK verify.ts provides the native handler. Phase 5.2+ candidate for further delegation."
+      "justification": "CJS verify.cjs is the full verify implementation; SDK verify.ts provides the native handler. Phase 5.2+ candidate for further delegation. Check 8 (W006/W007) helpers now generated from sdk/src/query/validate.ts via sdk/scripts/gen-validate.mjs (issue #6); freshness check: sdk/scripts/check-validate-fresh.mjs."
     },
     {
       "cjs": "get-shit-done/bin/lib/workstream.cjs",

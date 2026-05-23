@@ -57,6 +57,8 @@
     "check:decisions-fresh": "npm run build && node scripts/check-decisions-fresh.mjs",
     "gen:workstream-name-policy": "npm run build && node scripts/gen-workstream-name-policy.mjs",
     "check:workstream-name-policy-fresh": "npm run build && node scripts/check-workstream-name-policy-fresh.mjs",
+    "gen:validate": "npm run build && node scripts/gen-validate.mjs",
+    "check:validate-fresh": "npm run build && node scripts/check-validate-fresh.mjs",
     "prepublishOnly": "rm -rf dist && tsc && chmod +x dist/cli.js",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
