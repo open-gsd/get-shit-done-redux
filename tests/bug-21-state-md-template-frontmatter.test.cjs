@@ -47,7 +47,8 @@ function extractFileTemplate(fileContent) {
 /**
  * Minimal YAML frontmatter parser: returns the set of top-level keys present
  * in the first --- ... --- block at the start of `text`. Does not parse nested
- * keys. Returns an empty Set when the text has no frontmatter.
+ * keys — list-valued fields (e.g. `tags: [a, b]`) are recorded only by their
+ * key name, not their value. Returns an empty Set when the text has no frontmatter.
  *
  * @param {string} text
  * @returns {Set<string>}
@@ -70,6 +71,58 @@ function parseFrontmatterKeys(text) {
     }
   }
   return keys;
+}
+
+/**
+ * Minimal YAML frontmatter parser: returns a plain object of top-level keys
+ * and their scalar or nested-object values from the first --- ... --- block.
+ * Handles one level of indented nesting (e.g. progress.total_plans).
+ * Does not handle YAML lists or multi-line values.
+ *
+ * @param {string} text
+ * @returns {Record<string, any>}
+ */
+function parseFrontmatter(text) {
+  const result = {};
+  if (!text.trimStart().startsWith('---')) return result;
+  const lines = text.split(/\r?\n/);
+  let inBlock = false;
+  let currentKey = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inBlock) {
+      if (trimmed === '---') { inBlock = true; continue; }
+      break;
+    }
+    if (trimmed === '---') break;
+    // Detect indented (nested) line: starts with whitespace
+    if (line.match(/^\s+\S/) && currentKey !== null) {
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const subKey = trimmed.slice(0, colonIdx).trim();
+        const rawVal = trimmed.slice(colonIdx + 1).trim();
+        const numVal = Number(rawVal);
+        if (typeof result[currentKey] !== 'object') result[currentKey] = {};
+        result[currentKey][subKey] = rawVal === '' ? null : (isNaN(numVal) ? rawVal : numVal);
+      }
+    } else {
+      currentKey = null;
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const key = trimmed.slice(0, colonIdx).trim();
+        const rawVal = trimmed.slice(colonIdx + 1).trim();
+        if (rawVal === '') {
+          result[key] = {};
+          currentKey = key;
+        } else {
+          const numVal = Number(rawVal);
+          result[key] = isNaN(numVal) ? rawVal.replace(/^'|'$/g, '') : numVal;
+          currentKey = null;
+        }
+      }
+    }
+  }
+  return result;
 }
 
 describe('bug #21 — STATE.md template must carry YAML frontmatter', () => {
@@ -109,5 +162,39 @@ describe('bug #21 — STATE.md template must carry YAML frontmatter', () => {
         `${label}: frontmatter must include 'status', found keys: ${[...keys].join(', ')}`,
       );
     });
+
+    test(`${label} — progress sub-schema has zeroed total_plans and completed_plans`, () => {
+      const content = fs.readFileSync(templatePath, 'utf-8');
+      const body = extractFileTemplate(content);
+      const fm = parseFrontmatter(body.trimStart());
+
+      assert.ok(
+        fm.progress && typeof fm.progress === 'object',
+        `${label}: frontmatter must include a 'progress' sub-object`,
+      );
+      assert.strictEqual(
+        fm.progress.total_plans,
+        0,
+        `${label}: progress.total_plans must be 0 in the template`,
+      );
+      assert.strictEqual(
+        fm.progress.completed_plans,
+        0,
+        `${label}: progress.completed_plans must be 0 in the template`,
+      );
+    });
   }
+
+  test('both templates produce byte-equal File Template blocks', () => {
+    const [bodyA, bodyB] = TEMPLATE_PATHS.map((p) =>
+      extractFileTemplate(fs.readFileSync(p, 'utf-8')),
+    );
+    assert.strictEqual(
+      bodyA,
+      bodyB,
+      'File Template code blocks in get-shit-done/templates/state.md and ' +
+      'sdk/prompts/templates/state.md must be identical. ' +
+      'Edit both files together to keep them in sync.',
+    );
+  });
 });

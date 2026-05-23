@@ -8,7 +8,7 @@ Template for `.planning/STATE.md` — the project's living memory.
 
 ```markdown
 ---
-gsd_state_version: '1.0'
+gsd_state_version: '1.0'  # placeholder; syncStateFrontmatter overwrites on first state.* call
 status: planning
 progress:
   total_phases: 0
@@ -67,7 +67,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-[Pending ideas captured during sessions]
+[From .planning/todos/pending/ — ideas captured during sessions]
 
 None yet.
 
@@ -76,6 +76,14 @@ None yet.
 [Issues that affect future work]
 
 None yet.
+
+## Deferred Items
+
+Items acknowledged and carried forward from previous milestone close:
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| *(none)* | | | |
 
 ## Session Continuity
 

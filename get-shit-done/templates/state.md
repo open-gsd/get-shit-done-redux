@@ -8,7 +8,7 @@ Template for `.planning/STATE.md` — the project's living memory.
 
 ```markdown
 ---
-gsd_state_version: '1.0'
+gsd_state_version: '1.0'  # placeholder; syncStateFrontmatter overwrites on first state.* call
 status: planning
 progress:
   total_phases: 0
