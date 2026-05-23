@@ -362,7 +362,7 @@ The `gsd-planner` agent is decomposed into a core agent plus reference modules t
 
 ---
 
-## CLI Modules (76 shipped)
+## CLI Modules (78 shipped)
 
 Full listing: `get-shit-done/bin/lib/*.cjs`.
 
@@ -405,7 +405,10 @@ Full listing: `get-shit-done/bin/lib/*.cjs`.
 | `model-catalog.cjs` | CJS adapter over the shared model catalog JSON; exports canonical runtime tier defaults, agent profile maps, alias maps, and routing metadata for all CLI consumers |
 | `model-profiles.cjs` | Backward-compatible profile helpers derived from `model-catalog.cjs`; no longer owns its own model table |
 | `phase-command-router.cjs` | Thin CJS subcommand router adapter for `gsd-tools phase` |
+| `phase-lifecycle-policy.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/phase-lifecycle-policy.ts` via `sdk/scripts/gen-phase-lifecycle-policy.mjs`; pure computation helpers for phase directory naming, roadmap entry generation, decimal-phase management, and ID computation; do not edit directly |
+| `phase-lifecycle.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/phase-lifecycle.ts` via `sdk/scripts/gen-phase-lifecycle.mjs`; pure-computation phase lifecycle helpers extracted from the phase-lifecycle SDK handler; do not edit directly |
 | `phase.cjs` | Phase directory operations, decimal numbering, plan indexing |
+| `phase.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/phase.ts` via `sdk/scripts/gen-phase.mjs`; pure helper functions for phase query shared between the CJS CLI and SDK; no I/O, no async, no filesystem operations; do not edit directly |
 | `phases-command-router.cjs` | Thin CJS subcommand router adapter for `gsd-tools phases` |
 | `plan-scan.cjs` | CJS shim adapter — re-exports from `plan-scan.generated.cjs` (Phase 6/#3575 Shared Module migration) |
 | `plan-scan.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/plan-scan.ts` via `sdk/scripts/gen-plan-scan.mjs`; canonical phase-plan scanner for detecting plan and summary files in flat and nested layouts (k014); do not edit directly |
@@ -419,7 +422,6 @@ Full listing: `get-shit-done/bin/lib/*.cjs`.
 | `roadmap.cjs` | ROADMAP.md parsing, phase extraction, plan progress |
 | `runtime-artifact-layout.cjs` | Runtime artifact layout module — resolves the artifact directory shapes (commands, agents, skills) for each supported runtime; single source of truth for per-runtime artifact placement (#3663) |
 | `runtime-homes.cjs` | Canonical runtime → global config/skills directory mapping; first-class support for all 15 runtimes including Hermes nested layout and Cline rules-based exclusion (#3126) |
-| `runtime-name-policy.cjs` | Runtime name canonicalization policy adapter — normalizes runtime aliases (for example app/cli variants) to canonical IDs via the shared alias manifest consumed by both CJS and SDK seams |
 | `runtime-slash.cjs` | Runtime-aware slash-command formatter — single source of truth for emitting `/gsd-<cmd>` (skills-based runtimes) and `$gsd-<cmd>` (codex) in user-facing output and persisted artifacts (#3584) |
 | `schema-detect.cjs` | CJS shim adapter — re-exports from `schema-detect.generated.cjs` (Phase 6/#3575 Shared Module migration) |
 | `schema-detect.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/schema-detect.ts` via `sdk/scripts/gen-schema-detect.mjs`; schema-drift detection for ORM patterns (Prisma, Drizzle, Supabase, TypeORM, Payload); exports `detectSchemaFiles`, `detectSchemaOrm`, `checkSchemaDrift`, `SCHEMA_PATTERNS`, `ORM_INFO`; do not edit directly |
