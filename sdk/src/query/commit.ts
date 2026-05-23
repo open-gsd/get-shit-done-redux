@@ -238,8 +238,11 @@ export async function ensureStrategyBranch(
   // HEAD in that mode silently moves the shared checkout and causes commits from
   // parallel sessions to land on the wrong branch.  Skip the switch entirely;
   // the caller commits on whatever branch the primary is currently on.
-  const useWorktrees = (config.workflow as unknown as Record<string, unknown>).use_worktrees;
-  if (useWorktrees === false) {
+  // String "false" is tolerated for resilience against YAML/JSON parsers that
+  // leave boolean-like fields as strings.
+  const useWorktrees = config.workflow?.use_worktrees;
+  const isExplicitlyFalse = useWorktrees === false || useWorktrees === 'false';
+  if (isExplicitlyFalse) {
     return {
       ok: true,
       reason: 'strategy-skipped: use_worktrees is false — shared/pinned primary checkout; branch auto-switch suppressed (#105)',

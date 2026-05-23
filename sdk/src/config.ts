@@ -64,6 +64,14 @@ export interface WorkflowConfig {
    * verify-phase (validation gate, non-blocking). Set false to disable both.
    */
   context_coverage_gate: boolean;
+  /**
+   * Issue #105. When false, the primary checkout is shared or pinned (concurrent
+   * sessions / deliberate base-branch lock) and the commit handler must NOT
+   * auto-switch HEAD to the strategy branch. String value `"false"` is accepted
+   * for resilience against YAML/JSON parsers that leave boolean-like fields as
+   * strings.
+   */
+  use_worktrees?: boolean | string;
 }
 
 export interface HooksConfig {
