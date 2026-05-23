@@ -11,20 +11,11 @@
  * 4. Path resolution uses __dirname, not hardcoded ~/.claude/.
  * 5. A WARNING-only fire does NOT set criticalRecorded (selectivity counter-test).
  *
- * Design note (#3726, #3775): the original test polled STATE.md on a
- * wall-clock deadline against a fire-and-forget spawn().unref() subprocess —
- * racy under Docker contention.  On loaded Docker hosts (cartographer,
- * holodeck) the subprocess intrinsic cost (Node startup + state lock acquire
- * + atomic write) reached 900–1700ms, consuming the entire budget and causing
- * intermittent CI failures (#3775).  The fix uses two deterministic
- * assertions that do not depend on subprocess completion timing:
- *   (a) The hook writes criticalRecorded:true to the warnPath file BEFORE it
- *       exits (synchronously, before .unref() returns).  Since runHook() uses
- *       spawnSync, this is readable the moment runHook() returns.
- *   (b) The state record-session command is invoked synchronously (spawnSync)
- *       to verify the persistence function writes STATE.md correctly.  This
- *       decouples the hook's fire-and-forget semantics from the test
- *       assertion entirely — no wall-clock budget needed.
+ * Design note (#3726, #3775): the original test used a short wall-clock poll
+ * against a fire-and-forget spawn().unref() subprocess and flaked under load.
+ * We keep one deterministic assertion (criticalRecorded sentinel is written
+ * before hook exit), and use a bounded poll window for the detached writer's
+ * STATE.md update. A separate test verifies direct record-session invocation.
  */
 
 'use strict';
@@ -80,9 +71,29 @@ function runRecordSession(cwd, stoppedAt) {
   const result = spawnSync(
     process.execPath,
     [GSD_TOOLS, 'state', 'record-session', '--stopped-at', stoppedAt, '--cwd', cwd],
-    { encoding: 'utf-8', timeout: 10000 }
+    { encoding: 'utf-8', timeout: 30000 }
   );
-  return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
+  return {
+    exitCode: result.status,
+    signal: result.signal,
+    error: result.error,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForStateMatch(statePath, regex, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const content = fs.readFileSync(statePath, 'utf-8');
+    if (regex.test(content)) return content;
+    sleep(100);
+  }
+  return fs.readFileSync(statePath, 'utf-8');
 }
 
 /**
@@ -129,7 +140,6 @@ describe('#1974 context exhaustion auto-record', () => {
   });
 
   afterEach(() => {
-    const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         cleanup(tmpDir);
@@ -166,16 +176,9 @@ describe('#1974 context exhaustion auto-record', () => {
       'hook must set criticalRecorded:true in warn sentinel on CRITICAL'
     );
 
-    // (b) Deterministic: invoke state record-session synchronously to verify
-    //     the persistence seam writes STATE.md correctly.  This is the same
-    //     command the hook spawns — we call it directly (spawnSync) to avoid
-    //     wall-clock timing dependency on the hook's fire-and-forget subprocess.
-    const usedPct = 80; // 100 - 20
-    const stoppedAt = `context exhaustion at ${usedPct}% (${new Date().toISOString().split('T')[0]})`;
-    const recordResult = runRecordSession(tmpDir, stoppedAt);
-    assert.strictEqual(recordResult.exitCode, 0, `record-session should exit 0: ${recordResult.stderr}`);
-
-    const content = fs.readFileSync(statePath, 'utf-8');
+    // (b) Hook-spawned detached record-session should eventually persist
+    //     a context exhaustion breadcrumb in STATE.md.
+    const content = waitForStateMatch(statePath, /context exhaustion at \d+%/, 45000);
     assert.match(content, /context exhaustion at \d+%/, 'STATE.md must contain context exhaustion entry');
   });
 
@@ -204,11 +207,6 @@ describe('#1974 context exhaustion auto-record', () => {
     assert.ok(warnData1, 'warn sentinel must exist after first CRITICAL fire');
     assert.strictEqual(warnData1.criticalRecorded, true, 'first fire must set criticalRecorded:true');
 
-    // Verify the persistence seam works by calling record-session directly
-    // (synchronous — no subprocess race).
-    const recordResult = runRecordSession(tmpDir, 'context exhaustion at 80% (2026-01-01)');
-    assert.strictEqual(recordResult.exitCode, 0, 'record-session should succeed');
-
     // Second CRITICAL fire — same session, criticalRecorded already true in
     // warnPath.  Advance callsSinceWarn past DEBOUNCE_CALLS (5, see hook
     // line 29) so the hook processes the warning message path and exercises
@@ -233,6 +231,17 @@ describe('#1974 context exhaustion auto-record', () => {
       output2 && output2.hookSpecificOutput && /CONTEXT CRITICAL/.test(output2.hookSpecificOutput.additionalContext),
       'second CRITICAL fire must still emit CONTEXT CRITICAL warning to the agent'
     );
+  });
+
+  test('state record-session command persists Stopped At when invoked directly', () => {
+    const recordResult = runRecordSession(tmpDir, 'context exhaustion at 80% (2026-01-01)');
+    assert.strictEqual(
+      recordResult.exitCode,
+      0,
+      `record-session should exit 0 (signal=${recordResult.signal || 'none'} error=${recordResult.error ? recordResult.error.message : 'none'}): ${recordResult.stderr}`
+    );
+    const content = fs.readFileSync(statePath, 'utf-8');
+    assert.match(content, /context exhaustion at 80% \(2026-01-01\)/, 'STATE.md must contain direct record-session value');
   });
 
   test('WARNING-only fire does NOT set criticalRecorded (selectivity counter-test)', () => {
