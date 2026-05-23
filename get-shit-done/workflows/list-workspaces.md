@@ -55,7 +55,7 @@ GSD Workspaces (~/gsd-workspaces/)
 
 Manage:
   cd ~/gsd-workspaces/<name>     # Enter a workspace
-  /gsd-remove-workspace <name>   # Remove a workspace
+  /gsd:workspace --remove <name>  # Remove a workspace
 ```
 
 For each workspace, show:

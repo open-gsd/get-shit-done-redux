@@ -56,7 +56,7 @@ Standard format for presenting next steps after completing a command or workflow
 
 **Also available:**
 - Review plan before executing
-- `/gsd-list-phase-assumptions 2` — check assumptions
+- `/gsd:discuss-phase 2 --assumptions` — check assumptions
 
 ---
 ```

@@ -14,8 +14,8 @@ Phase number: $ARGUMENTS (required)
 ```
 Error: Phase number required.
 
-Usage: /gsd-list-phase-assumptions [phase-number]
-Example: /gsd-list-phase-assumptions 3
+Usage: /gsd:discuss-phase <phase-number> --assumptions
+Example: /gsd:discuss-phase 3 --assumptions
 ```
 
 Exit workflow.
