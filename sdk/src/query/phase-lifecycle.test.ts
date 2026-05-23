@@ -1969,3 +1969,132 @@ describe('collectDecimalSuffixesFromDirNames — CR-3267 finding 3: alphanumeric
     expect(result.has(2)).toBe(true);
   });
 });
+
+// ─── #3 defect-1: milestone.complete header duplication ───────────────────
+//
+// Historical evidence: `## v1.8.0 Quick Mode (Shipped: 2026-01-19)`
+// Canonical template: `## ${version}${nameOpt ? ` ${nameOpt}` : ''} (Shipped: ${today})`
+// GFM § ATX headings: https://github.github.com/gfm/#atx-headings
+
+describe('milestoneComplete (#3 defect-1): header version/name rendering', () => {
+  it('no --name: header is "## v1.0 (Shipped: <date>)" — version appears exactly once', async () => {
+    const { milestoneComplete } = await import('./phase-lifecycle.js');
+    const today = new Date().toISOString().split('T')[0]!;
+    const roadmap = `# Roadmap\n\n## Current Milestone: v1.0\n\n### Phase 1: Foundation\n\n**Goal:** TBD\n**Plans:** 1 plan\n\nPlans:\n- [ ] 01-01\n`;
+    const state = `---\ngsd_state_version: 1.0\nmilestone: v1.0\nstatus: executing\n---\n\n# Project State\n\n## Current Position\n\nPhase: 1\nStatus: Executing\n`;
+    await setupTestProject(tmpDir, { roadmap, state });
+    const milestonesPath = join(tmpDir, '.planning', 'MILESTONES.md');
+    await writeFile(milestonesPath, '# Milestones\n\n', 'utf-8');
+    await mkdir(join(tmpDir, '.planning', 'phases', '01-foundation'), { recursive: true });
+
+    await milestoneComplete(['v1.0'], tmpDir);
+
+    const content = await readFile(milestonesPath, 'utf-8');
+    // Must match exactly "## v1.0 (Shipped: <date>)" — version must NOT be doubled
+    expect(content).toContain(`## v1.0 (Shipped: ${today})`);
+    expect(content).not.toMatch(/## v1\.0 v1\.0/);
+  });
+
+  it('with --name "Foundation Release": header is "## v1.0 Foundation Release (Shipped: <date>)"', async () => {
+    const { milestoneComplete } = await import('./phase-lifecycle.js');
+    const today = new Date().toISOString().split('T')[0]!;
+    const roadmap = `# Roadmap\n\n## Current Milestone: v1.0\n\n### Phase 1: Foundation\n\n**Goal:** TBD\n**Plans:** 1 plan\n\nPlans:\n- [ ] 01-01\n`;
+    const state = `---\ngsd_state_version: 1.0\nmilestone: v1.0\nstatus: executing\n---\n\n# Project State\n\n## Current Position\n\nPhase: 1\nStatus: Executing\n`;
+    await setupTestProject(tmpDir, { roadmap, state });
+    const milestonesPath = join(tmpDir, '.planning', 'MILESTONES.md');
+    await writeFile(milestonesPath, '# Milestones\n\n', 'utf-8');
+    await mkdir(join(tmpDir, '.planning', 'phases', '01-foundation'), { recursive: true });
+
+    await milestoneComplete(['v1.0', '--name', 'Foundation', 'Release'], tmpDir);
+
+    const content = await readFile(milestonesPath, 'utf-8');
+    // version + name appended: "## v1.0 Foundation Release (Shipped: ...)"
+    expect(content).toContain(`## v1.0 Foundation Release (Shipped: ${today})`);
+    expect(content).not.toMatch(/## v1\.0 v1\.0/);
+  });
+});
+
+// ─── #3 defect-2: bullet-declared phases leak phase 99 into milestone ─────
+//
+// ROADMAP declares phases via checkbox bullets ONLY (GFM task list items:
+// https://github.github.com/gfm/#task-list-items-extension-).
+// When there are no `### Phase N:` headings in the milestone section,
+// getMilestonePhaseFilter falls back to passAll (milestonePhaseNums.size === 0),
+// admitting unrelated phase dirs like 99-unrelated.
+// The fix: extend the phase-extraction regex to also match checkbox-bullet
+// declarations so passAll is not triggered spuriously.
+
+describe('milestoneComplete (#3 defect-2): checkbox-bullet phase declarations filter correctly', () => {
+  it('collects only phases 1 and 2 from bullet-only declarations — never phase 99', async () => {
+    const { milestoneComplete } = await import('./phase-lifecycle.js');
+    // Roadmap declares phases via GFM task-list bullets ONLY — no ### Phase N:
+    // headings exist anywhere in the document. This is the exact shape that
+    // triggers passAll in the current code (milestonePhaseNums.size === 0).
+    const roadmap = `# Roadmap
+
+## Current Milestone: v1.0 Foundation
+
+- [ ] **Phase 1: Foundation**
+- [ ] **Phase 2: API**
+
+---
+*Last updated: 2026-01-01*
+`;
+    const state = `---\ngsd_state_version: 1.0\nmilestone: v1.0\nstatus: executing\n---\n\n# Project State\n\n## Current Position\n\nPhase: 1\nStatus: Executing\n`;
+    await setupTestProject(tmpDir, { roadmap, state });
+
+    const phasesDir = join(tmpDir, '.planning', 'phases');
+    await mkdir(join(phasesDir, '01-foundation'), { recursive: true });
+    await mkdir(join(phasesDir, '02-api'), { recursive: true });
+    await mkdir(join(phasesDir, '99-unrelated'), { recursive: true });
+
+    const summaryContent = `# Phase Summary\n\n**Shipped the feature.**\n`;
+    await writeFile(join(phasesDir, '01-foundation', 'SUMMARY.md'), summaryContent, 'utf-8');
+    await writeFile(join(phasesDir, '02-api', 'SUMMARY.md'), summaryContent, 'utf-8');
+    // Phase 99 has a summary too — should NOT appear in accomplishments
+    await writeFile(join(phasesDir, '99-unrelated', 'SUMMARY.md'), '# Phase Summary\n\n**Should NOT appear.**\n', 'utf-8');
+
+    const milestonesPath = join(tmpDir, '.planning', 'MILESTONES.md');
+    await writeFile(milestonesPath, '# Milestones\n\n', 'utf-8');
+
+    const result = await milestoneComplete(['v1.0'], tmpDir);
+    const data = result.data as Record<string, unknown>;
+    const accomplishments = data.accomplishments as string[];
+
+    // phases 1 and 2 should be counted, 99 must be excluded
+    expect(data.phases).toBe(2);
+    expect(accomplishments.some(a => a.includes('Should NOT appear'))).toBe(false);
+  });
+});
+
+// ─── #3 defect-3: extractOneLinerFromBody section-scope leak ──────────────
+//
+// extractOneLinerFromBody must be bounded to the content between the first
+// heading and the next heading of ANY level (GFM § ATX headings:
+// https://github.github.com/gfm/#atx-headings).
+// A bold match inside a subsequent subsection (e.g. "### Deviation 1 — bar")
+// must NOT be returned.
+
+describe('extractOneLinerFromBody (#3 defect-3): bounded to first heading section', () => {
+  it('returns the real one-liner and NOT the bold inside a following sub-heading', async () => {
+    const { extractOneLinerFromBody } = await import('./phase-lifecycle-policy.js');
+    const body = [
+      '# Phase Summary',
+      '',
+      '> This is a blockquote intro — not a one-liner.',
+      '',
+      '**Real one-liner: shipped the foo system.**',
+      '',
+      'Some prose.',
+      '',
+      '### Deviation 1 — bar',
+      '',
+      '**This bold should NOT be picked up.**',
+      '',
+    ].join('\n');
+
+    const result = extractOneLinerFromBody(body);
+    expect(result).toBe('Real one-liner: shipped the foo system.');
+    expect(result).not.toContain('should NOT be picked up');
+  });
+});
