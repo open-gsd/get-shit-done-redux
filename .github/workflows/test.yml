@@ -28,6 +28,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # Static lint: test-suite and PR-check contracts.
   # Runs once (not per matrix node version) since it is a file-content check.
@@ -36,6 +39,9 @@ jobs:
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: true
+          token: ${{ github.token }}
       - name: Set up Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
         with:
@@ -72,6 +78,17 @@ jobs:
         with:
           # Fetch full history so we can merge origin/main for stale-base detection.
           fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
+
+      - name: Guard — require GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
+            exit 1
+          fi
 
       # GitHub's `refs/pull/N/merge` is cached against the recorded merge-base.
       # When main advances after a PR is opened, the cache stays stale and CI
@@ -82,11 +99,23 @@ jobs:
       - name: Rebase check — merge origin/main into PR head
         if: github.event_name == 'pull_request'
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.email "ci@gsd-redux"
           git config user.name "CI Rebase Check"
-          git fetch origin main
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            if git fetch origin main; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::git fetch origin main failed after 3 attempts."
+              exit 1
+            fi
+            sleep $((attempt * 4))
+          done
           if ! git merge --no-edit --no-ff origin/main; then
             echo "::error::This PR cannot cleanly merge origin/main. Rebase your branch onto current main and push again."
             echo "::error::Conflicting files:"
@@ -216,14 +245,36 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
+      - name: Guard — require GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
+            exit 1
+          fi
       - name: Rebase check — merge origin/main into PR head
         if: github.event_name == 'pull_request'
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.email "ci@gsd-redux"
           git config user.name "CI Rebase Check"
-          git fetch origin main
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            if git fetch origin main; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::git fetch origin main failed after 3 attempts."
+              exit 1
+            fi
+            sleep $((attempt * 4))
+          done
           if ! git merge --no-edit --no-ff origin/main; then
             echo "::error::This PR cannot cleanly merge origin/main. Rebase your branch onto current main and push again."
             git merge --abort
