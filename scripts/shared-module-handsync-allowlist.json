@@ -135,6 +135,12 @@
       "justification": "Phase 6 (#3575): CJS workstream-name-policy.cjs is the generated Adapter reading from sdk/src/workstream-name-policy.ts Shared Module. SDK source-of-truth now exports all three functions used by CJS callers (toWorkstreamSlug, hasInvalidPathSegment, isValidActiveWorkstreamName) plus validateWorkstreamName alias. Freshness check (check-workstream-name-policy-fresh.mjs) enforces alignment."
     },
     {
+      "cjs": "get-shit-done/bin/lib/runtime-name-policy.cjs",
+      "ts": "sdk/src/runtime-name-policy.ts",
+      "classification": "ADAPTER-OVER-MODULE",
+      "justification": "Both CJS and SDK runtime-name adapters consume sdk/shared/runtime-aliases.manifest.json as the single source of truth for alias canonicalization. This pair is an intentional seam-level adapter split, not a drift-prone hand-sync anti-pattern."
+    },
+    {
       "cjs": "get-shit-done/bin/lib/prompt-budget.cjs",
       "ts": "sdk/src/query/prompt-budget.ts",
       "classification": "cooperating-sibling",

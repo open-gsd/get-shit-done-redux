@@ -419,6 +419,7 @@ Full listing: `get-shit-done/bin/lib/*.cjs`.
 | `roadmap.cjs` | ROADMAP.md parsing, phase extraction, plan progress |
 | `runtime-artifact-layout.cjs` | Runtime artifact layout module — resolves the artifact directory shapes (commands, agents, skills) for each supported runtime; single source of truth for per-runtime artifact placement (#3663) |
 | `runtime-homes.cjs` | Canonical runtime → global config/skills directory mapping; first-class support for all 15 runtimes including Hermes nested layout and Cline rules-based exclusion (#3126) |
+| `runtime-name-policy.cjs` | Runtime name canonicalization policy adapter — normalizes runtime aliases (for example app/cli variants) to canonical IDs via the shared alias manifest consumed by both CJS and SDK seams |
 | `runtime-slash.cjs` | Runtime-aware slash-command formatter — single source of truth for emitting `/gsd-<cmd>` (skills-based runtimes) and `$gsd-<cmd>` (codex) in user-facing output and persisted artifacts (#3584) |
 | `schema-detect.cjs` | CJS shim adapter — re-exports from `schema-detect.generated.cjs` (Phase 6/#3575 Shared Module migration) |
 | `schema-detect.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/schema-detect.ts` via `sdk/scripts/gen-schema-detect.mjs`; schema-drift detection for ORM patterns (Prisma, Drizzle, Supabase, TypeORM, Payload); exports `detectSchemaFiles`, `detectSchemaOrm`, `checkSchemaDrift`, `SCHEMA_PATTERNS`, `ORM_INFO`; do not edit directly |

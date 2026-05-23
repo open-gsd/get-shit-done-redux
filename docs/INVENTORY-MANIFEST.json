@@ -311,6 +311,7 @@
       "roadmap.cjs",
       "runtime-artifact-layout.cjs",
       "runtime-homes.cjs",
+      "runtime-name-policy.cjs",
       "runtime-slash.cjs",
       "schema-detect.cjs",
       "schema-detect.generated.cjs",
