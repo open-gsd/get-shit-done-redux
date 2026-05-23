@@ -138,18 +138,16 @@ satisfies_constraint() {
 }
 
 # Read a field from package.json using node (avoids requiring jq).
-# Uses fs.readFileSync + JSON.parse instead of require() so that Windows
-# backslash paths in PACKAGE_JSON are not silently mangled inside the JS
-# string literal passed via -e.
+# Uses a relative path './package.json' so that Node receives a path it can
+# resolve on every platform — including Windows where Git Bash exposes $PWD
+# as a POSIX path (/d/a/…) that node.exe cannot open via fs.readFileSync.
+# pkg_field is always called before any `cd` in this script, so CWD is
+# PROJECT_ROOT and './package.json' always resolves correctly.
 pkg_field() {
-  # Normalise backslashes to forward-slashes for the inline JS string so
-  # require-via-fs works on Windows (Git-bash / mingw) without treating
-  # "\a", "\n", etc. as escape sequences.
-  local json_path="${PACKAGE_JSON//\\//}"
   node -e "
     const fs = require('fs');
     let pkg;
-    try { pkg = JSON.parse(fs.readFileSync('${json_path}', 'utf8')); } catch(e) { process.exit(0); }
+    try { pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8')); } catch(e) { process.exit(0); }
     const val = '${1}'.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : null), pkg);
     if (val !== null) process.stdout.write(String(val));
   " 2>/dev/null || true
