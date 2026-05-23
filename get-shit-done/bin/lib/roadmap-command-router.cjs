@@ -32,19 +32,26 @@ function routeRoadmapCommand({ roadmap, args, cwd, raw, error }) {
   function sdkHandler(registryCommand, registryArgs, legacyArgs, cjsFallback) {
     if (!sdkAvailable) return cjsFallback;
     return () => {
-      const result = getExecuteForCjs()({
-        registryCommand,
-        registryArgs,
-        legacyCommand: 'roadmap',
-        legacyArgs,
-        // #3631: under --raw, request mode:'raw' so the bridge runs the SDK's
-        // raw projection (formatQueryRawOutput) and returns the scalar string
-        // CJS callers used to print. We then bypass output()'s JSON-stringify
-        // path by passing rawValue (the third positional). With mode:'json',
-        // output() emits the JSON IR as before.
-        mode: raw ? 'raw' : 'json',
-        projectDir: cwd,
-      });
+      let result;
+      try {
+        result = getExecuteForCjs()({
+          registryCommand,
+          registryArgs,
+          legacyCommand: 'roadmap',
+          legacyArgs,
+          // #3631: under --raw, request mode:'raw' so the bridge runs the SDK's
+          // raw projection (formatQueryRawOutput) and returns the scalar string
+          // CJS callers used to print. We then bypass output()'s JSON-stringify
+          // path by passing rawValue (the third positional). With mode:'json',
+          // output() emits the JSON IR as before.
+          mode: raw ? 'raw' : 'json',
+          projectDir: cwd,
+        });
+      } catch {
+        // Bridge threw (e.g. synckit worker crash, Atomics failure on Windows).
+        // Fall through to CJS handler — the CJS path is the designed safety net.
+        return cjsFallback();
+      }
       if (!result.ok) {
         error(result.errorDetails && result.errorDetails.message
           ? result.errorDetails.message

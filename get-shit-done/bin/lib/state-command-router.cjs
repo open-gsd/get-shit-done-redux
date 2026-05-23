@@ -63,19 +63,26 @@ function dispatchViaSdk(registryCommand, registryArgs, legacyArgs, cwd, raw, err
   // honor the user's --raw flag and let the bridge do default rendering.
   const bridgeMode = rawFormatter ? 'json' : (raw ? 'raw' : 'json');
 
-  const result = getExecuteForCjs()({
-    registryCommand,
-    registryArgs,
-    legacyCommand: 'state',
-    legacyArgs,
-    mode: bridgeMode,
-    projectDir: cwd,
-    // Phase 6 fix: workstream is now threaded through to the native handler.
-    // GSDTransport no longer forces subprocess for workstream-scoped requests —
-    // the worker's dispatchNative closure correctly passes workstream to
-    // registry.dispatch() (Phase 5.1 fix), enabling native workstream dispatch.
-    workstream: process.env.GSD_WORKSTREAM || undefined,
-  });
+  let result;
+  try {
+    result = getExecuteForCjs()({
+      registryCommand,
+      registryArgs,
+      legacyCommand: 'state',
+      legacyArgs,
+      mode: bridgeMode,
+      projectDir: cwd,
+      // Phase 6 fix: workstream is now threaded through to the native handler.
+      // GSDTransport no longer forces subprocess for workstream-scoped requests —
+      // the worker's dispatchNative closure correctly passes workstream to
+      // registry.dispatch() (Phase 5.1 fix), enabling native workstream dispatch.
+      workstream: process.env.GSD_WORKSTREAM || undefined,
+    });
+  } catch {
+    // Bridge threw (e.g. synckit worker crash, Atomics failure on Windows).
+    // Return false so the caller falls through to the CJS handler.
+    return false;
+  }
 
   if (!result.ok) {
     // Mutation subcommands whose CJS contract is always exit-0: surface the SDK
