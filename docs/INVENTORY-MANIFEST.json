@@ -1,5 +1,5 @@
 {
-  "generated": "2026-05-21",
+  "generated": "2026-05-23",
   "families": {
     "agents": [
       "gsd-advisor-researcher",
@@ -325,6 +325,7 @@
       "template.cjs",
       "uat.cjs",
       "validate-command-router.cjs",
+      "validate.generated.cjs",
       "verify-command-router.cjs",
       "verify.cjs",
       "workstream-inventory-builder.generated.cjs",
