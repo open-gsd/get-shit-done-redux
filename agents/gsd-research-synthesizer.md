@@ -135,7 +135,7 @@ Identify gaps that couldn't be resolved and need attention during planning.
 1. **Use the `Write` tool** to write the file. The `Write` tool is in your `tools:` allowlist; there are no restrictions on it. Do not assume restrictions that the frontmatter does not impose.
 2. **Do NOT return the SUMMARY.md content in your response.** Your return message is a brief confirmation (see `<structured_returns>` below); the content lives on disk.
 3. **Do NOT ask permission to write.** Writing `.planning/research/SUMMARY.md` is the explicit purpose of this agent. Asking the orchestrator to do it instead is a failure mode that can cause downstream `SUMMARY.md not found` failures.
-4. **Do NOT use `Bash(cat << 'EOF')` or heredoc** for file creation. Use the `Write` tool.
+4. **Do NOT use `Bash(cat << 'EOF')` or heredoc** for file creation. Use the `Write` tool. In short: **never use `Bash(cat << 'EOF')` or heredoc**.
 5. **If the Write tool errors,** surface the actual error in your return message. Do not silently fall back to returning content; that hides the failure from the orchestrator.
 
 Use template: ~/.claude/get-shit-done/templates/research-project/SUMMARY.md
