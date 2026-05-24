@@ -47,19 +47,30 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          # Must be X.Y.0 (minor or major release, not patch)
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.0$'; then
-            echo "::error::Version must end in .0 (e.g., 1.28.0 or 2.0.0). Use hotfix workflow for patch releases."
+          # Must be X.Y.0 (minor or major release, not patch), no leading zeros in any segment
+          if ! echo "$VERSION" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0$'; then
+            echo "::error::Version '$VERSION' is invalid. Must be X.Y.0 with no leading zeros (e.g., 1.28.0 or 2.0.0). Use hotfix workflow for patch releases."
             exit 1
           fi
           BRANCH="release/${VERSION}"
           # Detect major (X.0.0)
           IS_MAJOR="false"
-          if echo "$VERSION" | grep -qE '^[0-9]+\.0\.0$'; then
+          if echo "$VERSION" | grep -qE '^(0|[1-9][0-9]*)\.0\.0$'; then
             IS_MAJOR="true"
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "is_major=$IS_MAJOR" >> "$GITHUB_OUTPUT"
+
+      - name: Reject already-published versions
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for pkg in @opengsd/get-shit-done-redux @opengsd/gsd-sdk; do
+            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "::error::$pkg@$VERSION is already published on npm — bump to a new version"
+              exit 1
+            fi
+          done
 
   create:
     needs: validate-version
