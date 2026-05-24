@@ -1,4 +1,5 @@
 'use strict';
+// allow-test-rule: workflow markdown is shipped product text; this test validates fallback hint literals across all workflow files
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
