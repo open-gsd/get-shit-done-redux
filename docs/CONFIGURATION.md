@@ -1096,9 +1096,11 @@ This resolves `gsd-planner` → `gpt-5.4` (xhigh), `gsd-executor` → `gpt-5.3-c
 |----------|---------|
 | `CLAUDE_CONFIG_DIR` | Override default config directory (`~/.claude/`) |
 | `GEMINI_API_KEY` | Detected by context monitor to switch hook event name |
-| `WSL_DISTRO_NAME` | Detected by installer for WSL path handling |
-| `GSD_SKIP_SCHEMA_CHECK` | Skip schema drift detection during execute-phase (v1.31) |
+| `GSD_AUDIT` | Set to `1` to enable the dispatch audit file (`.planning/.gsd-trace.jsonl`) |
+| `GSD_AUDIT_ARGS` | Set to `1` to include command args in audit/error events (omitted by default) |
 | `GSD_PROJECT` | Override project root for multi-project workspace support (v1.32) |
+| `GSD_SKIP_SCHEMA_CHECK` | Skip schema drift detection during execute-phase (v1.31) |
+| `WSL_DISTRO_NAME` | Detected by installer for WSL path handling |
 
 ---
 
@@ -1109,3 +1111,51 @@ Save settings as global defaults for future projects:
 **Location:** `~/.gsd/defaults.json`
 
 When `/gsd-new-project` creates a new `config.json`, it reads global defaults and merges them as the starting configuration. Per-project settings always override globals.
+
+---
+
+## Observability
+
+The Command Routing Hub emits a structured `DispatchEvent` after every dispatch. Default behaviour is **silent on success** and **one structured JSON line to stderr on error**.
+
+### Stderr error format
+
+When a dispatch fails, one JSON line is emitted to stderr:
+
+```json
+{ "kind": "HandlerFailure", "traceId": "...", "command": "plan", "timestamp": "...", "message": "..." }
+```
+
+The `kind` field matches one of the Hub's error variants: `UnknownCommand`, `InvalidArgs`, `HandlerRefusal`, or `HandlerFailure`. Args are omitted by default (privacy); see `GSD_AUDIT_ARGS` below.
+
+### Audit trail (opt-in)
+
+Enable the append-only audit file to record every dispatch (success and error):
+
+**Via environment variable:**
+```bash
+GSD_AUDIT=1 gsd plan
+```
+
+**Via config (`config.audit.enabled`):**
+```json
+{
+  "audit": {
+    "enabled": true
+  }
+}
+```
+
+**Audit file location:** `.planning/.gsd-trace.jsonl` (gitignored)
+
+Each line is a full `DispatchEvent` JSON object. The file is append-only and never truncated; rotate or remove it manually when desired.
+
+### Args redaction
+
+By default, command args are **omitted** from all emitted events (both stderr errors and the audit file). To include args verbatim:
+
+```bash
+GSD_AUDIT_ARGS=1 GSD_AUDIT=1 gsd plan --tdd
+```
+
+`GSD_AUDIT_ARGS` applies to both the stderr error line and the audit file simultaneously.
