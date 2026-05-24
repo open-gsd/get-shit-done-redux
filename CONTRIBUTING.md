@@ -120,6 +120,46 @@ PRs that arrive without a properly-labeled linked issue are closed automatically
 
 ---
 
+## Where Do I Open My PR? (Branching Model)
+
+GSD uses two long-lived branches: `main` (production, what's on npm `@latest`)
+and `next` (integration for the upcoming release). **Almost every PR targets
+`next`.** Full guide: [`docs/branching.md`](docs/branching.md).
+
+| Your branch | PR target | Notes |
+|---|---|---|
+| `feat/NNN-slug` | `next` | Default for all new features |
+| `fix/NNN-slug` | `next` | Default for all bug fixes; ships in next minor or via hotfix cherry-pick |
+| `chore/`, `docs/`, `refactor/`, `test/`, `perf/`, `ci/`, `revert/` | `next` | All routine work |
+| `fix/critical-NNN-slug` | `main` | Production-down emergencies only; auto-back-merges to `next` |
+| `release/X.Y.0` | `main` | Created by `release.yml` — don't make these by hand |
+| `hotfix/X.Y.Z` | `main` | Created by `hotfix.yml` — don't make these by hand |
+| Stabilization PR for an in-flight release | `release/X.Y.0` | Fix a regression found during the RC cycle |
+
+**Day-to-day commands:**
+
+```bash
+git fetch origin
+git checkout next
+git pull --ff-only origin next
+git checkout -b fix/3187-config-corruption
+# ... commit, push
+gh pr create --base next --repo open-gsd/get-shit-done-redux
+```
+
+If you target the wrong branch by accident, the `PR Target Validator`
+workflow will post a comment with the one-line fix (click "Edit" by the PR
+title and change the base branch — no need to recreate the PR).
+
+**Why this matters:** Under the old single-branch model, every PR required
+rebasing onto `main` because branch protection required "up-to-date before
+merging" and `main` moved on every merge. With `next` as the integration
+branch and that flag disabled on `next`, concurrent PRs can merge in any
+order as long as they don't conflict on the same lines. The rebase
+treadmill is gone for the 95% case.
+
+---
+
 ## Pull Request Guidelines
 
 ### Architecture & Domain Standards (Maintainer-Defined)

@@ -1,0 +1,143 @@
+name: Auto Back-Merge main → next
+
+# Keep `next` at-or-ahead of `main` automatically. Every push to `main`
+# (release finalize, hotfix finalize, occasional emergency fix) opens — or
+# updates — a PR titled "chore: back-merge main → next". CI gates the merge;
+# auto-merge is enabled so it lands as soon as it's green.
+#
+# Phase 1 of the next-branch migration: this workflow runs but is a no-op
+# (`if: false` on the job) until `next` exists in the repo. Once Phase 2
+# creates `next` and flips the default branch, flip the `if:` to true.
+#
+# See: docs/adr/230-introduce-next-integration-branch.md
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: auto-backmerge-main-to-next
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backmerge:
+    # Phase-1 gate: leave false until `next` exists. Flip to `true` in Phase 2.
+    if: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify next branch exists
+        id: check
+        run: |
+          if git ls-remote --exit-code origin next >/dev/null 2>&1; then
+            echo "next_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::next branch does not exist; skipping back-merge."
+            echo "next_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git identity
+        if: steps.check.outputs.next_exists == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create or update back-merge branch
+        if: steps.check.outputs.next_exists == 'true'
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BR="chore/backmerge-main-to-next-${SHORT_SHA}"
+          echo "branch=$BR" >> "$GITHUB_OUTPUT"
+
+          # If there's already an open back-merge PR, reuse its branch by
+          # updating it with the new main HEAD via a merge. Otherwise create
+          # a fresh branch.
+          EXISTING_PR=$(gh pr list --base next --label automation --label backmerge --state open \
+            --json number,headRefName --jq '.[0]' 2>/dev/null || echo "")
+          EXISTING_BR=$(echo "$EXISTING_PR" | jq -r '.headRefName // empty')
+
+          if [ -n "$EXISTING_BR" ]; then
+            echo "Updating existing back-merge branch: $EXISTING_BR"
+            git fetch origin "$EXISTING_BR":"$EXISTING_BR" || true
+            git checkout "$EXISTING_BR"
+            # Fast-forward to current main if possible; otherwise merge.
+            git merge --no-edit origin/main || {
+              echo "::warning::Merge conflict back-merging main into existing back-merge branch. Human resolution required."
+              exit 1
+            }
+            git push origin "$EXISTING_BR"
+            echo "branch=$EXISTING_BR" >> "$GITHUB_OUTPUT"
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+          else
+            git fetch origin next:next
+            git checkout -b "$BR" next
+            # Bring main's commits onto next via a merge commit (preserves tag history).
+            if ! git merge --no-edit -m "chore: back-merge main into next" origin/main; then
+              echo "::warning::Conflict during initial back-merge main → next. Pushing the branch anyway so a maintainer can resolve via PR."
+              # Abort and recreate as an empty branch with a CONFLICT marker — gives the maintainer a PR to work in.
+              git merge --abort || true
+              git push origin "$BR"
+              gh pr create \
+                --base next \
+                --head "$BR" \
+                --title "chore: CONFLICT back-merging main → next (manual resolution required)" \
+                --label automation \
+                --label backmerge \
+                --label needs-human \
+                --body "main moved to ${SHORT_SHA} and cannot be auto-merged into next. Check out this branch locally, resolve the conflict, and push."
+              exit 0
+            fi
+            git push origin "$BR"
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update PR
+        if: steps.check.outputs.next_exists == 'true' && steps.branch.outputs.reused != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BR: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BODY=$(cat <<EOF
+          Automated back-merge of \`main\` (\`${SHORT_SHA}\`) into \`next\`.
+
+          This PR keeps \`next\` at-or-ahead of \`main\` after a release, hotfix,
+          or emergency fix on \`main\`. CI must pass; auto-merge is enabled so
+          this should land without manual review unless CI flags a regression.
+
+          Generated by \`.github/workflows/auto-backmerge.yml\`.
+          EOF
+          )
+          gh pr create \
+            --base next \
+            --head "$BR" \
+            --title "chore: back-merge main → next (${SHORT_SHA})" \
+            --label automation \
+            --label backmerge \
+            --body "$BODY" \
+            || echo "::warning::Could not create back-merge PR (may already exist)."
+
+      - name: Enable auto-merge
+        if: steps.check.outputs.next_exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BR: ${{ steps.branch.outputs.branch }}
+        run: |
+          # Squash would lose the merge-commit context; use merge commit.
+          gh pr merge --auto --merge "$BR" \
+            || echo "::warning::Could not enable auto-merge (PR may not exist yet or auto-merge is disabled on repo)."

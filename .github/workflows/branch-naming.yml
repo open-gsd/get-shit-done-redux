@@ -26,7 +26,7 @@ jobs:
               'refactor/', 'test/', 'release/', 'ci/', 'perf/', 'revert/',
             ];
 
-            const alwaysValid = ['main', 'develop'];
+            const alwaysValid = ['main', 'next', 'develop'];
             if (alwaysValid.includes(branch)) return;
             if (branch.startsWith('dependabot/') || branch.startsWith('renovate/')) return;
             // GSD auto-created branches
