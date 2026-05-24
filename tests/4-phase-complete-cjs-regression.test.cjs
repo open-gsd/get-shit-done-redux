@@ -166,7 +166,7 @@ describe('issue #4 (CJS): cmdPhaseComplete — idempotency (blind-increment bug)
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   test('T1: double invocation does NOT double-increment Completed Phases in STATE.md body', () => {
@@ -215,7 +215,7 @@ describe('issue #4 (CJS): cmdPhaseComplete — progress percent clamp', () => {
   let tmpDir;
 
   afterEach(() => {
-    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   test('T2: Progress percent never exceeds 100 after double invocation', () => {
