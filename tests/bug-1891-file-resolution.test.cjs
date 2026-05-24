@@ -48,17 +48,14 @@ describe('bug #1891: @file: resolution in gsd-tools.cjs', () => {
   });
 
   test('stdout interception wraps runCommand in the non-pick path', () => {
-    // The main function should intercept fs.writeSync for fd=1
-    // in BOTH the pick path AND the normal path
+    // The main function should resolve @file: output in BOTH --pick and
+    // non-pick paths. This can be either two inline checks or a shared helper.
     const mainFunc = src.slice(src.indexOf('async function main()'));
-    const pickInterception = mainFunc.indexOf('// When --pick is active');
-    const fileResolution = mainFunc.indexOf('@file:');
-
-    // There should be at least two @file: resolution points:
-    // one in the --pick path and one in the normal path
-    const firstAt = mainFunc.indexOf("'@file:'");
-    const secondAt = mainFunc.indexOf("'@file:'", firstAt + 1);
-    assert.ok(secondAt > firstAt,
-      'Both --pick and normal paths should resolve @file: references');
+    const resolveCalls = (mainFunc.match(/resolveAtFileOutput\(/g) || []).length;
+    const inlineAtFileChecks = (mainFunc.match(/@file:/g) || []).length;
+    assert.ok(
+      resolveCalls >= 2 || inlineAtFileChecks >= 2,
+      'Both --pick and normal paths should resolve @file: references'
+    );
   });
 });
