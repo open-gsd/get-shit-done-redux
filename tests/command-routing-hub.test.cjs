@@ -200,9 +200,9 @@ describe('CommandRoutingHub — happy path, CJS dispatch', () => {
   });
 });
 
-// ─── errorKind: UnknownCommand ────────────────────────────────────────────────
+// ─── kind: UnknownCommand ─────────────────────────────────────────────────────
 
-describe('CommandRoutingHub — errorKind: UnknownCommand', () => {
+describe('CommandRoutingHub — kind: UnknownCommand', () => {
   test('unknown family in manifest returns UnknownCommand', () => {
     const hub = createHub({
       cjsRegistry: {},
@@ -212,7 +212,7 @@ describe('CommandRoutingHub — errorKind: UnknownCommand', () => {
     const result = hub.dispatch({ family: 'bogus', subcommand: 'add', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
   });
 
   test('unknown subcommand in manifest returns UnknownCommand', () => {
@@ -224,7 +224,7 @@ describe('CommandRoutingHub — errorKind: UnknownCommand', () => {
     const result = hub.dispatch({ family: 'phase', subcommand: 'nonexistent', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
   });
 
   test('missing family in cjsRegistry returns UnknownCommand (no manifest)', () => {
@@ -235,7 +235,7 @@ describe('CommandRoutingHub — errorKind: UnknownCommand', () => {
     const result = hub.dispatch({ family: 'bogus-family', subcommand: 'sub', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
   });
 
   test('missing subcommand in cjsRegistry returns UnknownCommand', () => {
@@ -246,21 +246,22 @@ describe('CommandRoutingHub — errorKind: UnknownCommand', () => {
     const result = hub.dispatch({ family: 'phase', subcommand: 'not-there', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
   });
 });
 
-// ─── errorKind: InvalidArgs ───────────────────────────────────────────────────
+// ─── kind: InvalidArgs ────────────────────────────────────────────────────────
 
-describe('CommandRoutingHub — errorKind: InvalidArgs', () => {
+describe('CommandRoutingHub — kind: InvalidArgs', () => {
   test('handler returning InvalidArgs result propagates it', () => {
     const hub = createHub({
       cjsRegistry: {
         phase: {
           insert: (_ctx) => ({
             ok: false,
-            errorKind: ERROR_KINDS.InvalidArgs,
-            message: 'phase insert requires a phase number',
+            kind: ERROR_KINDS.InvalidArgs,
+            arg: 'phase-number',
+            reason: 'phase insert requires a phase number',
           }),
         },
       },
@@ -269,22 +270,22 @@ describe('CommandRoutingHub — errorKind: InvalidArgs', () => {
     const result = hub.dispatch({ family: 'phase', subcommand: 'insert', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.InvalidArgs);
-    assert.ok(result.message.includes('phase number'));
+    assert.equal(result.kind, ERROR_KINDS.InvalidArgs);
+    assert.ok(result.reason.includes('phase number'));
   });
 });
 
-// ─── errorKind: HandlerRefusal ────────────────────────────────────────────────
+// ─── kind: HandlerRefusal ─────────────────────────────────────────────────────
 
-describe('CommandRoutingHub — errorKind: HandlerRefusal', () => {
+describe('CommandRoutingHub — kind: HandlerRefusal', () => {
   test('handler returning HandlerRefusal result propagates it', () => {
     const hub = createHub({
       cjsRegistry: {
         phase: {
           'list-plans': (_ctx) => ({
             ok: false,
-            errorKind: ERROR_KINDS.HandlerRefusal,
-            message: 'phase list-plans is SDK-only',
+            kind: ERROR_KINDS.HandlerRefusal,
+            reason: 'phase list-plans is SDK-only',
           }),
         },
       },
@@ -293,13 +294,13 @@ describe('CommandRoutingHub — errorKind: HandlerRefusal', () => {
     const result = hub.dispatch({ family: 'phase', subcommand: 'list-plans', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.HandlerRefusal);
+    assert.equal(result.kind, ERROR_KINDS.HandlerRefusal);
   });
 });
 
-// ─── errorKind: HandlerFailure ────────────────────────────────────────────────
+// ─── kind: HandlerFailure ─────────────────────────────────────────────────────
 
-describe('CommandRoutingHub — errorKind: HandlerFailure', () => {
+describe('CommandRoutingHub — kind: HandlerFailure', () => {
   test('hub does not throw when CJS handler throws — returns HandlerFailure', () => {
     const hub = createHub({
       cjsRegistry: {
@@ -315,11 +316,11 @@ describe('CommandRoutingHub — errorKind: HandlerFailure', () => {
     });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.HandlerFailure);
+    assert.equal(result.kind, ERROR_KINDS.HandlerFailure);
     assert.ok(result.message.includes('handler blew up'));
   });
 
-  test('HandlerFailure details.originalError carries the thrown error', () => {
+  test('HandlerFailure cause carries the thrown error', () => {
     const originalError = new Error('boom');
     const hub = createHub({
       cjsRegistry: {
@@ -332,8 +333,8 @@ describe('CommandRoutingHub — errorKind: HandlerFailure', () => {
     const result = hub.dispatch({ family: 'state', subcommand: 'load', args: [], cwd: '/', raw: false });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.HandlerFailure);
-    assert.strictEqual(result.details.originalError, originalError);
+    assert.equal(result.kind, ERROR_KINDS.HandlerFailure);
+    assert.strictEqual(result.cause, originalError);
   });
 });
 
@@ -349,7 +350,7 @@ describe('CommandRoutingHub — hub never throws', () => {
     });
 
     assert.ok(!result.ok);
-    assert.equal(result.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
   });
 
   test('hub does not throw when dispatch receives malformed request', () => {
@@ -363,6 +364,158 @@ describe('CommandRoutingHub — hub never throws', () => {
 
     // Result is an error, not a thrown exception
     assert.ok(!result.ok);
+  });
+});
+
+// ─── P1.2: Typed-payload discriminated union (#176) ──────────────────────────
+// Each error variant carries ONLY its own typed payload.
+// `errorKind` field renamed to `kind`; generic `message`/`details` removed
+// from variants that have dedicated fields.
+
+describe('CommandRoutingHub — P1.2 typed-payload discriminated union (#176)', () => {
+  // ── UnknownCommand: { ok, kind, command } — no message, no details ──────────
+  test('UnknownCommand has exactly { ok, kind, command } — nothing else', () => {
+    const hub = createHub({
+      cjsRegistry: {},
+      manifest: { phase: ['add'] },
+    });
+
+    const result = hub.dispatch({ family: 'bogus', subcommand: 'add', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
+    assert.equal(typeof result.command, 'string');
+    assert.ok(result.command.length > 0, 'command field must be non-empty');
+    // Strict field set — no errorKind, no message, no details
+    const keys = Object.keys(result).sort();
+    assert.deepStrictEqual(keys, ['command', 'kind', 'ok']);
+  });
+
+  test('UnknownCommand for unknown subcommand carries the command string', () => {
+    const hub = createHub({
+      cjsRegistry: {},
+      manifest: { phase: ['add'] },
+    });
+
+    const result = hub.dispatch({ family: 'phase', subcommand: 'nonexistent', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
+    assert.ok(result.command.includes('nonexistent'), `Expected command to include 'nonexistent', got: ${result.command}`);
+  });
+
+  test('UnknownCommand from missing cjsRegistry family carries the command string', () => {
+    const hub = createHub({
+      cjsRegistry: { state: { load: () => ({ ok: true, data: null }) } },
+    });
+
+    const result = hub.dispatch({ family: 'bogus-family', subcommand: 'sub', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
+    assert.ok(result.command.includes('bogus-family'), `Expected command to include 'bogus-family', got: ${result.command}`);
+  });
+
+  // ── InvalidArgs: { ok, kind, arg, reason } — no message, no details ─────────
+  test('InvalidArgs result from handler is propagated with kind/arg/reason fields', () => {
+    const hub = createHub({
+      cjsRegistry: {
+        phase: {
+          insert: (_ctx) => ({
+            ok: false,
+            kind: ERROR_KINDS.InvalidArgs,
+            arg: '--dry-run',
+            reason: 'phase insert does not support --dry-run',
+          }),
+        },
+      },
+    });
+
+    const result = hub.dispatch({ family: 'phase', subcommand: 'insert', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.InvalidArgs);
+    assert.equal(result.arg, '--dry-run');
+    assert.ok(result.reason.includes('--dry-run'));
+    // Strict field set
+    const keys = Object.keys(result).sort();
+    assert.deepStrictEqual(keys, ['arg', 'kind', 'ok', 'reason']);
+  });
+
+  // ── HandlerRefusal: { ok, kind, reason } — no message, no details ────────────
+  test('HandlerRefusal result from handler is propagated with kind/reason fields', () => {
+    const hub = createHub({
+      cjsRegistry: {
+        phase: {
+          'list-plans': (_ctx) => ({
+            ok: false,
+            kind: ERROR_KINDS.HandlerRefusal,
+            reason: 'phase list-plans is SDK-only',
+          }),
+        },
+      },
+    });
+
+    const result = hub.dispatch({ family: 'phase', subcommand: 'list-plans', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.HandlerRefusal);
+    assert.ok(result.reason.includes('SDK-only'));
+    // Strict field set
+    const keys = Object.keys(result).sort();
+    assert.deepStrictEqual(keys, ['kind', 'ok', 'reason']);
+  });
+
+  // ── HandlerFailure: { ok, kind, message, cause? } — cause carries the Error ──
+  test('HandlerFailure from throw has { ok, kind, message, cause } — no details', () => {
+    const hub = createHub({
+      cjsRegistry: {
+        phase: {
+          add: (_ctx) => { throw new Error('handler blew up'); },
+        },
+      },
+    });
+
+    const result = hub.dispatch({ family: 'phase', subcommand: 'add', args: ['desc'], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.HandlerFailure);
+    assert.ok(result.message.includes('handler blew up'));
+    assert.ok(result.cause instanceof Error);
+    // Strict field set (cause present when Error thrown)
+    const keys = Object.keys(result).sort();
+    assert.deepStrictEqual(keys, ['cause', 'kind', 'message', 'ok']);
+  });
+
+  test('HandlerFailure cause carries the original thrown Error object', () => {
+    const originalError = new Error('boom');
+    const hub = createHub({
+      cjsRegistry: {
+        state: {
+          load: (_ctx) => { throw originalError; },
+        },
+      },
+    });
+
+    const result = hub.dispatch({ family: 'state', subcommand: 'load', args: [], cwd: '/', raw: false });
+
+    assert.ok(!result.ok);
+    assert.equal(result.kind, ERROR_KINDS.HandlerFailure);
+    assert.strictEqual(result.cause, originalError);
+  });
+
+  // ── ERROR_KINDS values used as `kind` discriminator — still work ─────────────
+  test('ERROR_KINDS.UnknownCommand === result.kind for UnknownCommand', () => {
+    const hub = createHub({ cjsRegistry: {} });
+    const result = hub.dispatch({ family: 'nope', subcommand: 'x', args: [], cwd: '/', raw: false });
+    assert.equal(result.kind, ERROR_KINDS.UnknownCommand);
+  });
+
+  test('ERROR_KINDS values are stable string constants matching their key names', () => {
+    assert.equal(ERROR_KINDS.UnknownCommand, 'UnknownCommand');
+    assert.equal(ERROR_KINDS.InvalidArgs, 'InvalidArgs');
+    assert.equal(ERROR_KINDS.HandlerRefusal, 'HandlerRefusal');
+    assert.equal(ERROR_KINDS.HandlerFailure, 'HandlerFailure');
   });
 });
 
@@ -402,6 +555,6 @@ describe('CommandRoutingHub — single CJS dispatch invariant (#175)', () => {
 
     assert.ok(known.ok);
     assert.ok(!unknown.ok);
-    assert.equal(unknown.errorKind, ERROR_KINDS.UnknownCommand);
+    assert.equal(unknown.kind, ERROR_KINDS.UnknownCommand);
   });
 });

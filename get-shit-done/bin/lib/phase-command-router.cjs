@@ -2,8 +2,8 @@
 
 const { PHASE_SUBCOMMANDS } = require('./command-aliases.generated.cjs');
 
-// ─── CommandRoutingHub (issue #3788, simplified in #175) ──────────────────────
-const { createHub, ERROR_KINDS } = require('./command-routing-hub.cjs');
+// ─── CommandRoutingHub (issue #3788, simplified in #175, typed in #176) ───────
+const { createHub, ERROR_KINDS, makeInvalidArgs } = require('./command-routing-hub.cjs');
 
 /**
  * Manifest-backed phase subcommand router.
@@ -78,12 +78,12 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
           if (token === '--id') {
             const id = args[i + 1];
             if (!id || id.startsWith('--')) {
-              return { ok: false, errorKind: 'InvalidArgs', message: '--id requires a value' };
+              return makeInvalidArgs('--id', '--id requires a value');
             }
             customId = id;
             i++;
           } else if (token.startsWith('--')) {
-            return { ok: false, errorKind: 'InvalidArgs', message: `phase add does not support ${token}` };
+            return makeInvalidArgs(token, `phase add does not support ${token}`);
           } else {
             descArgs.push(token);
           }
@@ -97,15 +97,15 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
         if (descFlagIdx !== -1) {
           const rawDescriptions = args[descFlagIdx + 1];
           if (!rawDescriptions || rawDescriptions.startsWith('--')) {
-            return { ok: false, errorKind: 'InvalidArgs', message: '--descriptions must be a JSON array' };
+            return makeInvalidArgs('--descriptions', '--descriptions must be a JSON array');
           }
           try {
             descriptions = JSON.parse(rawDescriptions);
           } catch {
-            return { ok: false, errorKind: 'InvalidArgs', message: '--descriptions must be a JSON array' };
+            return makeInvalidArgs('--descriptions', '--descriptions must be a JSON array');
           }
           if (!Array.isArray(descriptions)) {
-            return { ok: false, errorKind: 'InvalidArgs', message: '--descriptions must be a JSON array' };
+            return makeInvalidArgs('--descriptions', '--descriptions must be a JSON array');
           }
         } else {
           descriptions = args.slice(2).filter(a => a !== '--raw');
@@ -115,7 +115,7 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
       },
       insert: (_ctx) => {
         if (args.includes('--dry-run')) {
-          return { ok: false, errorKind: 'InvalidArgs', message: 'phase insert does not support --dry-run' };
+          return makeInvalidArgs('--dry-run', 'phase insert does not support --dry-run');
         }
         phase.cmdPhaseInsert(cwd, args[2], args.slice(3).join(' '), raw);
         return { ok: true, data: null };
@@ -130,12 +130,12 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
             continue;
           }
           if (token.startsWith('--')) {
-            return { ok: false, errorKind: 'InvalidArgs', message: `phase remove does not support ${token}` };
+            return makeInvalidArgs(token, `phase remove does not support ${token}`);
           }
           positional.push(token);
         }
         if (positional.length !== 1) {
-          return { ok: false, errorKind: 'InvalidArgs', message: 'phase remove accepts exactly one phase number' };
+          return makeInvalidArgs('<phase-number>', 'phase remove accepts exactly one phase number');
         }
         phase.cmdPhaseRemove(cwd, positional[0], { force: forceFlag }, raw);
         return { ok: true, data: null };
@@ -177,12 +177,17 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
   // CJS handlers call output() themselves (inside phase.cmdPhase*()).
   // No further output call is needed here.
   if (!result.ok) {
-    if (result.errorKind === ERROR_KINDS.UnknownCommand) {
+    if (result.kind === ERROR_KINDS.UnknownCommand) {
       const available = availableSubcommands.join(', ');
       error(`Unknown phase subcommand. Available: ${available}`);
       return;
     }
-    // InvalidArgs, HandlerRefusal, HandlerFailure
+    if (result.kind === ERROR_KINDS.InvalidArgs || result.kind === ERROR_KINDS.HandlerRefusal) {
+      // #176: typed payload — reason holds the human-readable message
+      error(result.reason);
+      return;
+    }
+    // HandlerFailure: message field
     error(result.message);
     return;
   }
