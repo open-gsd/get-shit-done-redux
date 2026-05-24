@@ -179,12 +179,47 @@ describe('Hub + logger — event shape', () => {
     );
   });
 
-  test('event.parentTraceId is undefined in P1.3', () => {
+  test('event.parentTraceId is undefined when req omits parentTraceId (backward-compat with P1.3)', () => {
     const tracking = makeTrackingLogger();
     const hub = makeHub(tracking);
     hub.dispatch({ family: 'plan', subcommand: '' });
     assert.strictEqual(tracking.calls[0].parentTraceId, undefined,
-      'parentTraceId must be undefined in P1.3');
+      'parentTraceId must be undefined when req does not include it');
+  });
+
+  test('dispatch passes req.parentTraceId through to the emitted event', () => {
+    const tracking = makeTrackingLogger();
+    const hub = makeHub(tracking);
+    const parentId = 'ffffffff-0000-4000-8000-aaaaaaaaaaaa';
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: parentId });
+    assert.strictEqual(tracking.calls[0].parentTraceId, parentId,
+      'parentTraceId must be present on the event when passed via req');
+  });
+
+  test('multiple dispatches with the same parentTraceId all carry that parentTraceId on their events', () => {
+    const tracking = makeTrackingLogger();
+    const hub = makeHub(tracking);
+    const sharedParentId = 'cccccccc-0000-4000-8000-111111111111';
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    for (const event of tracking.calls) {
+      assert.strictEqual(event.parentTraceId, sharedParentId,
+        'every child dispatch must carry the shared parentTraceId');
+    }
+  });
+
+  test('each dispatch still gets a unique traceId even when parentTraceId is shared (correlation tree invariant)', () => {
+    const tracking = makeTrackingLogger();
+    const hub = makeHub(tracking);
+    const sharedParentId = 'dddddddd-0000-4000-8000-222222222222';
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    hub.dispatch({ family: 'plan', subcommand: '', parentTraceId: sharedParentId });
+    const traceIds = tracking.calls.map(e => e.traceId);
+    const unique = new Set(traceIds);
+    assert.equal(unique.size, 3,
+      'each dispatch must produce a unique traceId even when parentTraceId is shared');
   });
 });
 
