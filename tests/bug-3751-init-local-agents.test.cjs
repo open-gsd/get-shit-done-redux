@@ -30,6 +30,30 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const MODEL_PROFILES = require('../get-shit-done/bin/lib/model-profiles.cjs').MODEL_PROFILES;
+const EXPECTED_AGENTS = Object.keys(MODEL_PROFILES);
+
+function writeRequiredAgents(agentsDir) {
+  for (const agentName of EXPECTED_AGENTS) {
+    fs.writeFileSync(
+      path.join(agentsDir, `${agentName}.md`),
+      `---\nname: ${agentName}\ndescription: test\ntools: Read\n---\nAgent content.\n`,
+    );
+  }
+}
+
+function normalizePathForAssert(targetPath) {
+  if (typeof targetPath !== 'string') return targetPath;
+  const resolved = path.resolve(targetPath);
+  try {
+    if (typeof fs.realpathSync.native === 'function') {
+      return fs.realpathSync.native(resolved);
+    }
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
 
 // ─── Source-file structural assertions (no build required) ───────────────────
 
@@ -195,14 +219,12 @@ describe('#3751: resolveAgentsDir() repo-local fallback — runtime behaviour', 
     // DO NOT create fakeGlobalConfig/agents/ — simulates absent global agents
     process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
 
-    // Set up repo-local .claude/agents with a GSD agent definition
+    // Set up repo-local .claude/agents with all required GSD agent files.
+    // `agents_installed` is only true when every MODEL_PROFILES key exists.
     const repoRoot = path.join(tmpDir, 'repo');
     const repoLocalAgentsDir = path.join(repoRoot, '.claude', 'agents');
     fs.mkdirSync(repoLocalAgentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(repoLocalAgentsDir, 'gsd-project-researcher.md'),
-      '---\nname: gsd-project-researcher\ndescription: test\ntools: Read\n---\nAgent content.\n',
-    );
+    writeRequiredAgents(repoLocalAgentsDir);
 
     // Dynamically require helpers so CLAUDE_CONFIG_DIR is picked up
     // (Node caches modules, so we clear the cache first)
@@ -359,14 +381,11 @@ describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour
     // global agents/ exists but is EMPTY — simulates Claude auto-creating the dir
     process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
 
-    // Set up project-local .claude/agents with a GSD agent definition
+    // Set up project-local .claude/agents with all required GSD agent files
     const repoRoot = path.join(tmpDir, 'repo');
     const repoLocalAgentsDir = path.join(repoRoot, '.claude', 'agents');
     fs.mkdirSync(repoLocalAgentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(repoLocalAgentsDir, 'gsd-project-researcher.md'),
-      '---\nname: gsd-project-researcher\ndescription: test\ntools: Read\n---\nAgent content.\n',
-    );
+    writeRequiredAgents(repoLocalAgentsDir);
 
     const result = runGsdTools(
       ['query', 'init.new-project', '--raw'],
@@ -382,8 +401,8 @@ describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour
       if (parsed && typeof parsed.agents_dir !== 'undefined') {
         // agents_dir must point to the local dir, not the empty global dir
         assert.strictEqual(
-          parsed.agents_dir,
-          repoLocalAgentsDir,
+          normalizePathForAssert(parsed.agents_dir),
+          normalizePathForAssert(repoLocalAgentsDir),
           `agents_dir must resolve to project-local path, got: ${parsed.agents_dir} (#3799)`,
         );
       }
@@ -423,8 +442,8 @@ describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour
       try { parsed = JSON.parse(result.output); } catch { return; }
       if (parsed && typeof parsed.agents_dir !== 'undefined') {
         assert.strictEqual(
-          parsed.agents_dir,
-          fakeGlobalAgents,
+          normalizePathForAssert(parsed.agents_dir),
+          normalizePathForAssert(fakeGlobalAgents),
           `agents_dir must resolve to global path when no local dir exists, got: ${parsed.agents_dir} (#3799)`,
         );
       }
@@ -439,13 +458,13 @@ describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour
     const fakeGlobalConfig = path.join(tmpDir, 'fake-global-both');
     const fakeGlobalAgents = path.join(fakeGlobalConfig, 'agents');
     fs.mkdirSync(fakeGlobalAgents, { recursive: true });
-    fs.writeFileSync(path.join(fakeGlobalAgents, 'gsd-project-researcher.md'), '# global agent\n');
+    writeRequiredAgents(fakeGlobalAgents);
     process.env.CLAUDE_CONFIG_DIR = fakeGlobalConfig;
 
     const repoRoot = path.join(tmpDir, 'repo-both');
     const repoLocalAgentsDir = path.join(repoRoot, '.claude', 'agents');
     fs.mkdirSync(repoLocalAgentsDir, { recursive: true });
-    fs.writeFileSync(path.join(repoLocalAgentsDir, 'gsd-project-researcher.md'), '# local agent\n');
+    writeRequiredAgents(repoLocalAgentsDir);
 
     const result = runGsdTools(
       ['query', 'init.new-project', '--raw'],
@@ -460,8 +479,8 @@ describe('#3799: resolveAgentsDir() local-first resolution — runtime behaviour
       try { parsed = JSON.parse(result.output); } catch { return; }
       if (parsed && typeof parsed.agents_dir !== 'undefined') {
         assert.strictEqual(
-          parsed.agents_dir,
-          repoLocalAgentsDir,
+          normalizePathForAssert(parsed.agents_dir),
+          normalizePathForAssert(repoLocalAgentsDir),
           `agents_dir must resolve to local path when both exist, got: ${parsed.agents_dir} (#3799)`,
         );
       }
