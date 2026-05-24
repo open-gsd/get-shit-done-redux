@@ -758,6 +758,12 @@ Reviewers do not rely solely on CI to verify correctness. Before approving a PR,
 
 **"Tests pass in CI" is not sufficient for merge.** The implementation must correctly solve the problem described in the linked issue.
 
+## Code Review Lessons
+
+### Input validation: check shape, not just type
+
+Defensive normalization at trust boundaries must validate both the value's type and its semantic shape. A `typeof === 'string'` check is necessary but insufficient when the field's contract requires a specific format (UUID v4, semver, file path, etc.). See [ADR 227](docs/adr/227-input-validation-shape-not-just-type.md) for the architectural standard and concrete cases.
+
 ## Code Style
 
 - **CommonJS** (`.cjs`) — the project uses `require()`, not ESM `import`
