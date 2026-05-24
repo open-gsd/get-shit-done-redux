@@ -78,3 +78,6 @@ entities.json
 # Local scratch + Claude-test artifacts
 .scratch/
 claude-test-command.md
+
+# Observability audit trail (issue #177) — append-only, local only
+.planning/.gsd-trace.jsonl
