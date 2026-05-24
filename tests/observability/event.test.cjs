@@ -44,14 +44,53 @@ describe('makeDispatchEvent — shape', () => {
     assert.notEqual(a.traceId, b.traceId, 'consecutive calls must produce different traceIds');
   });
 
-  test('parentTraceId is always undefined in P1.3', () => {
+  test('parentTraceId is undefined when not provided (default, backward-compat with P1.3)', () => {
     const event = makeDispatchEvent({
       command: 'plan',
       result: { kind: 'ok', data: null },
-      parentTraceId: 'should-be-ignored',
     });
-    // P1.3: parentTraceId field exists but is always undefined
-    assert.strictEqual(event.parentTraceId, undefined, 'parentTraceId must be undefined in P1.3');
+    // P1.4: when no parentTraceId supplied, field is still undefined
+    assert.strictEqual(event.parentTraceId, undefined, 'parentTraceId must be undefined when not provided');
+  });
+
+  test('parentTraceId propagates when provided as a string (P1.4)', () => {
+    const event = makeDispatchEvent({
+      command: 'plan',
+      result: { kind: 'ok', data: null },
+      parentTraceId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    });
+    assert.strictEqual(event.parentTraceId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      'parentTraceId must be propagated when provided as a string');
+  });
+
+  test('parentTraceId is undefined when null is passed (defensive normalization)', () => {
+    const event = makeDispatchEvent({
+      command: 'plan',
+      result: { kind: 'ok', data: null },
+      parentTraceId: null,
+    });
+    assert.strictEqual(event.parentTraceId, undefined,
+      'null parentTraceId must be normalised to undefined');
+  });
+
+  test('non-string parentTraceId is set to undefined for defensive safety', () => {
+    // Style choice: surrounding code uses undefined for absent/invalid optional fields
+    // (e.g. args is omitted rather than coerced). Consistent policy: non-string → undefined.
+    const eventNum = makeDispatchEvent({
+      command: 'plan',
+      result: { kind: 'ok', data: null },
+      parentTraceId: 42,
+    });
+    assert.strictEqual(eventNum.parentTraceId, undefined,
+      'number parentTraceId must be normalised to undefined');
+
+    const eventObj = makeDispatchEvent({
+      command: 'plan',
+      result: { kind: 'ok', data: null },
+      parentTraceId: { id: 'x' },
+    });
+    assert.strictEqual(eventObj.parentTraceId, undefined,
+      'object parentTraceId must be normalised to undefined');
   });
 
   test('command is set from input', () => {
