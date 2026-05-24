@@ -127,7 +127,7 @@ describe('getGlobalDir/getConfigDirFromHome — antigravity 2.x layout detection
         "'.gemini', 'antigravity-ide'",
       );
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
+      cleanup(home);
     }
   });
 
@@ -146,7 +146,7 @@ describe('getGlobalDir/getConfigDirFromHome — antigravity 2.x layout detection
         "'.gemini', 'antigravity-cli'",
       );
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
+      cleanup(home);
     }
   });
 });
@@ -269,7 +269,7 @@ describe('getConfigDirFromHome — spot-checks', () => {
       else process.env.USERPROFILE = savedUserProfile;
       if (savedAntigravityConfig === undefined) delete process.env.ANTIGRAVITY_CONFIG_DIR;
       else process.env.ANTIGRAVITY_CONFIG_DIR = savedAntigravityConfig;
-      fs.rmSync(home, { recursive: true, force: true });
+      cleanup(home);
     }
   });
 
