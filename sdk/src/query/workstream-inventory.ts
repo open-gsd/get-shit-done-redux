@@ -12,7 +12,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanPhasePlans } from './plan-scan.js';
-import { stateExtractField } from './state-document.js';
+import { stateExtractField } from '../state/index.js';
 import { readActiveWorkstream } from './active-workstream-store.js';
 import { buildWorkstreamInventory } from '../workstream-inventory/builder.js';
 

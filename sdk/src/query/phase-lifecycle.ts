@@ -41,7 +41,7 @@ import {
   releaseStateLock,
   stateReplaceField,
 } from './state-mutation.js';
-import { stateExtractField, stateReplaceFieldWithFallback } from './state-document.js';
+import { stateExtractField, stateReplaceFieldWithFallback } from '../state/index.js';
 import type { QueryHandler } from './utils.js';
 import {
   assertNoNullBytes,

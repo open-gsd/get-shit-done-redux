@@ -434,7 +434,7 @@ Full listing: `get-shit-done/bin/lib/*.cjs`.
 | `state-command-router.cjs` | Thin CJS subcommand router adapter for `gsd-tools state` |
 | `state.cjs` | STATE.md parsing, updating, progression, metrics |
 | `state-document.cjs` | Pure STATE.md field extraction, replacement, status normalization, and progress calculation transforms |
-| `state-document.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/query/state-document.ts` via `sdk/scripts/gen-state-document.ts`; do not edit directly |
+| `state-document.generated.cjs` | GENERATED — CJS artifact emitted from `sdk/src/state/index.ts` via `sdk/scripts/gen-state-document.ts`; do not edit directly |
 | `surface.cjs` | Runtime surface module — manages the runtime enable/disable surface state independently of the install-time profile marker (ADR-0011 Phase 2) |
 | `template.cjs` | Template selection and filling with variable substitution |
 | `uat.cjs` | UAT file parsing, verification debt tracking, audit-uat support |

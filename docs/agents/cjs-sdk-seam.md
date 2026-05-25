@@ -9,7 +9,7 @@ The CJS↔SDK hard-seam migration (#3524) eliminates a class of config-schema dr
 
 | Phase | PR | Summary |
 |-------|----|---------|
-| Phase 1 | [#3531](https://github.com/open-gsd/get-shit-done-redux/pull/3531) | `state-document` Shared Module — source-of-truth at `sdk/src/state-document/`, generator, freshness check, CJS Adapter (`state-document.generated.cjs`). Worked example for the pattern. |
+| Phase 1 | [#3531](https://github.com/open-gsd/get-shit-done-redux/pull/3531) | `state-document` Shared Module — source-of-truth at `sdk/src/state/` (`index.ts`), generator, freshness check, CJS Adapter (`state-document.generated.cjs`). Worked example for the pattern. |
 | Phase 2 | [#3540](https://github.com/open-gsd/get-shit-done-redux/pull/3540) | `configuration` Shared Module — `sdk/shared/config-schema.manifest.json` + `sdk/shared/config-defaults.manifest.json` as data manifests; generator + freshness check + CJS Adapter. |
 | Phase 3 | [#3548](https://github.com/open-gsd/get-shit-done-redux/pull/3548) | `workstream-inventory` Shared Module — source-of-truth at `sdk/src/workstream-inventory/`, builder, generator, freshness check, CJS Adapter. |
 | Phase 4 | [#3554](https://github.com/open-gsd/get-shit-done-redux/pull/3554) | `project-root` Shared Module — source-of-truth at `sdk/src/project-root/`, generator, freshness check, CJS Adapter. |

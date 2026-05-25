@@ -62,10 +62,10 @@ Phases are sized to ship in one to two PRs each. Each phase has its own GitHub i
 
 ### Phase 1 — STATE.md Document Module (smallest possible proof)
 
-**Why first.** `bin/lib/state-document.cjs` and `sdk/src/query/state-document.ts` are already a character-identical hand-synced pair of pure transforms (the file headers explicitly say "Pure transforms for STATE.md text. This module does not read the filesystem and does not own persistence or locking."). Deletion test passes on contact: one side can be deleted as soon as the other becomes the generated artifact. This is the safest possible first step and the canonical proof that the generator pattern works for executable logic, not just alias tables.
+**Why first.** `bin/lib/state-document.cjs` and `sdk/src/state/index.ts` are already a character-identical hand-synced pair of pure transforms (the file headers explicitly say "Pure transforms for STATE.md text. This module does not read the filesystem and does not own persistence or locking."). Deletion test passes on contact: one side can be deleted as soon as the other becomes the generated artifact. This is the safest possible first step and the canonical proof that the generator pattern works for executable logic, not just alias tables.
 
 **Scope:**
-- Promote `sdk/src/query/state-document.ts` to a source under `sdk/src/state-document/index.ts` (or keep in place — decided in implementation).
+- Promote `sdk/src/query/state-document.ts` to `sdk/src/state/index.ts` (implemented).
 - Write `sdk/scripts/gen-state-document.ts` that emits `get-shit-done/bin/lib/state-document.generated.cjs` (and optionally re-exports the TS form at its existing location).
 - Write `sdk/scripts/check-state-document-fresh.mjs` modeled on `check-command-aliases-fresh.mjs`.
 - Replace `bin/lib/state-document.cjs` content with a thin re-export from `state-document.generated.cjs`. Keep the existing filename so callers (e.g. `workstream-inventory.cjs:16`) don't need to update imports.
@@ -228,7 +228,7 @@ Phase 5 specifically preserves the in-process model: `QueryRuntimeBridge.execute
 
 ### Open questions (resolved before the phase that depends on them)
 
-1. **Phase 1 source location** — `sdk/src/state-document/index.ts` (move) vs `sdk/src/query/state-document.ts` (in place). Decided when Phase 1 PR is drafted.
+1. **Phase 1 source location** — resolved to `sdk/src/state/index.ts` (migrated from `sdk/src/query/state-document.ts`).
 2. **Phase 2 manifest format** — JSON vs JSONC vs TypeScript-as-source. Decided in Phase 2. JSON wins unless we need comments for invariants documentation.
 3. **Phase 3 sibling-Module audit** — exact list of pairs that get Builder-split vs deferred. Decided as a deliverable of Phase 3's spike.
 4. **Phase 5 synchronous-bridging mechanism** — `executeForCjs` implementation strategy: `deasync` native module (battle-tested but C++ binding), `Atomics.wait` on a worker channel (zero-binding but spins a Worker), or refactor every async SDK handler to expose a sync entry point (cleanest but largest scope). Decided in the Phase 5 spike issue before any family migration begins.
