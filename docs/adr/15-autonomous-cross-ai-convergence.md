@@ -30,6 +30,10 @@ Do not add a new command. Add convergence as an orchestration policy in existing
 5. Keep convergence behind existing feature gate:
    - if `workflow.plan_review_convergence=false` and `--converge` (or alias) is requested, fail fast with actionable enable instructions.
 6. Keep post-execution review behavior unchanged in this slice (`gsd-code-review` and `gsd-ui-review` stay as-is). Cross-AI code-review fanout is deferred.
+7. Define convergence eligibility and allowed AIs via config (no new command):
+   - enable gate: `workflow.plan_review_convergence=true`
+   - allowed reviewer set: `review.default_reviewers` (for no-flag converge runs)
+   - per-reviewer model selection: `review.models.*`
 
 ## Interface Contract
 
@@ -53,6 +57,40 @@ Do not add a new command. Add convergence as an orchestration policy in existing
   - emit exact enable command:
     - `gsd config-set workflow.plan_review_convergence true`
 - no silent downgrade to `local` strategy.
+
+### Configuration Contract (Enable + Allowed AIs)
+
+Convergence is configurable without introducing new config namespaces.
+
+1. Enable convergence:
+   - `workflow.plan_review_convergence: true`
+2. Define which AIs are allowed by default for convergence runs:
+   - `review.default_reviewers: ["codex", "gemini"]` (example)
+3. Optionally pin models per allowed reviewer:
+   - `review.models.codex`, `review.models.gemini`, etc.
+
+Precedence for reviewer selection in converge mode:
+
+1. Explicit CLI reviewer flags (`--codex`, `--gemini`, `--all`, etc.)
+2. `review.default_reviewers`
+3. If neither resolves to any reviewer, fail fast with actionable message.
+
+Example config:
+
+```json
+{
+  "workflow": {
+    "plan_review_convergence": true
+  },
+  "review": {
+    "default_reviewers": ["codex", "gemini"],
+    "models": {
+      "codex": "gpt-5.4",
+      "gemini": "gemini-2.5-pro"
+    }
+  }
+}
+```
 
 ## Flag Naming
 
@@ -103,6 +141,7 @@ Root architectural gap: orchestration flows lack a plan strategy seam (`local` v
 - `--cross-ai` pass-through contract on existing commands.
 - `--converge` primary flag naming and `--cross-ai` compatibility alias.
 - Feature-gate behavior contract for convergence strategy.
+- Config contract for enabling convergence and selecting allowed AIs.
 - Documentation updates tied to command/config behavior.
 
 ### Out of scope
