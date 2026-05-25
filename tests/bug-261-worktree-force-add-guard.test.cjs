@@ -89,6 +89,18 @@ describe('bug #261: workflow guard blocks forced git add on worktree-agent branc
     }
   });
 
+  test('allows pathspecs named like force flags after git add -- terminator', () => {
+    const dir = makeRepo('worktree-agent-d4');
+    try {
+      setWorkflowGuard(dir, true);
+      const result = runBashHook(dir, 'git add -- -f');
+      assert.strictEqual(result.status, 0);
+      assert.strictEqual(result.stdout, '');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('allows git add -f outside worktree-agent branches', () => {
     const dir = makeRepo('feature-docs');
     try {
@@ -102,7 +114,7 @@ describe('bug #261: workflow guard blocks forced git add on worktree-agent branc
   });
 
   test('allows git add -f on worktree-agent branch when workflow guard is disabled', () => {
-    const dir = makeRepo('worktree-agent-d4');
+    const dir = makeRepo('worktree-agent-e5');
     try {
       setWorkflowGuard(dir, false);
       const result = runBashHook(dir, 'git add -f .planning/SUMMARY.md');
@@ -114,7 +126,7 @@ describe('bug #261: workflow guard blocks forced git add on worktree-agent branc
   });
 
   test('allows git add -f on worktree-agent branch when no GSD config exists', () => {
-    const dir = makeRepo('worktree-agent-e5');
+    const dir = makeRepo('worktree-agent-f6');
     try {
       const result = runBashHook(dir, 'git add -f .planning/SUMMARY.md');
       assert.strictEqual(result.status, 0);

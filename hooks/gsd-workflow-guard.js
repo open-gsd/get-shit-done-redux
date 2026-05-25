@@ -46,6 +46,7 @@ function forceGitAddCwds(command, defaultCwd) {
 
     if (tokens[j] !== 'add') continue;
     for (let k = j + 1; k < tokens.length && !separators.has(tokens[k]); k++) {
+      if (tokens[k] === '--') break;
       if (tokens[k] === '--force' || tokens[k] === '-f' || /^-[A-Za-z]*f[A-Za-z]*$/.test(tokens[k])) {
         cwdList.push(gitCwd);
         break;
