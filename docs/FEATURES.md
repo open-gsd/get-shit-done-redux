@@ -73,8 +73,6 @@
 - [v1.29 Features](#v129-features)
   - [Windsurf Runtime Support](#56-windsurf-runtime-support)
   - [Internationalized Documentation](#57-internationalized-documentation)
-- [v1.30 Features](#v130-features)
-  - [GSD SDK](#58-gsd-sdk)
 - [v1.31 Features](#v131-features)
   - [Schema Drift Detection](#59-schema-drift-detection)
   - [Security Enforcement](#60-security-enforcement)
@@ -134,7 +132,6 @@
   - [Cross-AI Execution Delegation](#110-cross-ai-execution-delegation)
   - [Architectural Responsibility Mapping](#111-architectural-responsibility-mapping)
   - [Extract Learnings](#112-extract-learnings)
-  - [SDK Workstream Support](#113-sdk-workstream-support)
   - [Context-Window-Aware Prompt Thinning](#114-context-window-aware-prompt-thinning)
   - [Configurable CLAUDE.md Path](#115-configurable-claudemd-path)
   - [TDD Pipeline Mode](#116-tdd-pipeline-mode)
@@ -155,7 +152,6 @@
   - [Update Banner Opt-In](#128-update-banner-opt-in)
   - [Issue-Driven Orchestration Guide](#129-issue-driven-orchestration-guide)
   - [Graphify Commit-Based Staleness](#130-graphify-commit-based-staleness)
-  - [MVP Mode SDK Resolution Layer](#131-mvp-mode-sdk-resolution-layer)
 - [v1.42.1 Features](#v1421-features)
   - [Package Legitimacy Gate](#132-package-legitimacy-gate)
   - [Skill Surface Budgeting](#133-skill-surface-budgeting)
@@ -1485,26 +1481,6 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ---
 
-## v1.30 Features
-
-### 58. GSD SDK
-
-**Command:** Programmatic API (headless)
-
-**Purpose:** Headless TypeScript SDK for running GSD workflows programmatically without a CLI session.
-
-**Requirements:**
-- REQ-SDK-01: SDK MUST expose GSD workflow operations as TypeScript functions
-- REQ-SDK-02: SDK MUST support headless execution without interactive prompts
-- REQ-SDK-03: SDK MUST produce the same artifacts as CLI-driven workflows
-
-**Process:**
-1. **Import** — Import GSD SDK into a TypeScript/JavaScript project
-2. **Configure** — Set project path and workflow options programmatically
-3. **Execute** — Run GSD phases (discuss, plan, execute) via API calls
-
----
-
 ## v1.31 Features
 
 ### 59. Schema Drift Detection
@@ -1807,7 +1783,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 74. Context Reduction
 
-**Part of:** GSD SDK prompt assembly
+**Part of:** prompt assembly pipeline
 
 **Purpose:** Reduce context prompt sizes through markdown truncation and cache-friendly prompt ordering.
 
@@ -2474,20 +2450,6 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 
 ---
 
-### 113. SDK Workstream Support
-
-**Command:** `gsd-sdk init @prd.md --ws my-workstream`
-
-**Purpose:** Route all SDK `.planning/` paths to `.planning/workstreams/<name>/`, enabling multi-workstream projects without "Project already exists" errors. The `--ws` flag validates the workstream name and propagates to all subsystems (tools, config, context engine).
-
-**Requirements:**
-- REQ-WS-01: `--ws <name>` routes all `.planning/` paths to `.planning/workstreams/<name>/`
-- REQ-WS-02: Without `--ws`, behavior is unchanged (flat mode)
-- REQ-WS-03: Name validated to alphanumeric, hyphens, underscores, and dots only
-- REQ-WS-04: Config resolves from workstream path first, falls back to root `.planning/config.json`
-
----
-
 ### 114. Context-Window-Aware Prompt Thinning
 
 **Purpose:** Reduce static prompt overhead by ~40% for models with context windows under 200K tokens. Extended examples and anti-pattern lists are extracted from agent definitions into reference files loaded on demand via `@` required_reading.
@@ -2621,7 +2583,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-GRAPH-02: Slash-command `/gsd-graphify` exposes subcommands `build`, `query <term>`, `status`, `diff`. The programmatic CLI `node gsd-tools.cjs graphify …` additionally exposes `snapshot`, which is also invoked automatically as the final step of `graphify build`.
 - REQ-GRAPH-03: Build runs within the configurable `graphify.build_timeout` (seconds); exceeding the timeout aborts cleanly without leaving a partial graph.
 - REQ-GRAPH-04: `graphify.cjs` falls back to `graph.links` when `graph.edges` is absent so older graph artifacts keep rendering.
-- REQ-GRAPH-05: CJS-only surface; `gsd-sdk query` does not yet register graphify handlers.
+- REQ-GRAPH-05: Graphify is invoked through `gsd-tools.cjs graphify ...` command handlers.
 
 **Configuration:** `graphify.enabled`, `graphify.build_timeout`
 **Reference files:** `commands/gsd/graphify.md`, `bin/lib/graphify.cjs`
@@ -2684,7 +2646,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 
 **Requirements:**
 - REQ-CTX-GUARD-01: `/gsd-health --context` prints a structured status line with current utilization, threshold tier (`ok` / `warn` / `critical`), and a remediation suggestion.
-- REQ-CTX-GUARD-02: The same triage is exposed as `gsd-sdk query validate.context --tokens-used <int> --context-window <int>` — a structured envelope for status-line and hook callers (#125). Both flags are required; the handler returns the same `{ percent, state }` envelope as the pure classifier in REQ-CTX-GUARD-03.
+- REQ-CTX-GUARD-02: The same triage is exposed as `gsd-tools.cjs validate context --tokens-used <int> --context-window <int>` — a structured envelope for status-line and hook callers (#125). Both flags are required; the handler returns the same `{ percent, state }` envelope as the pure classifier in REQ-CTX-GUARD-03.
 - REQ-CTX-GUARD-03: The classifier (`bin/lib/context-utilization.cjs`) is pure: input `(tokensUsed, contextWindow)`, output `{ percent, state }`. Easy to unit-test, easy to reuse from any caller.
 
 **Reference issue:** [#2792](https://github.com/open-gsd/get-shit-done-redux/issues/2792)
@@ -2833,27 +2795,6 @@ Source commit: abc1234 (3 commits behind HEAD)
 **Fallback:** pre-v0.7 graphs and non-git checkouts return `commit_stale: null`; callers fall back to the existing mtime-based `stale` flag. No behavior change for existing users.
 
 **Reference issue:** [#3170](https://github.com/open-gsd/get-shit-done-redux/issues/3170)
-
----
-
-### 131. MVP Mode SDK Resolution Layer
-
-**Purpose:** Replace per-workflow MVP-mode predicate duplication with three canonical SDK query verbs. All consuming workflows now call a single source of truth instead of inlining 4–8 bash lines each.
-
-**New query verbs:**
-
-| Verb | Returns | Used by |
-|------|---------|---------|
-| `gsd-sdk query phase.mvp-mode <N>` | `{active, source, roadmap_mode, config_mvp_mode, cli_flag_present}` | `plan-phase`, `execute-phase`, `verify-work`, `progress` |
-| `gsd-sdk query task.is-behavior-adding <plan-file>` | `{is_behavior_adding, checks: {tdd_true, has_behavior_block, has_source_files}, reason}` | `gsd-executor` agent |
-| `gsd-sdk query user-story.validate "<text>"` | `{valid, slots: {role, capability, outcome}, errors[]}` | `gsd-verifier`, `/gsd-mvp-phase` |
-
-**Resolution precedence for `phase.mvp-mode`:**
-CLI flag → ROADMAP `**Mode:** mvp` → `workflow.mvp_mode` config → `false`
-
-**Bug fix:** `roadmap.get-phase --pick mode` in the SDK's `roadmap.ts` previously returned `null` for phases with `**Mode:** mvp`, causing MVP_MODE to silently fall through to false on the native dispatch path. Restores parity with the CJS implementation.
-
-**Reference issue:** [#3178](https://github.com/open-gsd/get-shit-done-redux/pull/3178)
 
 ---
 
@@ -3058,7 +2999,7 @@ explicit reviewer flags -> --all -> review.default_reviewers -> all detected rev
 
 **CLI:** `gsd-tools --json-errors`
 
-**Purpose:** Give SDK and automation callers stable machine-readable error envelopes.
+**Purpose:** Give automation callers stable machine-readable error envelopes.
 
 **Behavior:** Commands that fail under `--json-errors` return structured `ok: false` payloads with error kind, message, command context, and exit mapping instead of prose-only stderr.
 

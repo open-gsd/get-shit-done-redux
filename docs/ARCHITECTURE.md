@@ -54,8 +54,8 @@ GSD is a **meta-prompting framework** that sits between the user and AI coding a
        │              │                 │
 ┌──────▼──────────────▼─────────────────▼──────────────┐
 │              CLI TOOLS LAYER                          │
-│   gsd-sdk query (sdk/src/query) + gsd-tools.cjs       │
-│   Programmatic SDK bridge: GSDTools/query-runtime-bridge.ts │
+│   gsd-tools.cjs command families + domain modules      │
+│   command-routing-hub + observability seams            │
 └──────────────────────┬───────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────┐
@@ -77,7 +77,7 @@ Every agent spawned by an orchestrator gets a clean context window (up to 200K t
 
 Workflow files (`get-shit-done/workflows/*.md`) never do heavy lifting. They:
 
-- Load context via `gsd-sdk query init.<workflow>` (or legacy `gsd-tools.cjs init <workflow>`)
+- Load context via `gsd-tools.cjs init <workflow>`
 - Spawn specialized agents with focused prompts
 - Collect results and route to the next step
 - Update state between steps
@@ -134,7 +134,7 @@ The eager skill listing is one of two recurring per-turn token costs. The other 
 
 Orchestration logic that commands reference. Contains the step-by-step process including:
 
-- Context loading via `gsd-sdk query` init handlers (or legacy `gsd-tools.cjs init`)
+- Context loading via `gsd-tools.cjs init` handlers
 - Agent spawn instructions with model resolution
 - Gate/checkpoint definitions
 - State update patterns
@@ -236,7 +236,7 @@ The planner agent (`agents/gsd-planner.md`) was decomposed from a single monolit
 
 ### Templates (`get-shit-done/templates/`)
 
-Markdown templates for all planning artifacts. Used by `gsd-sdk query template.fill` / `phase.scaffold` (and legacy `gsd-tools.cjs template fill` / top-level `scaffold`) to create pre-structured files:
+Markdown templates for all planning artifacts. Used by `gsd-tools.cjs template fill` / `phase.scaffold` (and top-level `scaffold`) to create pre-structured files:
 - `project.md`, `requirements.md`, `roadmap.md`, `state.md` — Core project files
 - `phase-prompt.md` — Phase execution prompt template
 - `summary.md` (+ `summary-minimal.md`, `summary-standard.md`, `summary-complex.md`) — Granularity-aware summary templates
@@ -266,20 +266,9 @@ Runtime hooks that integrate with the host AI agent:
 
 See [`docs/INVENTORY.md`](INVENTORY.md#hooks-11-shipped) for the authoritative 11-hook roster.
 
-### SDK Runtime Bridge Module (`sdk/src/query-runtime-bridge.ts`)
-
-Programmatic SDK callers (`GSDTools`) route through one seam that owns query dispatch policy:
-
-- Native registry dispatch preference
-- Explicit subprocess fallback policy (`allowFallbackToSubprocess`)
-- Strict SDK mode (`strictSdk`) for fail-fast native-only enforcement
-- Structured dispatch observability (`onDispatchEvent`) with mode, reason, duration, and outcome
-
-This keeps callers thin adapters and centralizes transport decisions for SDK publishability.
-
 ### Command Routing Hub (`get-shit-done/bin/lib/command-routing-hub.cjs`)
 
-CJS command family routers migrate to dispatch through `CommandRoutingHub` incrementally. `phase-command-router.cjs` is the first migration (issue #3788); remaining routers (`phases-command-router.cjs`, `roadmap-command-router.cjs`, etc.) continue using `routeCjsCommandFamily` until migrated in follow-up issues. The hub owns three cross-cutting concerns that each router previously duplicated: (1) mode selection (`sdk` when `tryLoadSdk()` succeeds and no `GSD_WORKSTREAM` is active, `cjs` otherwise), set once at construction; (2) a no-throw pure-result contract (`hub.dispatch()` catches all exceptions and returns `{ ok: false, errorKind, message, details }` instead of propagating); and (3) a closed six-value `errorKind` enum exported as the frozen `ERROR_KINDS` object. Router adapters remain thin CLI translators — they build the hub, call `dispatch`, then map the Result to `output()`/`error()` calls. No transparent SDK→CJS fallback: an SDK-mode hub that encounters a load or dispatch failure returns `SdkLoadFailed` or `SdkDispatchFailed` without retrying via CJS. See `docs/adr/0012-command-routing-hub.md`.
+CJS command family routers dispatch through `CommandRoutingHub`. The hub owns the no-throw pure-result contract (`hub.dispatch()` catches internal exceptions and returns `{ ok: false, kind, ...typedPayload }`) and the closed runtime error taxonomy (`UnknownCommand`, `InvalidArgs`, `HandlerRefusal`, `HandlerFailure`). Router adapters remain thin CLI translators — they build the hub, call `dispatch`, then map the Result to `output()`/`error()` calls. The runtime is single-path (no dual-runtime mode selection). See `docs/adr/0174-retire-gsd-sdk-package-boundary.md`.
 
 ### CLI Tools (`get-shit-done/bin/`)
 
@@ -319,10 +308,10 @@ Node.js CLI utility (`gsd-tools.cjs`) with domain modules split across `get-shit
 ```
 Orchestrator (workflow .md)
     │
-    ├── Load context: gsd-sdk query init.<workflow> <phase> (or legacy gsd-tools.cjs init)
+    ├── Load context: gsd-tools.cjs init <workflow> <phase>
     │   Returns JSON with: project info, config, state, phase details
     │
-    ├── Resolve model: gsd-sdk query resolve-model <agent-name>
+    ├── Resolve model: gsd-tools.cjs resolve-model <agent-name>
     │   Returns: opus | sonnet | haiku | inherit
     │
     ├── Spawn Agent (Task/SubAgent call)
@@ -333,7 +322,7 @@ Orchestrator (workflow .md)
     │
     ├── Collect result
     │
-    └── Update state: gsd-sdk query state.update / state.patch / state.advance-plan (or legacy gsd-tools.cjs)
+    └── Update state: gsd-tools.cjs state update / state patch / state advance-plan
 ```
 
 ### Primary Agent Spawn Categories
@@ -384,7 +373,7 @@ When the context window is 500K+ tokens (1M-class models like Opus 4.6, Sonnet 4
 - **Executor agents** receive prior wave SUMMARY.md files and the phase CONTEXT.md/RESEARCH.md, enabling cross-plan awareness within a phase
 - **Verifier agents** receive all PLAN.md, SUMMARY.md, CONTEXT.md files plus REQUIREMENTS.md, enabling history-aware verification
 
-The orchestrator reads `context_window` from config (`gsd-sdk query config-get context_window`, or legacy `gsd-tools.cjs config-get`) and conditionally includes richer context when the value is >= 500,000. For standard 200K windows, prompts use truncated versions with cache-friendly ordering to maximize context efficiency.
+The orchestrator reads `context_window` from config (`gsd-tools.cjs config-get context_window`) and conditionally includes richer context when the value is >= 500,000. For standard 200K windows, prompts use truncated versions with cache-friendly ordering to maximize context efficiency.
 
 #### Parallel Commit Safety
 
