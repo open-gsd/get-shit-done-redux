@@ -262,8 +262,10 @@
     "cli_modules": [
       "active-workstream-store.cjs",
       "adr-parser.cjs",
+      "agent-command-router.cjs",
       "artifacts.cjs",
       "audit.cjs",
+      "check-command-router.cjs",
       "cjs-command-router-adapter.cjs",
       "clusters.cjs",
       "code-review-flags.cjs",
@@ -321,6 +323,7 @@
       "state-document.cjs",
       "state.cjs",
       "surface.cjs",
+      "task-command-router.cjs",
       "template.cjs",
       "uat.cjs",
       "validate-command-router.cjs",
