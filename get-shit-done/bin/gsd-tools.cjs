@@ -194,6 +194,9 @@ const { routePhaseCommand } = require('./lib/phase-command-router.cjs');
 const { routePhasesCommand } = require('./lib/phases-command-router.cjs');
 const { routeValidateCommand } = require('./lib/validate-command-router.cjs');
 const { routeRoadmapCommand } = require('./lib/roadmap-command-router.cjs');
+const { routeAgentCommand } = require('./lib/agent-command-router.cjs');
+const { routeCheckCommand } = require('./lib/check-command-router.cjs');
+const { routeTaskCommand } = require('./lib/task-command-router.cjs');
 const { parseNamedArgs, parseMultiwordArg } = require('./lib/command-arg-projection.cjs');
 
 // ─── Bridge collapsed (Phase 4) ────────────────────────────────────────────────
@@ -362,14 +365,14 @@ async function main() {
   // discovery; previously it was a partial subset that didn't include
   // phase / roadmap / milestone / progress / etc.
   const TOP_LEVEL_USAGE = 'Usage: gsd-tools <command> [args] [--raw] [--pick <field>] [--cwd <path>] [--ws <name>] [--json-errors]\n' +
-    'Commands: agent-skills, audit-open, audit-uat, check-commit, commit, commit-to-subrepo, ' +
+    'Commands: agent, agent-skills, audit-open, audit-uat, check, check-commit, commit, commit-to-subrepo, ' +
     'config-ensure-section, config-get, config-new-project, config-path, config-set, migrate-config, ' +
     'current-timestamp, detect-custom-files, docs-init, extract-messages, find-phase, ' +
     'from-gsd2, frontmatter, gap-analysis, generate-claude-md, generate-claude-profile, ' +
     'generate-dev-preferences, generate-slug, graphify, history-digest, init, intel, ' +
     'learnings, list-todos, milestone, phase, phase-plan-index, phases, profile-questionnaire, ' +
     'profile-sample, progress, prompt-budget, requirements, resolve-model, roadmap, scaffold, state, ' +
-    'template, validate, verify, verify-path-exists, verify-summary, workstream, worktree\n\n' +
+    'task, template, validate, verify, verify-path-exists, verify-summary, workstream, worktree\n\n' +
     'Global flags:\n' +
     '  --raw              Emit raw output without post-processing\n' +
     '  --pick <field>     Extract a single field from JSON output (dot/bracket notation)\n' +
@@ -509,6 +512,16 @@ function extractField(obj, fieldPath) {
 
 async function runCommand(command, args, cwd, raw, defaultValue, originalCommand, workstreamContext = null) {
   switch (command) {
+    case 'agent': {
+      routeAgentCommand({ args, raw });
+      break;
+    }
+
+    case 'check': {
+      routeCheckCommand({ args, cwd, raw });
+      break;
+    }
+
     case 'state': {
       routeStateCommand({
         state,
@@ -600,6 +613,11 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
       } else {
         error('Unknown template subcommand. Available: select, fill', ERROR_REASON.SDK_UNKNOWN_COMMAND);
       }
+      break;
+    }
+
+    case 'task': {
+      routeTaskCommand({ args, cwd, raw });
       break;
     }
 
