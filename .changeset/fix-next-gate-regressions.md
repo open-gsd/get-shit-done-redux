@@ -1,5 +1,5 @@
 ---
-"@opengsd/get-shit-done-redux": patch
+type: Fixed
+pr: 342
 ---
-
-Fix next-branch test-gate regressions by wiring the active workstream resolver correctly, exposing `verify codebase-drift` alias routing, and syncing inventory documentation/manifests.
+Restore next-branch gate stability by wiring `gsd-tools` to the exported active-workstream resolver, exposing `verify codebase-drift` via command aliases, and syncing inventory docs/manifests to shipped CLI surfaces.
