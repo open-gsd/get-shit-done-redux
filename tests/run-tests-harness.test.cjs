@@ -93,6 +93,29 @@ describe('run-tests.cjs harness (issue #3597)', () => {
       const r = runHarness(tmpDir, ['--suite=security']);
       assert.strictEqual(r.status, 0, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
     });
+
+    test('missing --files value exits non-zero', () => {
+      seed(tmpDir, ['a.test.cjs']);
+      const r = runHarness(tmpDir, ['--files']);
+      assert.notStrictEqual(r.status, 0);
+      assert.match(r.stderr, /--files requires a value/i);
+    });
+
+    test('duplicate --files flag is rejected', () => {
+      seed(tmpDir, ['a.test.cjs']);
+      const r = runHarness(tmpDir, ['--files', 'a.test.cjs', '--files', 'a.test.cjs']);
+      assert.notStrictEqual(r.status, 0);
+      assert.match(r.stderr, /duplicate --files/i);
+    });
+
+    test('--files and --files-from cannot be combined', () => {
+      seed(tmpDir, ['a.test.cjs']);
+      const listPath = path.join(tmpDir, 'selected-tests.txt');
+      fs.writeFileSync(listPath, 'a.test.cjs\n', 'utf8');
+      const r = runHarness(tmpDir, ['--files', 'a.test.cjs', '--files-from', listPath]);
+      assert.notStrictEqual(r.status, 0);
+      assert.match(r.stderr, /cannot be combined/i);
+    });
   });
 
   describe('suite filtering', () => {
@@ -189,6 +212,35 @@ describe('run-tests.cjs harness (issue #3597)', () => {
       const r = runHarness(tmpDir);
       assert.notStrictEqual(r.status, 0);
       assert.match(r.stderr, /no test files/i);
+    });
+  });
+
+  describe('explicit file selection', () => {
+    test('--files runs only the named tests', () => {
+      seed(tmpDir, ['a.test.cjs', 'b.security.test.cjs', 'c.test.cjs']);
+      const r = runHarness(tmpDir, ['--files', 'a.test.cjs tests/c.test.cjs']);
+      assert.strictEqual(r.status, 0, `stderr: ${r.stderr}`);
+      assert.ok(r.stderr.includes('a.test.cjs'));
+      assert.ok(r.stderr.includes('c.test.cjs'));
+      assert.ok(!r.stderr.includes('b.security.test.cjs'));
+    });
+
+    test('--files-from runs tests listed in a file', () => {
+      seed(tmpDir, ['a.test.cjs', 'b.security.test.cjs', 'c.test.cjs']);
+      const listPath = path.join(tmpDir, 'selected-tests.txt');
+      fs.writeFileSync(listPath, 'a.test.cjs\nb.security.test.cjs\n', 'utf8');
+      const r = runHarness(tmpDir, ['--files-from', listPath]);
+      assert.strictEqual(r.status, 0, `stderr: ${r.stderr}`);
+      assert.ok(r.stderr.includes('a.test.cjs'));
+      assert.ok(r.stderr.includes('b.security.test.cjs'));
+      assert.ok(!r.stderr.includes('c.test.cjs'));
+    });
+
+    test('missing explicit test file exits non-zero', () => {
+      seed(tmpDir, ['a.test.cjs']);
+      const r = runHarness(tmpDir, ['--files', 'a.test.cjs missing.test.cjs']);
+      assert.notStrictEqual(r.status, 0);
+      assert.match(r.stderr, /requested test file\(s\) not found: missing\.test\.cjs/i);
     });
   });
 

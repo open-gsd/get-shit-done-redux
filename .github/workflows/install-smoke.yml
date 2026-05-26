@@ -16,16 +16,19 @@ name: Install Smoke
 on:
   pull_request:
     branches:
+      - next
       - main
     paths:
       - 'bin/install.js'
       - 'get-shit-done/bin/gsd-tools.cjs'
+      - 'get-shit-done/bin/**'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/release-tarball-smoke.cjs'
       - 'tests/release-tarball-smoke.install.test.cjs'
       - '.github/workflows/install-smoke.yml'
       - '.github/workflows/release.yml'
+      - '.github/workflows/hotfix.yml'
   push:
     branches:
       - main
@@ -90,22 +93,24 @@ jobs:
           fetch-depth: 0
 
       # The default `refs/pull/N/merge` ref GitHub produces for PRs is cached
-      # against the recorded merge-base, not current main. When main advances
+      # against the recorded merge-base, not the current target branch. When the
+      # target advances
       # after the PR was opened, the merge ref stays stale and CI can fail on
-      # issues that were already fixed upstream. Explicitly merge current
-      # origin/main into the PR head so smoke always tests the PR against the
-      # latest trunk. If the merge conflicts, emit a clear "rebase onto main"
-      # diagnostic instead of a downstream build error that looks unrelated.
-      - name: Rebase check — merge origin/main into PR head
+      # issues that were already fixed upstream. Explicitly merge the current
+      # target branch into the PR head so smoke always tests the PR against the
+      # latest target. If the merge conflicts, emit a clear rebase diagnostic
+      # instead of a downstream build error that looks unrelated.
+      - name: Rebase check — merge PR base branch into PR head
         if: steps.skip.outputs.skip != 'true' && github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
           git config user.email "ci@gsd-redux"
           git config user.name "CI Rebase Check"
-          git fetch origin main
-          if ! git merge --no-edit --no-ff origin/main; then
-            echo "::error::This PR cannot cleanly merge origin/main. Rebase your branch onto current main and push again."
+          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
+          git fetch origin "$BASE_BRANCH"
+          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
+            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
             echo "::error::Conflicting files:"
             git diff --name-only --diff-filter=U
             git merge --abort
@@ -216,18 +221,20 @@ jobs:
           fetch-depth: 0
 
       # See the `smoke` job above for rationale — refs/pull/N/merge is cached
-      # against the recorded merge-base, not current main. Explicitly merge
-      # origin/main so smoke-unpacked also runs against the latest trunk.
-      - name: Rebase check — merge origin/main into PR head
+      # against the recorded merge-base, not the current target branch.
+      # Explicitly merge the PR base so smoke-unpacked also runs against the
+      # latest target.
+      - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
           git config user.email "ci@gsd-redux"
           git config user.name "CI Rebase Check"
-          git fetch origin main
-          if ! git merge --no-edit --no-ff origin/main; then
-            echo "::error::This PR cannot cleanly merge origin/main. Rebase your branch onto current main and push again."
+          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
+          git fetch origin "$BASE_BRANCH"
+          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
+            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
             echo "::error::Conflicting files:"
             git diff --name-only --diff-filter=U
             git merge --abort

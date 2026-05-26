@@ -10,7 +10,9 @@ Targets `~DEFAULT_BRANCH` (main). Enforces:
 - No deletions or force pushes
 - Required linear history (no merge commits)
 - All changes via pull request (0 required approvals, stale-review dismissal, thread resolution required, squash/rebase only)
-- 10 required status checks: lint, Node 22/24 matrix (ubuntu/mac/windows), Changeset Required, require-issue-link, pr-template-format
+- Required status checks: the aggregate `Required tests` gate plus PR policy
+  checks for size, branch name, changeset, docs, target branch, issue link, and
+  PR template format
 
 ### `release-branches`
 Targets `refs/heads/release/**` and `refs/heads/hotfix/**`. Same rules as
@@ -26,7 +28,7 @@ immutable once created. Tag creation is unrestricted.
 | PR | Branch | Action |
 |----|--------|--------|
 | PR-1 | `chore/branch-protection-specs` | Check in spec files; `enforcement: disabled` — no effect on repo |
-| PR-2 | `chore/ci-skip-tests-on-docs` | Add path filter to `test.yml` + new `test-skip.yml` noop; doc-only PRs satisfy required checks in <30s |
+| PR-2 | `chore/tiered-ci-gate` | Add tiered test scope detection to `test.yml`; doc-only PRs satisfy `Required tests` without macOS/Windows noop queues |
 | PR-3 | `chore/branch-protection-evaluate` | Run `sync-rulesets.sh` with `ENFORCEMENT=evaluate`; 1-week dry-run via rule-suite logs |
 | PR-4 | `chore/branch-protection-active` | Run `sync-rulesets.sh` with `ENFORCEMENT=active`; protection live |
 
@@ -63,26 +65,31 @@ triggered. Use this to validate no legitimate workflows are broken before
 flipping to `active` in PR-3.
 
 
-## Path filters
+## Test scope detection
 
-The `test.yml` workflow uses a `paths:` filter on its `pull_request:` trigger so
-the 6-lane matrix only runs when code-touching files change. A companion workflow,
-`test-skip.yml`, fires on the inverse (`paths-ignore:`) and emits instant noop
-jobs with **identical job IDs and matrix dimensions**. This ensures the 7 required
-status checks (`lint-tests` + 6× `test (...)`) are always satisfied — whether the
-real matrix ran or the noop ran.
+The `test.yml` workflow always runs, but its `changes` job classifies the PR
+with `scripts/ci-test-scope.cjs` before starting expensive runners. The required
+branch-protection context is the single aggregate `Required tests` job.
 
-### Why dual workflow instead of paths-ignore alone?
+Doc-only PRs run the lightweight lint and aggregate jobs only. Code-touching PRs
+run the default required matrix:
 
-GitHub required-status-checks expect a specific context string to appear as
-"passed" on every PR. If `test.yml` is suppressed by `paths-ignore` on a doc-only
-PR, those contexts never fire and the PR is permanently blocked. The noop workflow
-produces the same context strings via matching job IDs + matrix, resolving the
-deadlock.
+- Ubuntu / Node 22 scoped tests
+- Ubuntu / Node 24 unit, integration, and security suites
+- Windows / Node 24 scoped Windows/path/shell tests
+- Ubuntu / Node 24 coverage
+
+PRs that touch workflow, package, test-runner, install, release, or Windows
+sensitive surfaces also run install/slow on the primary Ubuntu lane and the full
+parity matrix:
+
+- Windows / Node 22
+- macOS / Node 22
+- macOS / Node 24
 
 ### Canonical code-paths list
 
-Both `test.yml` (`paths:`) and `test-skip.yml` (`paths-ignore:`) use this list:
+The `changes` job treats these paths as code-touching:
 
 ```
 bin/**
@@ -90,29 +97,32 @@ get-shit-done/**
 agents/**
 commands/**
 hooks/**
-sdk/**
 tests/**
 scripts/**
 package.json
 package-lock.json
 tsconfig*.json
-.github/workflows/test.yml
-.github/workflows/test-skip.yml
+.github/workflows/**
+.github/rulesets/**
 ```
 
-This list also mirrors `changeset-required.yml`'s path filter. Keep all three in sync.
+This list should stay aligned with changeset/docs policy where those gates care
+about the same user-facing surfaces.
 
 ### Adding a new code path
 
 When adding a directory or file that should trigger real tests:
 
-1. Add the glob to `paths:` in `.github/workflows/test.yml`
-2. Add the **same** glob to `paths-ignore:` in `.github/workflows/test-skip.yml`
-3. Add the same glob to `changeset-required.yml` if changesets should be required
+1. Add the path classifier to `scripts/ci-test-scope.cjs`.
+2. Add targeted tests for that surface in the same classifier.
+3. If it requires macOS/extra-Windows coverage, mark the classifier rule
+   `fullMatrix: true`.
+4. Add the same glob to `changeset-required.yml` if changesets should be required
    for that path
 
-Failure to update `test-skip.yml` means doc PRs that happen to touch the new
-path will deadlock (real matrix never fires, noop never fires either).
+The old `test-skip.yml` inverse-path workflow was removed. Do not add required
+checks for individual matrix jobs; require the aggregate `Required tests` context
+instead.
 
 ## Phase-2 TODO
 
