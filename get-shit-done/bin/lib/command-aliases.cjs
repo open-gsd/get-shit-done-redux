@@ -230,6 +230,14 @@ const VERIFY_COMMAND_ALIASES = [
     ],
     "subcommand": "schema-drift",
     "mutation": false
+  },
+  {
+    "canonical": "verify.codebase-drift",
+    "aliases": [
+      "verify codebase-drift"
+    ],
+    "subcommand": "codebase-drift",
+    "mutation": false
   }
 ];
 
@@ -373,22 +381,6 @@ const INIT_COMMAND_ALIASES = [
 ];
 
 const PHASE_COMMAND_ALIASES = [
-  {
-    "canonical": "phase.list-plans",
-    "aliases": [
-      "phase list-plans"
-    ],
-    "subcommand": "list-plans",
-    "mutation": false
-  },
-  {
-    "canonical": "phase.list-artifacts",
-    "aliases": [
-      "phase list-artifacts"
-    ],
-    "subcommand": "list-artifacts",
-    "mutation": false
-  },
   {
     "canonical": "phase.uat-passed",
     "aliases": [

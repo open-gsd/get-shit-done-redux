@@ -55,6 +55,17 @@ function readStateProjection(statePath) {
   }
 }
 
+function sortWorkstreamInventories(inventories, activeWorkstreamName) {
+  return [...inventories].sort((a, b) => {
+    const aActive = a.name === activeWorkstreamName ? 1 : 0;
+    const bActive = b.name === activeWorkstreamName ? 1 : 0;
+    if (aActive !== bActive) {
+      return bActive - aActive;
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
+
 function inspectWorkstream(cwd, name, options = {}) {
   const wsDir = path.join(workstreamsRoot(cwd), name);
   if (!fs.existsSync(wsDir)) return null;
@@ -107,11 +118,13 @@ function listWorkstreamInventories(cwd) {
     if (inventory) workstreams.push(inventory);
   }
 
+  const ordered = sortWorkstreamInventories(workstreams, active);
+
   return {
     mode: 'workstream',
     active,
-    workstreams,
-    count: workstreams.length,
+    workstreams: ordered,
+    count: ordered.length,
   };
 }
 
@@ -128,5 +141,6 @@ module.exports = {
   inspectWorkstream,
   isCompletedInventory,
   listWorkstreamInventories,
+  sortWorkstreamInventories,
   workstreamsRoot,
 };

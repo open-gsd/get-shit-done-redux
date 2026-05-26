@@ -451,18 +451,18 @@ describe('workstream list', () => {
       fs.mkdirSync(path.join(wsDir, 'phases'), { recursive: true });
       fs.writeFileSync(path.join(wsDir, 'STATE.md'), `# State\n**Status:** Working on ${ws}\n**Current Phase:** 1\n`);
     }
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'active-workstream'), 'beta\n');
   });
 
   after(() => cleanup(tmpDir));
 
-  test('lists all workstreams', () => {
+  test('lists all workstreams with active first, then lexical name', () => {
     const result = runGsdTools(['workstream', 'list', '--raw'], tmpDir);
     assert.ok(result.success, `list failed: ${result.error}`);
     const data = JSON.parse(result.output);
     assert.strictEqual(data.mode, 'workstream');
     assert.strictEqual(data.count, 2);
-    const names = data.workstreams.map(w => w.name).sort();
-    assert.deepStrictEqual(names, ['alpha', 'beta']);
+    assert.deepStrictEqual(data.workstreams.map(w => w.name), ['beta', 'alpha']);
   });
 
   describe('flat mode', () => {
@@ -645,6 +645,11 @@ describe('workstream progress', () => {
 
   before(() => {
     tmpDir = createFixture();
+    const alphaDir = path.join(tmpDir, '.planning', 'workstreams', 'alpha');
+    fs.mkdirSync(path.join(alphaDir, 'phases'), { recursive: true });
+    fs.writeFileSync(path.join(alphaDir, 'STATE.md'), '# State\n**Status:** In progress\n');
+    fs.writeFileSync(path.join(alphaDir, 'ROADMAP.md'), '## Roadmap\n');
+
     const wsDir = path.join(tmpDir, '.planning', 'workstreams', 'feature');
     fs.mkdirSync(path.join(wsDir, 'phases', '01-init'), { recursive: true });
     fs.writeFileSync(path.join(wsDir, 'phases', '01-init', 'PLAN.md'), '# Plan\n');
@@ -656,12 +661,13 @@ describe('workstream progress', () => {
 
   after(() => cleanup(tmpDir));
 
-  test('returns progress summary', () => {
+  test('returns progress summary in deterministic order', () => {
     const result = runGsdTools(['workstream', 'progress', '--raw'], tmpDir);
     assert.ok(result.success, `progress failed: ${result.error}`);
     const data = JSON.parse(result.output);
     assert.strictEqual(data.mode, 'workstream');
-    assert.strictEqual(data.count, 1);
+    assert.strictEqual(data.count, 2);
+    assert.deepStrictEqual(data.workstreams.map(w => w.name), ['feature', 'alpha']);
     assert.strictEqual(data.workstreams[0].name, 'feature');
     assert.strictEqual(data.workstreams[0].active, true);
     assert.strictEqual(data.workstreams[0].progress_percent, 50);

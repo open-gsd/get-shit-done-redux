@@ -10,6 +10,7 @@ name: Test (skip-noop)
 on:
   pull_request:
     branches:
+      - next
       - main
     paths-ignore:
       - 'bin/**'
@@ -17,7 +18,6 @@ on:
       - 'agents/**'
       - 'commands/**'
       - 'hooks/**'
-      - 'sdk/**'
       - 'tests/**'
       - 'scripts/**'
       - 'package.json'
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-2025]
         node-version: [22, 24]
     steps:
       - run: "echo 'doc-only PR: skipping test on node ${{ matrix.node-version }} / ${{ matrix.os }}'"

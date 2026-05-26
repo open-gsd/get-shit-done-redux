@@ -9,12 +9,7 @@ const { createHub, ERROR_KINDS, makeInvalidArgs } = require('./command-routing-h
  * Manifest-backed phase subcommand router.
  * Keeps gsd-tools.cjs thin while preserving existing command semantics.
  *
- * #175: Hub is CJS-only. The SDK bridge is still separately invokable via
- * bin/lib/cjs-sdk-bridge.cjs, but the Hub no longer routes to it.
- *
- * SDK-only (unsupported in CJS router — error returned before dispatch):
- * - list-plans: SDK-only.
- * - list-artifacts: SDK-only.
+ * Unsupported in this router:
  * - scaffold: routed through top-level scaffold command.
  *
  * CJS-only subcommands: mvp-mode (dispatched directly, before hub).
@@ -23,11 +18,9 @@ const { createHub, ERROR_KINDS, makeInvalidArgs } = require('./command-routing-h
  * and observable CLI behaviour are unchanged.
  */
 function routePhaseCommand({ phase, args, cwd, raw, error }) {
-  // ── Unsupported / SDK-only subcommands ─────────────────────────────────────
-  // Resolved before dispatch so the error message matches the pre-#3788 text.
+  // ── Unsupported subcommands ─────────────────────────────────────────────────
+  // Resolved before dispatch so the error message stays deterministic.
   const UNSUPPORTED = {
-    'list-plans': 'phase list-plans is SDK-only. Use: gsd-sdk query phase.list-plans ...',
-    'list-artifacts': 'phase list-artifacts is SDK-only. Use: gsd-sdk query phase.list-artifacts ...',
     scaffold: 'phase scaffold is routed through the top-level scaffold command.',
   };
 
@@ -149,9 +142,9 @@ function routePhaseCommand({ phase, args, cwd, raw, error }) {
 
   // ── Build manifest (available subcommands for UnknownCommand detection) ─────
   // `availableSubcommands` is what the error message shows. It excludes
-  // SDK-only unsupported commands (already handled above) but does NOT include
-  // 'mvp-mode' because it was absent from PHASE_SUBCOMMANDS in the original
-  // and was not shown in the "Available:" list there either.
+  // unsupported commands (already handled above) but does NOT include 'mvp-mode'
+  // because it was absent from PHASE_SUBCOMMANDS in the original and was not
+  // shown in the "Available:" list there either.
   //
   // `manifestSubcommands` is the full routing set for the hub — it includes
   // 'mvp-mode' (which the original code routed via a handler even without a

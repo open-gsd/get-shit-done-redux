@@ -280,6 +280,8 @@ function _deepMergeConfig(base, overlay) {
 function loadConfig(cwd, options = {}) {
   const activeWorkstream = Object.prototype.hasOwnProperty.call(options, 'workstream')
     ? options.workstream
+    : (options.workstreamContext && Object.prototype.hasOwnProperty.call(options.workstreamContext, 'ws'))
+      ? options.workstreamContext.ws
     : (process.env.GSD_WORKSTREAM || null);
   // When GSD_WORKSTREAM is set, load root config first so workstream config
   // can inherit from it. This prevents users from duplicating model_overrides,
@@ -1130,10 +1132,14 @@ function checkAgentsInstalled() {
   }
 
   for (const agent of expectedAgents) {
-    // Check both .md (standard) and .agent.md (Copilot) file formats.
+    // Check all runtime agent file formats:
+    // - .md        (Claude/OpenCode/Gemini/etc.)
+    // - .agent.md  (Copilot)
+    // - .toml      (Codex)
     const agentFile = path.join(agentsDir, `${agent}.md`);
     const agentFileCopilot = path.join(agentsDir, `${agent}.agent.md`);
-    if (fs.existsSync(agentFile) || fs.existsSync(agentFileCopilot)) {
+    const agentFileCodex = path.join(agentsDir, `${agent}.toml`);
+    if (fs.existsSync(agentFile) || fs.existsSync(agentFileCopilot) || fs.existsSync(agentFileCodex)) {
       installed.push(agent);
     } else {
       missing.push(agent);

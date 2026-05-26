@@ -292,7 +292,7 @@ describe('CommandRoutingHub — kind: HandlerRefusal', () => {
           'list-plans': (_ctx) => ({
             ok: false,
             kind: ERROR_KINDS.HandlerRefusal,
-            reason: 'phase list-plans is SDK-only',
+            reason: 'phase list-plans is not supported in this router.',
           }),
         },
       },
@@ -457,7 +457,7 @@ describe('CommandRoutingHub — P1.2 typed-payload discriminated union (#176)', 
           'list-plans': (_ctx) => ({
             ok: false,
             kind: ERROR_KINDS.HandlerRefusal,
-            reason: 'phase list-plans is SDK-only',
+            reason: 'phase list-plans is not supported in this router.',
           }),
         },
       },
@@ -467,7 +467,7 @@ describe('CommandRoutingHub — P1.2 typed-payload discriminated union (#176)', 
 
     assert.ok(!result.ok);
     assert.equal(result.kind, ERROR_KINDS.HandlerRefusal);
-    assert.ok(result.reason.includes('SDK-only'));
+    assert.ok(result.reason.includes('not supported'));
     // Strict field set
     const keys = Object.keys(result).sort();
     assert.deepStrictEqual(keys, ['kind', 'ok', 'reason']);
@@ -781,7 +781,7 @@ describe('CommandRoutingHub — Finding 3: factory returns are Object.frozen', (
   });
 
   test('makeHandlerRefusal returns a frozen object', () => {
-    const result = makeHandlerRefusal('SDK-only');
+    const result = makeHandlerRefusal('not supported');
     assert.ok(Object.isFrozen(result),
       'makeHandlerRefusal must return a frozen object');
   });
