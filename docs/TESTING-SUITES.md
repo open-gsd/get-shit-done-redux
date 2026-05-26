@@ -67,7 +67,7 @@ The `Tests` workflow runs on:
 - **Node 24** is the default development lane.
 - **Node 26** is forward-compat. The lane reports status but does not gate the workflow — `actions/setup-node` may not yet have a stable Node 26 image at any given moment. When it stabilises, flip `continue-on-error` off.
 
-Each matrix cell runs `unit`, `integration`, and `security` on every PR. `install` and `slow` only run on `main`-branch push to keep PR CI fast. Coverage runs in a dedicated `coverage` job on `ubuntu-latest` / Node 24 — running coverage across the full matrix would 9x the cost for no extra coverage data.
+Each matrix cell runs `test:affected` on PRs (changed tests + reverse-import dependents + a smoke fallback), then runs full named suites on push lanes. `install` and `slow` remain `main`/release push-only checks on the canonical lane to keep PR CI fast. Coverage runs in a dedicated `coverage` job on `ubuntu-latest` / Node 24 — running coverage across the full matrix would 9x the cost for no extra coverage data.
 
 ## Best practices for forward-compat (Node 24/26)
 

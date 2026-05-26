@@ -160,31 +160,36 @@ jobs:
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
 
-      # Split lanes (issue #3597). Unit is the fast default lane; integration
-      # and security run alongside it on every PR. `install` and `slow` are
-      # skipped on PR CI by design — they run on the weekly windows-compat
-      # workflow and on `main` push only. See docs/TESTING-SUITES.md.
+      # PR lanes run affected tests only (changed tests + reverse dependencies
+      # + smoke fallback). Push lanes continue to run full named suites.
+      - name: Run affected tests (PR)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: npm run test:affected
+
       - name: Run unit tests
+        if: github.event_name != 'pull_request'
         shell: bash
         run: npm run test:unit
 
       - name: Run integration tests
+        if: github.event_name != 'pull_request'
         shell: bash
         run: npm run test:integration
 
       - name: Run security tests
+        if: github.event_name != 'pull_request'
         shell: bash
         run: npm run test:security
 
-      # Full-suite gates run on a single canonical lane to keep matrix cost bounded.
-      # This ensures install + slow tests are always executed in PR CI.
+      # Install/slow remain push-only checks on the canonical lane.
       - name: Run install tests
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.node-version == 24
         shell: bash
         run: npm run test:install
 
       - name: Run slow tests
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
+        if: github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.node-version == 24
         shell: bash
         run: npm run test:slow
 
