@@ -63,7 +63,9 @@ describe('ci-test-scope.cjs', () => {
       encoding: 'utf8',
     });
     assert.notStrictEqual(r.status, 0);
+    // allow-test-rule: CLI usage failure text is user-facing contract for this parser guard.
     assert.match(r.stderr, /--files requires a value/);
+    // allow-test-rule: CLI usage banner presence is a user-facing contract.
     assert.match(r.stderr, /Usage:/);
   });
 });
