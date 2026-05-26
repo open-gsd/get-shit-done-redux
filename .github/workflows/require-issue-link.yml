@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  pull-requests: write
+  issues: write
 
 jobs:
   check-issue-link:
@@ -28,20 +28,18 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Comment, close, and fail if no issue link
+      - name: Comment and fail if no issue link
         if: steps.check.outputs.found == 'false'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           # Uses GitHub API SDK — no shell string interpolation of untrusted input
           script: |
+            const marker = '<!-- gsd-require-issue-link -->';
             const repoUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
             const prNumber = context.payload.pull_request.number;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              body: [
-                '## Missing issue link — PR auto-closed',
+            const body = [
+                marker,
+                '## Missing issue link',
                 '',
                 'This PR does not reference an issue. **All PRs must link to an open issue** using a closing keyword in the PR body:',
                 '',
@@ -51,13 +49,28 @@ jobs:
                 '',
                 `If no issue exists for this change, [open one first](${repoUrl}/issues/new/choose), then update this PR body with the reference.`,
                 '',
-                'To resume work after fixing the body: edit the PR description to add a valid `Closes #NNN`, `Fixes #NNN`, or `Resolves #NNN` line, then click **Reopen pull request**. The workflow will re-evaluate on reopen.',
-              ].join('\n')
-            });
-            await github.rest.pulls.update({
+                'Edit the PR description to add a valid `Closes #NNN`, `Fixes #NNN`, or `Resolves #NNN` line. This check will re-evaluate on the next PR update.',
+              ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: prNumber,
-              state: 'closed',
+              issue_number: prNumber,
+              per_page: 100,
             });
-            core.setFailed('PR body must contain a closing issue reference (e.g. "Closes #123") — PR closed.');
+            const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+            core.setFailed('PR body must contain a closing issue reference (e.g. "Closes #123").');

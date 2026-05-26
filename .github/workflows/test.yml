@@ -11,18 +11,6 @@ on:
     branches:
       - next
       - main
-    paths:
-      - 'bin/**'
-      - 'get-shit-done/**'
-      - 'agents/**'
-      - 'commands/**'
-      - 'hooks/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tsconfig*.json'
-      - '.github/workflows/**'
   workflow_dispatch:
 
 concurrency:
@@ -33,11 +21,69 @@ permissions:
   contents: read
 
 jobs:
-  # Static lint: test-suite and PR-check contracts.
-  # Runs once (not per matrix node version) since it is a file-content check.
-  lint-tests:
+  changes:
+    name: Detect test scope
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    outputs:
+      code_changed: ${{ steps.scope.outputs.code_changed }}
+      full_matrix: ${{ steps.scope.outputs.full_matrix }}
+      targeted_tests: ${{ steps.scope.outputs.targeted_tests }}
+      windows_tests: ${{ steps.scope.outputs.windows_tests }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
+
+      - name: Classify changed paths
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            echo "full_matrix=true" >> "$GITHUB_OUTPUT"
+            echo "targeted_tests=" >> "$GITHUB_OUTPUT"
+            echo "windows_tests=" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Test scope"
+              echo ""
+              echo "- event: \`$EVENT_NAME\`"
+              echo "- code_changed: \`true\`"
+              echo "- full_matrix: \`true\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          node scripts/ci-test-scope.cjs --base "$BASE_SHA" --head "$HEAD_SHA" | tee ci-test-scope.json
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require('fs');
+          const result = JSON.parse(fs.readFileSync('ci-test-scope.json', 'utf8'));
+          console.log('## Test scope');
+          console.log('');
+          console.log(`- code_changed: \`${result.code_changed}\``);
+          console.log(`- full_matrix: \`${result.full_matrix}\``);
+          console.log(`- targeted_tests: \`${result.targeted_tests.length}\``);
+          console.log(`- windows_tests: \`${result.windows_tests.length}\``);
+          if (result.reasons.length > 0) {
+            console.log('');
+            console.log('### Reasons');
+            for (const reason of result.reasons) console.log(`- ${reason}`);
+          }
+          NODE
+
+  # Static lint: test-suite and PR-check contracts.
+  # Runs once, not per matrix lane.
+  lint-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -47,6 +93,9 @@ jobs:
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
         with:
           node-version: 24
+      - name: Lint — skill dependency graph
+        shell: bash
+        run: npm run lint:skill-deps
       - name: Lint — no source-grep tests
         shell: bash
         run: node scripts/lint-no-source-grep.cjs
@@ -61,33 +110,38 @@ jobs:
         run: node scripts/lint-pr-check-project-dir.cjs
 
   test:
+    name: test (${{ matrix.os }}, ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      GSD_PLUGIN_ROOT: .ci-gsd-plugin-root-disabled
     strategy:
-      # fail-fast disabled so a single lane failure doesn't cancel the rest;
-      # makes OS-specific vs version-specific regressions easier to distinguish.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: [22, 24]
-        # Windows path/separator coverage is also reinforced by hardcoded-paths.test.cjs
-        # and windows-robustness.test.cjs (static analysis).
-        # A dedicated windows-compat workflow runs on a weekly schedule.
+        include:
+          # Required default PR lanes: fast signal, minimum runtime, primary runtime,
+          # and one Windows shell/path lane. The non-primary OS/runtime lanes run
+          # scoped tests from scripts/ci-test-scope.cjs; Ubuntu/Node 24 runs the
+          # broader default suite.
+          - os: ubuntu-latest
+            node-version: 22
+            scope: targeted
+          - os: ubuntu-latest
+            node-version: 24
+            scope: full
+          - os: windows-latest
+            node-version: 24
+            scope: windows
 
     steps:
       # actions/checkout@v6 uses includeIf.gitdir: to inject auth on Windows.
-      # On Windows git 2.54, the gitdir path comparison (forward-slash key vs
-      # backslash-resolved gitdir) is unreliable, so the conditional include
-      # intermittently fails to fire and the fetch proceeds unauthenticated.
-      #
-      # Fix: use actions/checkout@v4 on Windows only. v4 writes the auth token
-      # directly to .git/config (http.extraheader) instead of using includeIf,
-      # which is reliable across all git versions and platforms.
-      # Linux/macOS continue using v6 (includeIf works correctly there).
+      # On Windows git 2.54, the gitdir path comparison is unreliable, so use
+      # v4 on Windows and v6 elsewhere.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2 (Windows)
         if: runner.os == 'Windows'
         with:
-          # Fetch full history so we can merge origin/main for stale-base detection.
           fetch-depth: 0
           persist-credentials: true
           token: ${{ github.token }}
@@ -95,7 +149,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (Linux/macOS)
         if: runner.os != 'Windows'
         with:
-          # Fetch full history so we can merge origin/main for stale-base detection.
           fetch-depth: 0
           persist-credentials: true
           token: ${{ github.token }}
@@ -109,8 +162,6 @@ jobs:
             exit 1
           fi
 
-      # GitHub's `refs/pull/N/merge` is cached against the recorded merge-base.
-      # Explicitly merge the PR base branch so tests run against the latest target.
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
         shell: bash
@@ -146,10 +197,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
-      # Environment check - validates Node/npm version against engines constraints
-      # and confirms package-lock.json is present before npm ci runs.
-      # Catches env drift in CI itself (contributor parity check, issue #117).
-      # Source: https://docs.npmjs.com/cli/v10/configuring-npm/package-json#engines
       - name: Environment check
         shell: bash
         run: npm run check:env
@@ -164,10 +211,158 @@ jobs:
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
 
-      # Split lanes (issue #3597). Unit is the fast default lane; integration
-      # and security run alongside it on every PR. `install` and `slow` are
-      # skipped on PR CI by design — they run on the weekly windows-compat
-      # workflow and on `main` push only. See docs/TESTING-SUITES.md.
+      - name: Prepare scoped test list
+        if: matrix.scope != 'full'
+        shell: bash
+        env:
+          TEST_SCOPE: ${{ matrix.scope }}
+          TARGETED_TESTS: ${{ needs.changes.outputs.targeted_tests }}
+          WINDOWS_TESTS: ${{ needs.changes.outputs.windows_tests }}
+        run: |
+          set -euo pipefail
+          case "$TEST_SCOPE" in
+            windows)
+              selected="$WINDOWS_TESTS"
+              ;;
+            targeted)
+              selected="$TARGETED_TESTS"
+              ;;
+            *)
+              echo "::error::Unknown test scope: $TEST_SCOPE"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "${selected// }" ]; then
+            selected="tests/command-contract.test.cjs tests/commands.test.cjs tests/core.test.cjs tests/package-manifest.test.cjs"
+          fi
+
+          printf '%s\n' "$selected" | tr ' ' '\n' | sed '/^$/d' > .ci-selected-tests.txt
+          echo "Scoped tests:"
+          cat .ci-selected-tests.txt
+
+      - name: Run scoped tests
+        if: matrix.scope != 'full'
+        shell: bash
+        run: node scripts/run-tests.cjs --files-from .ci-selected-tests.txt
+
+      - name: Run unit tests
+        if: matrix.scope == 'full'
+        shell: bash
+        run: npm run test:unit
+
+      - name: Run integration tests
+        if: matrix.scope == 'full'
+        shell: bash
+        run: npm run test:integration
+
+      - name: Run security tests
+        if: matrix.scope == 'full'
+        shell: bash
+        run: npm run test:security
+
+      - name: Run install tests
+        if: matrix.scope == 'full' && needs.changes.outputs.full_matrix == 'true'
+        shell: bash
+        run: npm run test:install
+
+      - name: Run slow tests
+        if: matrix.scope == 'full' && needs.changes.outputs.full_matrix == 'true'
+        shell: bash
+        run: npm run test:slow
+
+  test-full:
+    name: full test (${{ matrix.os }}, ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.code_changed == 'true' && needs.changes.outputs.full_matrix == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GSD_PLUGIN_ROOT: .ci-gsd-plugin-root-disabled
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            node-version: 22
+          - os: macos-latest
+            node-version: 22
+          - os: macos-latest
+            node-version: 24
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2 (Windows)
+        if: runner.os == 'Windows'
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2 (Linux/macOS)
+        if: runner.os != 'Windows'
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ github.token }}
+
+      - name: Guard — require GitHub-hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
+            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
+            exit 1
+          fi
+
+      - name: Rebase check — merge PR base branch into PR head
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.email "ci@gsd-redux"
+          git config user.name "CI Rebase Check"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
+          for attempt in 1 2 3; do
+            if git fetch origin "$BASE_BRANCH"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::git fetch origin $BASE_BRANCH failed after 3 attempts."
+              exit 1
+            fi
+            sleep $((attempt * 4))
+          done
+          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
+            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
+            echo "::error::Conflicting files:"
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Environment check
+        shell: bash
+        run: npm run check:env
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Dependency integrity gate
+        shell: bash
+        run: |
+          chmod +x scripts/check-npm-integrity.sh
+          scripts/check-npm-integrity.sh
+
       - name: Run unit tests
         shell: bash
         run: npm run test:unit
@@ -180,26 +375,13 @@ jobs:
         shell: bash
         run: npm run test:security
 
-      # Full-suite gates run on a single canonical lane to keep matrix cost bounded.
-      # This ensures install + slow tests are always executed in PR CI.
-      - name: Run install tests
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
-        shell: bash
-        run: npm run test:install
-
-      - name: Run slow tests
-        if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
-        shell: bash
-        run: npm run test:slow
-
-
-  # Dedicated coverage job. Runs only on ubuntu/Node 24 (the canonical lane)
-  # because c8 coverage of one suite on one OS is enough signal — running it
-  # across the full matrix would 9x the cost for no extra coverage data.
-  # Replaces main's per-matrix `Run tests with coverage` step.
   coverage:
+    needs: changes
+    if: needs.changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GSD_PLUGIN_ROOT: .ci-gsd-plugin-root-disabled
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -267,3 +449,65 @@ jobs:
             coverage/
             .nyc_output/
           if-no-files-found: ignore
+
+  required-tests:
+    name: Required tests
+    needs:
+      - changes
+      - lint-tests
+      - test
+      - test-full
+      - coverage
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Summarize required test gate
+        shell: bash
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          LINT_RESULT: ${{ needs.lint-tests.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          FULL_TEST_RESULT: ${{ needs.test-full.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        run: |
+          set -euo pipefail
+          echo "code_changed=$CODE_CHANGED"
+          echo "changes=$CHANGES_RESULT"
+          echo "lint-tests=$LINT_RESULT"
+          echo "test=$TEST_RESULT"
+          echo "test-full=$FULL_TEST_RESULT"
+          echo "coverage=$COVERAGE_RESULT"
+
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::test scope detection did not pass"
+            exit 1
+          fi
+
+          if [ "$LINT_RESULT" != "success" ]; then
+            echo "::error::lint-tests did not pass"
+            exit 1
+          fi
+
+          if [ "$CODE_CHANGED" != "true" ]; then
+            echo "No code paths changed; matrix tests intentionally skipped."
+            exit 0
+          fi
+
+          if [ "$TEST_RESULT" != "success" ]; then
+            echo "::error::test matrix did not pass"
+            exit 1
+          fi
+
+          if [ "$FULL_TEST_RESULT" != "success" ] && [ "$FULL_TEST_RESULT" != "skipped" ]; then
+            echo "::error::full parity matrix did not pass"
+            exit 1
+          fi
+
+          if [ "$COVERAGE_RESULT" != "success" ]; then
+            echo "::error::coverage did not pass"
+            exit 1
+          fi
+
+          echo "Required test gate passed."

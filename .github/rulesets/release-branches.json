@@ -31,16 +31,14 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "lint-tests" },
-          { "context": "test (ubuntu-latest, 22)" },
-          { "context": "test (macos-latest, 22)" },
-          { "context": "test (windows-latest, 22)" },
-          { "context": "test (ubuntu-latest, 24)" },
-          { "context": "test (macos-latest, 24)" },
-          { "context": "test (windows-latest, 24)" },
-          { "context": "Changeset Required" },
-          { "context": "require-issue-link" },
-          { "context": "pr-template-format" }
+          { "context": "Required tests" },
+          { "context": "size-check" },
+          { "context": "check-branch" },
+          { "context": "changeset-lint" },
+          { "context": "docs-lint" },
+          { "context": "validate-target" },
+          { "context": "Issue link required" },
+          { "context": "Pull request template format" }
         ]
       }
     }

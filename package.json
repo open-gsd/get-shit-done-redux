@@ -69,6 +69,7 @@
     "lint:pr-checks": "node scripts/lint-pr-check-project-dir.cjs",
     "lint:changeset": "node scripts/changeset/lint.cjs",
     "lint:docs": "node scripts/lint-docs-required.cjs",
+    "ci:test-scope": "node scripts/ci-test-scope.cjs",
     "changeset": "node scripts/changeset/new.cjs",
     "changelog:render": "node scripts/changeset/cli.cjs render",
     "test": "node scripts/run-tests.cjs",

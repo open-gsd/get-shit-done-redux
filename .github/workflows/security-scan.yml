@@ -3,9 +3,20 @@ name: Security Scan
 on:
   pull_request:
     branches:
+      - next
       - main
       - 'release/**'
       - 'hotfix/**'
+    paths:
+      - 'get-shit-done/**'
+      - 'agents/**'
+      - 'commands/**'
+      - 'hooks/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/security-scan.yml'
+      - '.secretscanignore'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
