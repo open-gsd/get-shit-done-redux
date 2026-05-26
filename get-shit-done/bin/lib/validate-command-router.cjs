@@ -7,24 +7,8 @@ const { routeCjsCommandFamily } = require('./cjs-command-router-adapter.cjs');
 /**
  * Manifest-backed validate subcommand router.
  * Keeps gsd-tools.cjs thin while preserving existing command semantics.
- *
- * Phase 6: validate.consistency, validate.health, validate.agents are
- * dispatched via executeForCjs when the SDK is available. CJS fallback
- * retained when:
- * - GSD_WORKSTREAM is active (workstream-scoped requests fall through to CJS).
- * - SDK is unavailable (build not present).
- *
- * CJS-only subcommands:
- * - context: complex inline logic using classifyContextUtilization and
- *   output formatting that has no direct SDK counterpart. Remains CJS-native.
- *
- * SDK-only (unsupported in CJS router): none.
  */
 function routeValidateCommand({ verify, args, cwd, raw, parseNamedArgs, output: outputFn, error }) {
-  function sdkHandler(_registryCommand, _registryArgs, _legacyArgs, cjsFallback) {
-    return cjsFallback;
-  }
-
   routeCjsCommandFamily({
     args,
     subcommands: VALIDATE_SUBCOMMANDS,
@@ -32,12 +16,7 @@ function routeValidateCommand({ verify, args, cwd, raw, parseNamedArgs, output: 
     error,
     unknownMessage: (_subcommand, available) => `Unknown validate subcommand. Available: ${available.join(', ')}`,
     handlers: {
-      consistency: sdkHandler(
-        'validate.consistency',
-        args.slice(2),
-        args.slice(1),
-        () => verify.cmdValidateConsistency(cwd, raw),
-      ),
+      consistency: () => verify.cmdValidateConsistency(cwd, raw),
       // Keep health on CJS for now so fix hints are rendered via runtime-slash
       // helpers (codex expects $gsd-* command shape).
       health: () => {
@@ -45,14 +24,7 @@ function routeValidateCommand({ verify, args, cwd, raw, parseNamedArgs, output: 
         const backfillFlag = args.includes('--backfill');
         verify.cmdValidateHealth(cwd, { repair: repairFlag, backfill: backfillFlag }, raw);
       },
-      agents: sdkHandler(
-        'validate.agents',
-        args.slice(2),
-        args.slice(1),
-        () => verify.cmdValidateAgents(cwd, raw),
-      ),
-      // context: CJS-only — complex inline logic using classifyContextUtilization
-      // with custom output formatting that has no direct SDK counterpart.
+      agents: () => verify.cmdValidateAgents(cwd, raw),
       context: () => {
         const opts = parseNamedArgs(args, ['tokens-used', 'context-window']);
         if (opts['tokens-used'] === null) {
