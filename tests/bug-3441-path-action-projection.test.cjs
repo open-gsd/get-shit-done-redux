@@ -17,6 +17,7 @@ const projection = require(path.join(
   'shell-command-projection.cjs',
 ));
 const install = require(path.join(__dirname, '..', 'bin', 'install.js'));
+const { withIsolatedProcessState } = require('./helpers.cjs');
 
 function createTempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-home-3441-'));
@@ -88,38 +89,37 @@ describe('bug #3441: PATH guidance is projected from typed shell action IR', () 
 
   test('maybeSuggestPathExport renders commands projected by path-action seam', () => {
     const home = createTempHome();
-    const originalPath = process.env.PATH;
     try {
-      const globalBin = path.join(home, '.npm-global', 'bin');
-      fs.mkdirSync(globalBin, { recursive: true });
-      fs.writeFileSync(path.join(home, '.zshrc'), 'export PATH="$HOME/.cargo/bin:$PATH"\n');
-      process.env.PATH = '';
+      withIsolatedProcessState(() => {
+        const globalBin = path.join(home, '.npm-global', 'bin');
+        fs.mkdirSync(globalBin, { recursive: true });
+        fs.writeFileSync(path.join(home, '.zshrc'), 'export PATH="$HOME/.cargo/bin:$PATH"\n');
+        process.env.PATH = '';
 
-      const expected = projection.projectPathActionProjection({
-        mode: 'persist',
-        targetDir: globalBin,
-        platform: process.platform,
+        const expected = projection.projectPathActionProjection({
+          mode: 'persist',
+          targetDir: globalBin,
+          platform: process.platform,
+        });
+
+        const logs = [];
+        const originalLog = console.log;
+        console.log = (...args) => logs.push(args.join(' '));
+        try {
+          install.maybeSuggestPathExport(globalBin, home);
+        } finally {
+          console.log = originalLog;
+        }
+
+        const joined = logs.join('\n');
+        for (const action of expected.shellActions) {
+          assert.ok(
+            joined.includes(action.command),
+            `expected installer output to include projected command: ${action.command}\nOutput:\n${joined}`,
+          );
+        }
       });
-
-      const logs = [];
-      const originalLog = console.log;
-      console.log = (...args) => logs.push(args.join(' '));
-      try {
-        install.maybeSuggestPathExport(globalBin, home);
-      } finally {
-        console.log = originalLog;
-      }
-
-      const joined = logs.join('\n');
-      for (const action of expected.shellActions) {
-        assert.ok(
-          joined.includes(action.command),
-          `expected installer output to include projected command: ${action.command}\nOutput:\n${joined}`,
-        );
-      }
     } finally {
-      if (originalPath == null) delete process.env.PATH;
-      else process.env.PATH = originalPath;
       cleanup(home);
     }
   });

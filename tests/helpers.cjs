@@ -315,4 +315,34 @@ function isolatedNpmEnv() {
   };
 }
 
-module.exports = { runGsdTools, createTempDir, createTempProject, createTempGitProject, cleanup, parseFrontmatter, isUsageOutput, captureConsole, toPosixPath, runNpm, isolatedNpmEnv, TOOLS_PATH };
+/**
+ * Run a callback with process-level state isolation.
+ * Restores cwd, exitCode, and process.env after callback returns or throws.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function withIsolatedProcessState(fn) {
+  const originalCwd = process.cwd();
+  const originalExitCode = process.exitCode;
+  const originalEnv = { ...process.env };
+
+  try {
+    return fn();
+  } finally {
+    if (process.cwd() !== originalCwd) {
+      process.chdir(originalCwd);
+    }
+    process.exitCode = originalExitCode;
+
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnv)) delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(originalEnv)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+module.exports = { runGsdTools, createTempDir, createTempProject, createTempGitProject, cleanup, parseFrontmatter, isUsageOutput, captureConsole, toPosixPath, runNpm, isolatedNpmEnv, withIsolatedProcessState, TOOLS_PATH };
