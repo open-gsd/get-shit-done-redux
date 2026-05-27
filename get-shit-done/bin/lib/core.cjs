@@ -287,6 +287,17 @@ function loadConfig(cwd, options = {}) {
   // can inherit from it. This prevents users from duplicating model_overrides,
   // workflow.*, etc. across every workstream config (#2714).
   const ws = activeWorkstream;
+  // #315 — per-call lazy memo: all three detection sites inside this loadConfig
+  // call operate on the same cwd and the subrepo set cannot change mid-call, so
+  // a single scan is sufficient. The memo is scoped to THIS call (not module-level)
+  // so separate loadConfig invocations each get a fresh scan.
+  let cachedSubRepos;
+  const getDetectedSubRepos = () => {
+    if (cachedSubRepos === undefined) cachedSubRepos = detectSubRepos(cwd);
+    // Return a copy: original detectSubRepos returned a fresh array per call,
+    // so each site must keep an independent array (avoid cross-site aliasing).
+    return cachedSubRepos.slice();
+  };
   let rootParsed = null;
   if (ws) {
     const rootConfigPath = path.join(planningRoot(cwd), 'config.json');
@@ -302,7 +313,7 @@ function loadConfig(cwd, options = {}) {
         // Resolve filesystem-dependent normalizations (multiRepo → planning.sub_repos)
         for (const norm of rootNorms) {
           if (norm.requiresFilesystem && !rootNormalized.planning?.sub_repos) {
-            const detected = detectSubRepos(cwd);
+            const detected = getDetectedSubRepos();
             if (detected.length > 0) {
               if (!rootNormalized.planning) rootNormalized.planning = {};
               rootNormalized.planning.sub_repos = detected;
@@ -350,7 +361,7 @@ function loadConfig(cwd, options = {}) {
         // AND the original file didn't have sub_repos already (preserve existing intent).
         for (const norm of normalizations) {
           if (norm.requiresFilesystem && !fileData.planning?.sub_repos) {
-            const detected = detectSubRepos(cwd);
+            const detected = getDetectedSubRepos();
             if (detected.length > 0) {
               if (!fileData.planning) fileData.planning = {};
               fileData.planning.sub_repos = detected;
@@ -364,7 +375,7 @@ function loadConfig(cwd, options = {}) {
     // Keep planning.sub_repos in sync with actual filesystem
     const currentSubRepos = fileData.planning?.sub_repos || [];
     if (Array.isArray(currentSubRepos) && currentSubRepos.length > 0) {
-      const detected = detectSubRepos(cwd);
+      const detected = getDetectedSubRepos();
       if (detected.length > 0) {
         const sorted = [...currentSubRepos].sort();
         if (JSON.stringify(sorted) !== JSON.stringify(detected)) {
