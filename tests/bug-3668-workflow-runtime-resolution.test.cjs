@@ -18,7 +18,7 @@ const WORKFLOW_PATH = path.join(__dirname, '..', 'get-shit-done', 'workflows', '
 
 function extractResolverSnippet() {
   const content = fs.readFileSync(WORKFLOW_PATH, 'utf8');
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const start = lines.findIndex((line) => line.includes('SDK resolution: prefer local gsd-tools.cjs'));
   assert.notEqual(start, -1, 'next.md must contain the SDK resolution snippet');
 
