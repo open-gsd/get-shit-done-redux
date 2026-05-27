@@ -39,7 +39,7 @@ function runResolver({ cwd, runtimeDir, pathDir }) {
     '$GSD_SDK query state.json',
   ].join('\n');
 
-  return execFileSync('bash', ['-lc', script], {
+  return execFileSync('bash', ['-c', script], {
     cwd,
     env: {
       ...process.env,
