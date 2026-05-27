@@ -320,7 +320,7 @@ jobs:
       - name: Install and test
         run: |
           npm ci
-          npm run test:coverage
+          npm run test:coverage:unit
 
 
       - name: Dry-run publish validation

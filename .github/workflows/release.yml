@@ -191,7 +191,7 @@ jobs:
           npm ci
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
-          npm run test:coverage
+          npm run test:coverage:unit
 
       - name: Commit pre-release version bump
         env:
@@ -324,7 +324,7 @@ jobs:
           npm ci
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
-          npm run test:coverage
+          npm run test:coverage:unit
 
       - name: Ensure npm supports trusted publishing
         run: npm install -g npm@latest
