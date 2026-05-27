@@ -517,6 +517,30 @@ function cmdSummaryExtract(cwd, summaryPath, fields, raw) {
   output(fullResult, raw);
 }
 
+function _wsSleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function _wsParseRetryAfter(header) {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Math.min(Math.max(parseInt(trimmed, 10) * 1000, 0), 60000);
+  }
+  const asDate = Date.parse(trimmed);
+  if (!isNaN(asDate)) {
+    return Math.min(Math.max(asDate - Date.now(), 0), 60000);
+  }
+  return null;
+}
+
+function _wsRetryDelayMs(attempt) {
+  const base = 250;
+  const cap = 2000;
+  const exp = Math.min(base * Math.pow(2, attempt), cap);
+  return exp + Math.floor(Math.random() * 100);
+}
+
 async function cmdWebsearch(query, options, raw) {
   const apiKey = process.env.BRAVE_API_KEY;
 
@@ -543,39 +567,82 @@ async function cmdWebsearch(query, options, raw) {
     params.set('freshness', options.freshness);
   }
 
-  try {
-    const response = await fetch(
-      `https://api.search.brave.com/res/v1/web/search?${params}`,
-      {
-        headers: {
-          'Accept': 'application/json',
-          'X-Subscription-Token': apiKey
-        }
+  const rawTimeout = parseInt(process.env.GSD_WEBSEARCH_TIMEOUT_MS, 10);
+  const timeoutMs = (Number.isInteger(rawTimeout) && rawTimeout > 0) ? rawTimeout : 10000;
+
+  const MAX_RETRIES = 2;
+  let attempt = 0;
+
+  while (true) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(new Error('timeout')), timeoutMs);
+      let response;
+      try {
+        response = await fetch(
+          `https://api.search.brave.com/res/v1/web/search?${params}`,
+          {
+            headers: {
+              'Accept': 'application/json',
+              'X-Subscription-Token': apiKey
+            },
+            signal: ac.signal
+          }
+        );
+      } finally {
+        clearTimeout(timer);
       }
-    );
 
-    if (!response.ok) {
-      output({ available: false, error: `API error: ${response.status}` }, raw, '');
-      return;
+      if (response.ok) {
+        const data = await response.json();
+        const results = (data.web?.results || []).map(r => ({
+          title: r.title,
+          url: r.url,
+          description: r.description,
+          age: r.age || null
+        }));
+        output({
+          available: true,
+          query,
+          count: results.length,
+          results
+        }, raw, results.map(r => `${r.title}\n${r.url}\n${r.description}`).join('\n\n'));
+        return;
+      }
+
+      const status = response.status;
+      const isRetryable = status === 429 || status >= 500;
+
+      if (!isRetryable) {
+        // Non-retryable 4xx — fail immediately, no attempts field
+        output({ available: false, error: `API error: ${status}` }, raw, '');
+        return;
+      }
+
+      // Retryable HTTP error
+      attempt++;
+      if (attempt > MAX_RETRIES) {
+        output({ available: false, error: `API error: ${status}`, attempts: attempt }, raw, '');
+        return;
+      }
+
+      let delay;
+      if (status === 429) {
+        const retryAfter = _wsParseRetryAfter(response.headers.get('retry-after'));
+        delay = retryAfter !== null ? retryAfter : _wsRetryDelayMs(attempt - 1);
+      } else {
+        delay = _wsRetryDelayMs(attempt - 1);
+      }
+      await _wsSleep(delay);
+
+    } catch (err) {
+      attempt++;
+      if (attempt > MAX_RETRIES) {
+        output({ available: false, error: err.message, attempts: attempt }, raw, '');
+        return;
+      }
+      await _wsSleep(_wsRetryDelayMs(attempt - 1));
     }
-
-    const data = await response.json();
-
-    const results = (data.web?.results || []).map(r => ({
-      title: r.title,
-      url: r.url,
-      description: r.description,
-      age: r.age || null
-    }));
-
-    output({
-      available: true,
-      query,
-      count: results.length,
-      results
-    }, raw, results.map(r => `${r.title}\n${r.url}\n${r.description}`).join('\n\n'));
-  } catch (err) {
-    output({ available: false, error: err.message }, raw, '');
   }
 }
 
@@ -1060,4 +1127,5 @@ module.exports = {
   cmdScaffold,
   cmdStats,
   cmdCheckCommit,
+  _wsParseRetryAfter,
 };

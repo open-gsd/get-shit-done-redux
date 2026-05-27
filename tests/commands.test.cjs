@@ -1558,14 +1558,15 @@ describe('websearch command', () => {
 
     global.fetch = async () => ({
       ok: false,
-      status: 429,
+      status: 401,
+      headers: { get: () => null },
     });
 
     await cmdWebsearch('test query', {}, false);
 
     const output = JSON.parse(captured);
     assert.strictEqual(output.available, false);
-    assert.ok(output.error.includes('429'), 'error should include status code');
+    assert.ok(output.error.includes('401'), 'error should include status code');
   });
 
   test('handles network failure', async () => {
@@ -1580,6 +1581,113 @@ describe('websearch command', () => {
     const output = JSON.parse(captured);
     assert.strictEqual(output.available, false);
     assert.strictEqual(output.error, 'Network timeout');
+  });
+
+  // ── New retry/timeout tests (A–E) ──────────────────────────────────────────
+
+  test('A. timeout is bounded: AbortSignal fires, resolves with available=false and attempts field', async (t) => {
+    process.env.BRAVE_API_KEY = 'test-key';
+    process.env.GSD_WEBSEARCH_TIMEOUT_MS = '20';
+    t.after(() => { delete process.env.GSD_WEBSEARCH_TIMEOUT_MS; });
+
+    global.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    });
+
+    await cmdWebsearch('q', {}, false);
+
+    const output = JSON.parse(captured);
+    assert.strictEqual(output.available, false, 'should be available=false after timeout exhaustion');
+    assert.ok(typeof output.attempts === 'number', 'should include attempts field');
+  });
+
+  test('B. retry on 503 then success: succeeds on 2nd attempt, fetch called exactly twice', async () => {
+    process.env.BRAVE_API_KEY = 'test-key';
+    let callCount = 0;
+
+    global.fetch = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return { ok: false, status: 503, headers: { get: () => null } };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          web: { results: [{ title: 'T', url: 'https://example.com', description: 'D' }] },
+        }),
+      };
+    };
+
+    await cmdWebsearch('test query', {}, false);
+
+    const output = JSON.parse(captured);
+    assert.strictEqual(output.available, true, 'should succeed after retry');
+    assert.strictEqual(output.results.length, 1, 'should have one result');
+    assert.strictEqual(callCount, 2, 'fetch should be called exactly twice');
+  });
+
+  test('C. 429 honors Retry-After then succeeds on 2nd call, fetch called exactly twice', async () => {
+    process.env.BRAVE_API_KEY = 'test-key';
+    let callCount = 0;
+
+    global.fetch = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: (h) => h.toLowerCase() === 'retry-after' ? '0' : null },
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          web: { results: [{ title: 'T', url: 'https://example.com', description: 'D' }] },
+        }),
+      };
+    };
+
+    await cmdWebsearch('test query', {}, false);
+
+    const output = JSON.parse(captured);
+    assert.strictEqual(output.available, true, 'should succeed after 429 retry');
+    assert.strictEqual(callCount, 2, 'fetch should be called exactly twice');
+  });
+
+  test('D. no retry on 401: fails immediately, fetch called exactly once', async () => {
+    process.env.BRAVE_API_KEY = 'test-key';
+    let callCount = 0;
+
+    global.fetch = async () => {
+      callCount++;
+      return { ok: false, status: 401, headers: { get: () => null } };
+    };
+
+    await cmdWebsearch('test query', {}, false);
+
+    const output = JSON.parse(captured);
+    assert.strictEqual(output.available, false, 'should be available=false');
+    assert.strictEqual(output.error, 'API error: 401', 'error should be API error: 401');
+    assert.strictEqual(output.attempts, undefined, 'should NOT have attempts field on immediate fail');
+    assert.strictEqual(callCount, 1, 'fetch should be called exactly once');
+  });
+
+  test('E. network error retried then exhausted: attempts=3, fetch called 3 times', async () => {
+    process.env.BRAVE_API_KEY = 'test-key';
+    let callCount = 0;
+
+    global.fetch = async () => {
+      callCount++;
+      throw new Error('boom');
+    };
+
+    await cmdWebsearch('test query', {}, false);
+
+    const output = JSON.parse(captured);
+    assert.strictEqual(output.available, false, 'should be available=false');
+    assert.ok(output.error.includes('boom'), 'error should include boom');
+    assert.strictEqual(output.attempts, 3, 'attempts should be 3');
+    assert.strictEqual(callCount, 3, 'fetch should be called 3 times');
   });
 });
 
@@ -1950,5 +2058,52 @@ describe('check-commit command', () => {
     assert.ok(!result.success, 'should block commit');
     assert.ok(result.error.includes('.planning/'), 'error should mention .planning/ files');
     assert.ok(result.error.includes('unstage'), 'error should suggest unstage command');
+  });
+});
+
+describe('_wsParseRetryAfter (#308)', () => {
+  const { _wsParseRetryAfter } = require('../get-shit-done/bin/lib/commands.cjs');
+
+  test('integer seconds: "120" → 60000 (capped at 60s)', () => {
+    assert.strictEqual(_wsParseRetryAfter('120'), 60000);
+  });
+
+  test('leading zero: "01" → 1000', () => {
+    assert.strictEqual(_wsParseRetryAfter('01'), 1000);
+  });
+
+  test('whitespace: " 5 " → 5000', () => {
+    assert.strictEqual(_wsParseRetryAfter(' 5 '), 5000);
+  });
+
+  test('"0" → 0', () => {
+    assert.strictEqual(_wsParseRetryAfter('0'), 0);
+  });
+
+  test('value > 60s cap: "120000" → 60000', () => {
+    assert.strictEqual(_wsParseRetryAfter('120000'), 60000);
+  });
+
+  test('future HTTP-date → value in (0, 60000]', () => {
+    const futureDate = new Date(Date.now() + 5000).toUTCString();
+    const v = _wsParseRetryAfter(futureDate);
+    assert.ok(typeof v === 'number' && v > 0 && v <= 60000, `expected (0,60000], got ${v}`);
+  });
+
+  test('past HTTP-date → 0', () => {
+    const pastDate = new Date(Date.now() - 5000).toUTCString();
+    assert.strictEqual(_wsParseRetryAfter(pastDate), 0);
+  });
+
+  test('"garbage" → null', () => {
+    assert.strictEqual(_wsParseRetryAfter('garbage'), null);
+  });
+
+  test('"" → null', () => {
+    assert.strictEqual(_wsParseRetryAfter(''), null);
+  });
+
+  test('null → null', () => {
+    assert.strictEqual(_wsParseRetryAfter(null), null);
   });
 });
