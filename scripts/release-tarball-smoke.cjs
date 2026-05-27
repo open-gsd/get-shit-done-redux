@@ -324,6 +324,13 @@ function runSmoke({
   );
 
   if (versionResult.status !== 0) {
+    console.error(
+      `release-tarball-smoke: BIN_NOT_CALLABLE bin=${actualBin} ` +
+      `invocation=${JSON.stringify(versionInvocation)} status=${versionResult.status} signal=${versionResult.signal} ` +
+      `error=${versionResult.error ? (versionResult.error.code + ': ' + versionResult.error.message) : 'none'}\n` +
+      `--- stderr ---\n${(versionResult.stderr || '').slice(0, 2000)}\n` +
+      `--- stdout ---\n${(versionResult.stdout || '').slice(0, 2000)}`,
+    );
     return {
       code: SMOKE.BIN_NOT_CALLABLE,
       details: {
@@ -345,6 +352,14 @@ function runSmoke({
   details.installedPackageJson = installedPkgPath;
 
   if (installedVersion !== expectedVersion) {
+    console.error(
+      `release-tarball-smoke: VERSION_MISMATCH bin=${actualBin} ` +
+      `invocation=${JSON.stringify(versionInvocation)} status=${versionResult.status} signal=${versionResult.signal} ` +
+      `error=${versionResult.error ? (versionResult.error.code + ': ' + versionResult.error.message) : 'none'}\n` +
+      `installedVersion=${installedVersion} expectedVersion=${expectedVersion}\n` +
+      `--- stderr ---\n${(versionResult.stderr || '').slice(0, 2000)}\n` +
+      `--- stdout ---\n${(versionResult.stdout || '').slice(0, 2000)}`,
+    );
     return {
       code: SMOKE.VERSION_MISMATCH,
       details: { ...details, installedVersion, expectedVersion },
@@ -396,6 +411,13 @@ function runSmoke({
     );
 
     if (initResult.status !== 0) {
+      console.error(
+        `release-tarball-smoke: INIT_FAILED bin=${installerBin} ` +
+        `invocation=${JSON.stringify(initInvocation)} status=${initResult.status} signal=${initResult.signal} ` +
+        `error=${initResult.error ? (initResult.error.code + ': ' + initResult.error.message) : 'none'}\n` +
+        `--- stderr ---\n${(initResult.stderr || '').slice(0, 2000)}\n` +
+        `--- stdout ---\n${(initResult.stdout || '').slice(0, 2000)}`,
+      );
       return {
         code: SMOKE.INIT_FAILED,
         details: {
