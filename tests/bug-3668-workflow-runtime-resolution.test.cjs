@@ -65,7 +65,10 @@ describe('bug-3668: workflow SDK resolver supports installed user projects', () 
 
     const output = runResolver({ cwd: project, pathDir: bin });
 
-    assert.match(output, new RegExp(`GSD_TOOLS=${path.join(bin, 'gsd-tools').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    // Normalize separators so the assertion works on Windows (Git bash emits POSIX paths)
+    const norm = output.replace(/\\/g, '/');
+    // subtest 1: the resolved bin is the PATH-fallback gsd-tools (suffix /bin/gsd-tools, no .cjs)
+    assert.match(norm, /GSD_TOOLS=\S*\/bin\/gsd-tools(?:\s|$)/m);
     assert.match(output, /installed:query state\.json/);
   });
 
@@ -83,7 +86,10 @@ describe('bug-3668: workflow SDK resolver supports installed user projects', () 
 
     const output = runResolver({ cwd: project, runtimeDir: runtime, pathDir: pathBin });
 
-    assert.match(output, new RegExp(`GSD_TOOLS=${path.join(runtime, 'get-shit-done', 'bin', 'gsd-tools.cjs').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    // Normalize separators so the assertion works on Windows (Git bash emits POSIX paths)
+    const norm = output.replace(/\\/g, '/');
+    // subtest 2: the resolved bin is the RUNTIME_DIR local runtime (suffix /get-shit-done/bin/gsd-tools.cjs)
+    assert.match(norm, /GSD_TOOLS=\S*\/get-shit-done\/bin\/gsd-tools\.cjs(?:\s|$)/m);
     assert.match(output, /runtime:query state\.json/);
     assert.doesNotMatch(output, /installed:query state\.json/);
   });
