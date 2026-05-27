@@ -2025,6 +2025,60 @@ describe('updatePerformanceMetricsSection', () => {
     const phase5Rows = (afterSecond.match(/\|\s*5\s*\|/g) || []).length;
     assert.ok(phase5Rows <= 1, 'Phase 5 should appear at most once in By Phase table (no duplicates)');
   });
+
+  test('byPhaseTablePattern behavior-lock (#320): By Phase table header preserved and phase row upserted after hoist to module scope', () => {
+    // Exercises the byPhaseTablePattern match path directly: header must be preserved,
+    // an existing phase row must be replaced (not duplicated), and a new phase row inserted.
+    const content = `# Project State
+
+**Current Phase:** 06
+**Status:** Executing Phase 6
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 1
+- Average duration: 5 min
+- Total execution time: 0.1 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| 6 | 1 | 5 min | 5 min |
+
+## Accumulated Context
+`;
+    const statePath = path.join(tmpDir, '.planning', 'STATE.md');
+    fs.writeFileSync(statePath, content);
+
+    const phaseDir = path.join(tmpDir, '.planning', 'phases', '06-lock');
+    fs.mkdirSync(phaseDir, { recursive: true });
+    fs.writeFileSync(path.join(phaseDir, '06-01-PLAN.md'), '# Plan\n');
+    fs.writeFileSync(path.join(phaseDir, '06-02-PLAN.md'), '# Plan 2\n');
+    fs.writeFileSync(path.join(phaseDir, '06-01-SUMMARY.md'), '# Summary\n');
+    fs.writeFileSync(path.join(phaseDir, '06-02-SUMMARY.md'), '# Summary 2\n');
+
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      `# Roadmap\n\n## Phase 6: Lock\n\n- [ ] Phase 6: Lock\n`
+    );
+
+    const result = runGsdTools('phase complete 6', tmpDir);
+    assert.ok(result.success, `phase complete failed: ${result.error}`);
+
+    const stateAfter = fs.readFileSync(statePath, 'utf-8');
+
+    // Header must be preserved
+    assert.ok(stateAfter.includes('| Phase | Plans | Total | Avg/Plan |'), 'By Phase table header must be preserved');
+
+    // Phase 6 row must appear exactly once (upserted, not duplicated)
+    const phase6Rows = (stateAfter.match(/\|\s*6\s*\|/g) || []).length;
+    assert.strictEqual(phase6Rows, 1, 'Phase 6 row must appear exactly once in By Phase table (upsert, not append)');
+
+    // Total plans count updated correctly (1 pre-existing + 2 new summaries)
+    assert.ok(stateAfter.match(/Total plans completed:\s*3/), 'Total plans completed should be 3 after upsert');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

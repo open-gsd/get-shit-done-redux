@@ -38,6 +38,9 @@ process.on('exit', () => {
   }
 });
 
+// Hoisted to module scope — compiled once, not per call (#320). Stateless (/i, used with .match).
+const byPhaseTablePattern = /(\|\s*Phase\s*\|\s*Plans\s*\|\s*Total\s*\|\s*Avg\/Plan\s*\|[ \t]*\n\|(?:[- :\t]+\|)+[ \t]*\n)((?:[ \t]*\|[^\n]*\n)*)(?=\n|$)/i;
+
 function cmdStateLoad(cwd, raw) {
   const config = loadConfig(cwd);
   const planDir = planningPaths(cwd).planning;
@@ -1285,7 +1288,6 @@ function updatePerformanceMetricsSection(content, cwd, phaseNum, planCount, summ
   );
 
   // Update By Phase table — upsert row for this phase
-  const byPhaseTablePattern = /(\|\s*Phase\s*\|\s*Plans\s*\|\s*Total\s*\|\s*Avg\/Plan\s*\|[ \t]*\n\|(?:[- :\t]+\|)+[ \t]*\n)((?:[ \t]*\|[^\n]*\n)*)(?=\n|$)/i;
   const byPhaseMatch = content.match(byPhaseTablePattern);
   if (byPhaseMatch) {
     let tableBody = byPhaseMatch[2].trim();
