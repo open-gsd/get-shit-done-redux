@@ -320,10 +320,22 @@ describe('runtime-launcher-parity (#373)', () => {
         env: { ...process.env, PATH: `${pathBinDir}${path.delimiter}${process.env.PATH || ''}` },
       });
 
-      // The PATH fallback must have resolved GSD_TOOLS to the stub binary
-      assert.ok(
-        stdout.includes('GSD_TOOLS=') && stdout.includes(pathBinDir),
-        `Expected GSD_TOOLS to resolve to PATH stub in ${pathBinDir}, got: ${stdout.trim()}`,
+      // The PATH fallback must have resolved GSD_TOOLS to the stub binary.
+      // Normalize backslashes → forward slashes so the assertion works on Windows
+      // (git-bash emits POSIX paths while Node's os.tmpdir() returns the Windows form).
+      // Assert by suffix (/bin/gsd-tools, no .cjs extension) rather than absolute prefix
+      // because the prefix differs between Windows and POSIX.
+      // Use .+ (not \S*) to tolerate paths that contain spaces.
+      const normStdout = stdout.replace(/\\/g, '/');
+      assert.match(
+        normStdout,
+        /GSD_TOOLS=.+\/bin\/gsd-tools(?:\s|$)/m,
+        `Expected GSD_TOOLS to resolve to the installed PATH stub (suffix /bin/gsd-tools), got: ${stdout.trim()}`,
+      );
+      assert.doesNotMatch(
+        normStdout,
+        /GSD_TOOLS=.+\.cjs/m,
+        `Expected GSD_TOOLS NOT to point to a .cjs file in PATH fallback, got: ${stdout.trim()}`,
       );
       // The stub must have been invoked with the query arguments
       assert.ok(
