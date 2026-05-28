@@ -109,6 +109,12 @@ function withPlanningLock(cwd, fn) {
     }
   }
 
+  // Allocate once before the retry loop — reused on every Atomics.wait spin.
+  // The buffer value is always 0 (never written), so reuse is semantically
+  // identical to allocating fresh each time.  Mirrors the #316/#399 fix for
+  // acquireStateLock in state.cjs.
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
   while (Date.now() - start < lockTimeout) {
     try {
       return runWithHeldLock();
@@ -117,7 +123,7 @@ function withPlanningLock(cwd, fn) {
       // are recoverable — wait and retry rather than propagating.
       // See PLANNING_LOCK_RETRY_ERRNOS for the full list and rationale.
       if (PLANNING_LOCK_RETRY_ERRNOS.has(err.code)) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+        Atomics.wait(sleepBuf, 0, 0, 100);
         continue;
       }
       if (err.code === 'EEXIST') {
@@ -131,7 +137,7 @@ function withPlanningLock(cwd, fn) {
         } catch { continue; }
 
         // Wait and retry (cross-platform, no shell dependency)
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+        Atomics.wait(sleepBuf, 0, 0, 100);
         continue;
       }
       throw err;
