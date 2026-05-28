@@ -4,24 +4,34 @@ process.env.GSD_TEST_MODE = '1';
 
 /**
  * Asserts that every `run:` step whose command begins with `npm ` in any
- * .github/workflows/*.yml file has an effective `shell:` directive.
+ * .github/workflows/*.yml file has an effective `shell:` directive that is
+ * H1-policy-compliant (native shell per OS).
+ *
+ * H1 policy (LOCKED — open-gsd/get-shit-done-redux):
+ *   ubuntu-* → bash (runner default, no pin needed)
+ *   macos-*  → zsh  (must be pinned explicitly)
+ *   windows-* → pwsh (runner default, no pin needed)
  *
  * "Effective shell" is resolved as:
- *   step.shell ?? job.defaults.run.shell ?? workflow.defaults.run.shell
+ *   step.shell ?? job.defaults.run.shell ?? workflow.defaults.run.shell ?? runner_default
  *
- * Without an effective shell, GitHub Actions defaults to pwsh on
- * windows-latest / windows-2025.  The npm.cmd → node.exe → npm-cli.js child-process chain
- * under pwsh can swallow stderr, making `npm ci` / `npm run` failures
- * invisible in CI logs.
+ * Under H1, Windows runner default is pwsh. pwsh does NOT have the npm.cmd
+ * stderr-swallow issue that prompted the original bash requirement — that issue
+ * was specific to running bash-wrapped npm in a pwsh session. With H1 in force,
+ * Windows npm steps run natively under pwsh and are reliable.
  *
- * Scope: only workflow files that reference a Windows hosted runner label
- * literal `runs-on:` value, or as a member of a `strategy.matrix.os` list).
- * Steps in jobs that cannot run on Windows cannot trigger the class of failure
- * described above, but the file must still be scanned once any job in it
- * includes a windows target (to catch unshelled npm steps in sibling jobs that
- * could be copy-pasted to a windows context).
+ * Violation conditions (H1-aware):
+ *   - An npm run: step on a Windows runner has shell: bash (wrong shell for OS,
+ *     and reintroduces the pwsh/bash interop issue H1 is designed to eliminate).
+ *   - An npm run: step on a macOS runner has no effective shell (macos default
+ *     is bash, but H1 requires zsh — tracked by policy-shell-pinning.test.cjs).
  *
- * Acceptable shell values: bash, pwsh, sh, cmd.
+ * This test enforces the Windows side: Windows npm steps MUST NOT use shell: bash
+ * (either directly or via job/workflow defaults). No shell pin = pwsh default = correct.
+ *
+ * Scope: only workflow files that reference a Windows hosted runner label.
+ * Acceptable outcomes: no shell pin (pwsh default), or explicit shell: pwsh.
+ * Unacceptable: shell: bash (H1 violation on Windows).
  */
 
 const { test, describe } = require('node:test');
@@ -125,7 +135,14 @@ function findViolations(filePath) {
 
   /**
    * Flush the current step: emit a violation if it qualifies.
+   *
+   * H1-aware check: Windows npm steps must NOT use shell: bash.
+   * Under H1, Windows runner default is pwsh (native, reliable for npm).
+   * Using shell: bash on Windows is an H1 policy violation AND reintroduces
+   * the pwsh/bash interop issue the original rule was designed to prevent.
+   *
    * Effective shell = step.shell ?? jobDefaultShell ?? workflowDefaultShell
+   * (null means runner default applies — pwsh for windows, which is correct)
    */
   function flushStep() {
     if (!inStep || stepProps === null) return;
@@ -133,12 +150,14 @@ function findViolations(filePath) {
     const effectiveShell = shell !== null ? shell
       : jobDefaultShell !== null ? jobDefaultShell
       : workflowDefaultShell;
-    if (run !== null && /^\s*(?:npm|npx)(\s|$)/.test(run) && effectiveShell === null) {
+    // H1 violation: npm step on Windows with shell: bash (explicit or via defaults)
+    if (run !== null && /^\s*(?:npm|npx)(\s|$)/.test(run) && effectiveShell === 'bash') {
       violations.push({
         file: relFile,
         job: currentJob,
         stepIndex,
         stepName: name || '(unnamed)',
+        effectiveShell,
       });
     }
     inStep = false;
@@ -316,7 +335,7 @@ function findViolationsInString(yamlContent) {
 // ── Test suite ──────────────────────────────────────────────────────────────
 
 describe('GitHub Actions workflow shell pinning', () => {
-  test('npm ci/run steps in workflow files must pin shell', () => {
+  test('npm ci/run steps in Windows-targeting workflow files must not use shell: bash (H1 policy)', () => {
     const workflowFiles = listWorkflowFiles();
     assert.ok(workflowFiles.length > 0, 'No windows-targeting workflow files found — check WORKFLOWS_DIR path');
 
@@ -328,20 +347,21 @@ describe('GitHub Actions workflow shell pinning', () => {
 
     if (allViolations.length > 0) {
       const details = allViolations.map(
-        (v) => `  jobs.${v.job}.steps[${v.stepIndex}].name = ${v.stepName}  (${v.file})`,
+        (v) => `  jobs.${v.job}.steps[${v.stepIndex}].name = ${v.stepName}  shell=${v.effectiveShell}  (${v.file})`,
       ).join('\n');
       assert.fail(
-        `${allViolations.length} npm run/ci step(s) are missing an explicit shell: directive.\n` +
-        `On Windows hosted runners, steps without shell: default to pwsh, which can swallow npm stderr.\n` +
-        `Add  shell: bash  (or another explicit shell) to each listed step:\n\n` +
+        `${allViolations.length} npm run/ci step(s) use shell: bash in a Windows-targeting workflow file.\n` +
+        `H1 policy: Windows runners must use pwsh (runner default — no explicit pin needed).\n` +
+        `shell: bash on Windows is both an H1 violation and reintroduces pwsh/bash interop issues.\n` +
+        `Remove the shell: bash directive (or change to shell: pwsh) on each listed step:\n\n` +
         details,
       );
     }
   });
 
-  test('workflow-level defaults.run.shell satisfies shell requirement', () => {
-    // A workflow with defaults.run.shell: bash at the root level should NOT
-    // produce violations for npm steps that lack their own shell: directive.
+  test('workflow-level defaults.run.shell: bash on Windows-targeting workflow is an H1 violation', () => {
+    // H1: Windows runners must use pwsh (runner default). Setting defaults.run.shell: bash
+    // at the workflow level forces npm steps on Windows to use bash — an H1 violation.
     const yaml = `
 name: Test
 on: push
@@ -360,15 +380,15 @@ jobs:
     const violations = findViolationsInString(yaml);
     assert.strictEqual(
       violations.length,
-      0,
-      `Expected 0 violations when workflow-level defaults.run.shell is set, got:\n` +
-        violations.map((v) => `  steps[${v.stepIndex}] ${v.stepName}`).join('\n'),
+      2,
+      `Expected 2 violations (both npm steps inherit shell: bash via workflow defaults — H1 violation), got:\n` +
+        violations.map((v) => `  steps[${v.stepIndex}] ${v.stepName} shell=${v.effectiveShell}`).join('\n'),
     );
   });
 
-  test('job-level defaults.run.shell satisfies shell requirement', () => {
-    // A job with defaults.run.shell: bash should NOT produce violations for
-    // npm steps in that job that lack their own shell: directive.
+  test('job-level defaults.run.shell: bash on Windows job is an H1 violation', () => {
+    // H1: Windows runners must use pwsh. job-level defaults.run.shell: bash
+    // forces Windows npm steps to use bash — an H1 violation.
     const yaml = `
 name: Test
 on: push
@@ -387,9 +407,9 @@ jobs:
     const violations = findViolationsInString(yaml);
     assert.strictEqual(
       violations.length,
-      0,
-      `Expected 0 violations when job-level defaults.run.shell is set, got:\n` +
-        violations.map((v) => `  steps[${v.stepIndex}] ${v.stepName}`).join('\n'),
+      2,
+      `Expected 2 violations (both npm steps inherit shell: bash via job defaults — H1 violation), got:\n` +
+        violations.map((v) => `  steps[${v.stepIndex}] ${v.stepName} shell=${v.effectiveShell}`).join('\n'),
     );
   });
 });
