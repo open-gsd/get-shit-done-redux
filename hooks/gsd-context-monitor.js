@@ -54,30 +54,33 @@ process.stdin.on('end', () => {
     }
 
     // Check if context warnings are disabled via config.
-    // Quick sentinel check: skip config read entirely for non-GSD projects (#P2.5).
+    // Collapsed existsSync+readFileSync into a single read guarded by try/catch
+    // (ENOENT or parse error → use defaults, same as old "planningDir absent" branch).
     const cwd = data.cwd || process.cwd();
-    const planningDir = path.join(cwd, '.planning');
-    if (fs.existsSync(planningDir)) {
-      try {
-        const configPath = path.join(planningDir, 'config.json');
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (config.hooks?.context_warnings === false) {
-          process.exit(0);
-        }
-      } catch (e) {
-        // Ignore config read/parse errors (config may not exist in .planning/)
+    try {
+      const configPath = path.join(cwd, '.planning', 'config.json');
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.hooks?.context_warnings === false) {
+        process.exit(0);
       }
+    } catch (e) {
+      // Missing or unparseable config → proceed with defaults (context warnings enabled)
     }
 
     const tmpDir = os.tmpdir();
     const metricsPath = path.join(tmpDir, `claude-ctx-${sessionId}.json`);
 
-    // If no metrics file, this is a subagent or fresh session -- exit silently
-    if (!fs.existsSync(metricsPath)) {
-      process.exit(0);
+    // If no metrics file, this is a subagent or fresh session -- exit silently.
+    // Collapsed existsSync+readFileSync: ENOENT → exit 0 (identical to old !existsSync branch),
+    // other errors rethrow to the outer catch (swallowed → exit 0, as before).
+    let metricsRaw;
+    try {
+      metricsRaw = fs.readFileSync(metricsPath, 'utf8');
+    } catch (e) {
+      if (e && e.code === 'ENOENT') process.exit(0);
+      throw e;
     }
-
-    const metrics = JSON.parse(fs.readFileSync(metricsPath, 'utf8'));
+    const metrics = JSON.parse(metricsRaw);
     const now = Math.floor(Date.now() / 1000);
 
     // Ignore stale metrics
@@ -98,13 +101,13 @@ process.stdin.on('end', () => {
     let warnData = { callsSinceWarn: 0, lastLevel: null };
     let firstWarn = true;
 
-    if (fs.existsSync(warnPath)) {
-      try {
-        warnData = JSON.parse(fs.readFileSync(warnPath, 'utf8'));
-        firstWarn = false;
-      } catch (e) {
-        // Corrupted file, reset
-      }
+    // Collapsed existsSync+readFileSync: ENOENT or parse error → keep default warnData
+    // (same as old "file absent" branch). firstWarn tracks whether we read a valid sentinel.
+    try {
+      warnData = JSON.parse(fs.readFileSync(warnPath, 'utf8'));
+      firstWarn = false;
+    } catch (e) {
+      // Missing or corrupted sentinel → firstWarn stays true, warnData stays at defaults
     }
 
     warnData.callsSinceWarn = (warnData.callsSinceWarn || 0) + 1;

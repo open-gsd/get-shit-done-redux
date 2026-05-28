@@ -9798,7 +9798,7 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   }
 
   // Configure OpenCode permissions
-  if (isOpencode) {
+  if (isOpencode && !process.env.GSD_TEST_MODE) {
     configureOpencodePermissions(isGlobal, configDir);
   }
 

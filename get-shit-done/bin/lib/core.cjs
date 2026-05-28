@@ -287,6 +287,17 @@ function loadConfig(cwd, options = {}) {
   // can inherit from it. This prevents users from duplicating model_overrides,
   // workflow.*, etc. across every workstream config (#2714).
   const ws = activeWorkstream;
+  // #315 — per-call lazy memo: all three detection sites inside this loadConfig
+  // call operate on the same cwd and the subrepo set cannot change mid-call, so
+  // a single scan is sufficient. The memo is scoped to THIS call (not module-level)
+  // so separate loadConfig invocations each get a fresh scan.
+  let cachedSubRepos;
+  const getDetectedSubRepos = () => {
+    if (cachedSubRepos === undefined) cachedSubRepos = detectSubRepos(cwd);
+    // Return a copy: original detectSubRepos returned a fresh array per call,
+    // so each site must keep an independent array (avoid cross-site aliasing).
+    return cachedSubRepos.slice();
+  };
   let rootParsed = null;
   if (ws) {
     const rootConfigPath = path.join(planningRoot(cwd), 'config.json');
@@ -302,7 +313,7 @@ function loadConfig(cwd, options = {}) {
         // Resolve filesystem-dependent normalizations (multiRepo → planning.sub_repos)
         for (const norm of rootNorms) {
           if (norm.requiresFilesystem && !rootNormalized.planning?.sub_repos) {
-            const detected = detectSubRepos(cwd);
+            const detected = getDetectedSubRepos();
             if (detected.length > 0) {
               if (!rootNormalized.planning) rootNormalized.planning = {};
               rootNormalized.planning.sub_repos = detected;
@@ -350,7 +361,7 @@ function loadConfig(cwd, options = {}) {
         // AND the original file didn't have sub_repos already (preserve existing intent).
         for (const norm of normalizations) {
           if (norm.requiresFilesystem && !fileData.planning?.sub_repos) {
-            const detected = detectSubRepos(cwd);
+            const detected = getDetectedSubRepos();
             if (detected.length > 0) {
               if (!fileData.planning) fileData.planning = {};
               fileData.planning.sub_repos = detected;
@@ -364,7 +375,7 @@ function loadConfig(cwd, options = {}) {
     // Keep planning.sub_repos in sync with actual filesystem
     const currentSubRepos = fileData.planning?.sub_repos || [];
     if (Array.isArray(currentSubRepos) && currentSubRepos.length > 0) {
-      const detected = detectSubRepos(cwd);
+      const detected = getDetectedSubRepos();
       if (detected.length > 0) {
         const sorted = [...currentSubRepos].sort();
         if (JSON.stringify(sorted) !== JSON.stringify(detected)) {
@@ -969,19 +980,28 @@ function extractCurrentMilestone(content, cwd) {
   // Match headings like: ## Roadmap v3.0: Name, ## v3.0 Name, etc.
   const escapedVersion = escapeRegex(version);
   const sectionPattern = new RegExp(
-    `(^#{1,3}\\s+.*${escapedVersion}[^\\n]*)`,
-    'mi'
+    `(^#{1,3}\\s+.*${escapedVersion}\\b[^\\n]*)`,
+    'gmi'
   );
-  const sectionMatch = content.match(sectionPattern);
+  const allMatches = [...content.matchAll(sectionPattern)];
 
-  if (!sectionMatch) return stripShippedMilestones(content);
+  if (allMatches.length === 0) return stripShippedMilestones(content);
 
-  const sectionStart = sectionMatch.index;
+  // Select the first non-closed heading; fall back to first match if all are closed.
+  // A heading is "closed" only if it carries a closed marker AND no active marker.
+  const closedMarkerPattern = /\b(?:CLOSED|ARCHIVED|ABANDONED|SHIPPED|FAILED)\b|✅|🗄/i;
+  const activeMarkerPattern = /\b(?:STARTED|ACTIVE|WIP)\b|in\s+progress|🚧/i;
+  const isClosed = (h) => closedMarkerPattern.test(h) && !activeMarkerPattern.test(h);
+  const firstMatch = allMatches[0];
+  const selected = allMatches.find((m) => !isClosed(m[1])) || firstMatch;
+
+  const sectionStart = selected.index;
 
   // Find the end: next milestone heading at same or higher level, or EOF.
   // Milestone headings look like: ## v2.0, ## Roadmap v2.0, ## ✅ v1.0, etc.
   // Scan line-by-line so that heading-like lines inside fenced code blocks
   // (``` or ~~~) are not mistaken for milestone boundaries. See #2787.
+  const sectionMatch = selected;
   const headingLevel = sectionMatch[1].match(/^(#{1,3})\s/)[1].length;
   const restContent = content.slice(sectionStart + sectionMatch[0].length);
   // Exclude phase headings (e.g. "### Phase 12: v1.0 Tech-Debt Closure") from
@@ -1017,8 +1037,16 @@ function extractCurrentMilestone(content, cwd) {
   }
 
   // Return everything before the current milestone section (non-milestone content
-  // like title, overview) plus the current milestone section
-  const beforeMilestones = content.slice(0, sectionStart);
+  // like title, overview) plus the current milestone section.
+  // Anchor the preamble at the first *any-version* milestone heading so that
+  // unmatched sibling sections (e.g. v2.0-Beta when STATE=v2.0-B) do not leak
+  // in as preamble content.
+  const anyMilestonePattern = /^#{1,3}\s+(?!Phase\s+\S)(?:.*v\d+\.\d+|✅|📋|🚧)/im;
+  const firstMilestoneMatch = content.match(anyMilestonePattern);
+  const preambleCutoff = firstMilestoneMatch
+    ? firstMilestoneMatch.index
+    : firstMatch.index;
+  const beforeMilestones = content.slice(0, preambleCutoff);
   const currentSection = content.slice(sectionStart, sectionEnd);
 
   // Also include any content before the first milestone heading (title, overview, etc.)

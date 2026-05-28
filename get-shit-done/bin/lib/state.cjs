@@ -38,6 +38,9 @@ process.on('exit', () => {
   }
 });
 
+// Hoisted to module scope — compiled once, not per call (#320). Stateless (/i, used with .match).
+const byPhaseTablePattern = /(\|\s*Phase\s*\|\s*Plans\s*\|\s*Total\s*\|\s*Avg\/Plan\s*\|[ \t]*\n\|(?:[- :\t]+\|)+[ \t]*\n)((?:[ \t]*\|[^\n]*\n)*)(?=\n|$)/i;
+
 function cmdStateLoad(cwd, raw) {
   const config = loadConfig(cwd);
   const planDir = planningPaths(cwd).planning;
@@ -940,6 +943,7 @@ function acquireStateLock(statePath) {
   const staleThresholdMs = 10000;
   const maxWaitMs = 30000;
   const startedAt = Date.now();
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4)); // hoisted; value stays 0, pure Atomics.wait timeout target
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -973,7 +977,7 @@ function acquireStateLock(statePath) {
         );
       }
       const jitter = Math.floor(Math.random() * 50);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, retryDelay + jitter);
+      Atomics.wait(sleepBuffer, 0, 0, retryDelay + jitter);
     }
   }
 }
@@ -1285,7 +1289,6 @@ function updatePerformanceMetricsSection(content, cwd, phaseNum, planCount, summ
   );
 
   // Update By Phase table — upsert row for this phase
-  const byPhaseTablePattern = /(\|\s*Phase\s*\|\s*Plans\s*\|\s*Total\s*\|\s*Avg\/Plan\s*\|[ \t]*\n\|(?:[- :\t]+\|)+[ \t]*\n)((?:[ \t]*\|[^\n]*\n)*)(?=\n|$)/i;
   const byPhaseMatch = content.match(byPhaseTablePattern);
   if (byPhaseMatch) {
     let tableBody = byPhaseMatch[2].trim();

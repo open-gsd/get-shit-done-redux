@@ -353,6 +353,64 @@ function extractObjective(content) {
   return m ? m[1].trim() : null;
 }
 
+// O(V + E). Assigns each in-phase plan its longest-path topological level over the
+// in-phase dependsOn DAG (Kahn's algorithm). Returns { level: Map<id,number>, visited: number }.
+// visited < rawPlans.length signals a dependency cycle.
+function computeDependencyLevels(rawPlans, planMap, canonicalToId) {
+  // Kahn's algorithm — compute in-degree and adjacency for in-phase deps only.
+  const level = new Map();
+  const inDeg = new Map();
+  const adj = new Map();
+
+  for (const p of rawPlans) {
+    if (!inDeg.has(p.id)) inDeg.set(p.id, 0);
+    if (!adj.has(p.id)) adj.set(p.id, []);
+    for (const dep of p.dependsOn) {
+      // Accept both full-stem ('03-01-auth-hardening') and canonical-prefix ('03-01') forms.
+      // All lookups are lowercased so mixed-case depends_on refs resolve correctly (#3785).
+      const depLower = dep.toLowerCase();
+      const resolvedDep = planMap.has(depLower) ? planMap.get(depLower).id : canonicalToId.get(depLower);
+      if (!resolvedDep) continue; // external dep — ignore
+      if (!adj.has(resolvedDep)) adj.set(resolvedDep, []);
+      adj.get(resolvedDep).push(p.id);
+      inDeg.set(p.id, (inDeg.get(p.id) ?? 0) + 1);
+    }
+  }
+
+  // Start with nodes that have no in-phase dependencies.
+  const queue = [];
+  for (const p of rawPlans) {
+    if ((inDeg.get(p.id) ?? 0) === 0) {
+      queue.push(p.id);
+      level.set(p.id, 0);
+    }
+  }
+
+  // Dequeue by head index (queue[head++]), NOT Array.shift(): shift() is O(n) per
+  // call in V8 (it re-indexes the backing store), which would make this Kahn's BFS
+  // O(V^2) on deep queues (e.g. wide fan-in graphs). Head-index dequeue is O(1)
+  // amortized -> O(V+E) overall. Do not "simplify" this back to queue.shift(). (#307)
+  let head = 0;
+  let visited = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
+    visited++;
+    const curLevel = level.get(cur);
+    for (const dep of (adj.get(cur) ?? [])) {
+      const newLevel = curLevel + 1;
+      if (newLevel > (level.get(dep) ?? -1)) {
+        level.set(dep, newLevel);
+      }
+      inDeg.set(dep, inDeg.get(dep) - 1);
+      if (inDeg.get(dep) === 0) {
+        queue.push(dep);
+      }
+    }
+  }
+
+  return { level, visited };
+}
+
 function cmdPhasePlanIndex(cwd, phase, raw) {
   if (!phase) {
     error('phase required for phase-plan-index');
@@ -496,51 +554,7 @@ function cmdPhasePlanIndex(cwd, phase, raw) {
   // like '01' or '01A'. Adding the third tier here is tracked as a parity
   // gap and is out of scope for #3785 / PR #3798.
 
-  // Kahn's algorithm — compute in-degree and adjacency for in-phase deps only.
-  const level = new Map();
-  const inDeg = new Map();
-  const adj = new Map();
-
-  for (const p of rawPlans) {
-    if (!inDeg.has(p.id)) inDeg.set(p.id, 0);
-    if (!adj.has(p.id)) adj.set(p.id, []);
-    for (const dep of p.dependsOn) {
-      // Accept both full-stem ('03-01-auth-hardening') and canonical-prefix ('03-01') forms.
-      // All lookups are lowercased so mixed-case depends_on refs resolve correctly (#3785).
-      const depLower = dep.toLowerCase();
-      const resolvedDep = planMap.has(depLower) ? planMap.get(depLower).id : canonicalToId.get(depLower);
-      if (!resolvedDep) continue; // external dep — ignore
-      if (!adj.has(resolvedDep)) adj.set(resolvedDep, []);
-      adj.get(resolvedDep).push(p.id);
-      inDeg.set(p.id, (inDeg.get(p.id) ?? 0) + 1);
-    }
-  }
-
-  // Start with nodes that have no in-phase dependencies.
-  const queue = [];
-  for (const p of rawPlans) {
-    if ((inDeg.get(p.id) ?? 0) === 0) {
-      queue.push(p.id);
-      level.set(p.id, 0);
-    }
-  }
-
-  let visited = 0;
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    visited++;
-    const curLevel = level.get(cur);
-    for (const dep of (adj.get(cur) ?? [])) {
-      const newLevel = curLevel + 1;
-      if (newLevel > (level.get(dep) ?? -1)) {
-        level.set(dep, newLevel);
-      }
-      inDeg.set(dep, inDeg.get(dep) - 1);
-      if (inDeg.get(dep) === 0) {
-        queue.push(dep);
-      }
-    }
-  }
+  const { level, visited } = computeDependencyLevels(rawPlans, planMap, canonicalToId);
 
   // Cycle detection — any node not visited has a cycle.
   if (visited < rawPlans.length) {
@@ -1555,4 +1569,5 @@ module.exports = {
   cmdPhaseInsert,
   cmdPhaseRemove,
   cmdPhaseComplete,
+  computeDependencyLevels,
 };

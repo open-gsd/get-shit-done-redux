@@ -191,7 +191,7 @@ jobs:
           npm ci
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
-          npm run test:coverage
+          npm run test:coverage:unit
 
       - name: Commit pre-release version bump
         env:
@@ -200,8 +200,7 @@ jobs:
           git add package.json package-lock.json
           git commit -m "chore: bump to ${PRE_VERSION}"
 
-      - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
+      # npm bundled with Node 24 (pinned via setup-node) already supports trusted publishing (#318)
 
       - name: Dry-run publish validation
         run: npm publish --dry-run --tag next
@@ -324,10 +323,9 @@ jobs:
           npm ci
           chmod +x scripts/check-npm-integrity.sh
           scripts/check-npm-integrity.sh
-          npm run test:coverage
+          npm run test:coverage:unit
 
-      - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
+      # npm bundled with Node 24 (pinned via setup-node) already supports trusted publishing (#318)
 
       - name: Dry-run publish validation
         run: npm publish --dry-run

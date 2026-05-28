@@ -12,26 +12,15 @@ Read all files referenced by the invoking prompt's execution_context before star
 **Load progress context (paths only):**
 
 ```bash
-# SDK resolution: prefer local gsd-tools.cjs, fall back to installed gsd-tools (#3668)
-GSD_TOOLS="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/get-shit-done/bin/gsd-tools.cjs"
-if [ -f "$GSD_TOOLS" ]; then
-  GSD_SDK="node $GSD_TOOLS"
-elif command -v gsd-tools >/dev/null 2>&1; then
-  GSD_TOOLS="$(command -v gsd-tools)"
-  GSD_SDK="$GSD_TOOLS"
-else
-  echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd-tools is not on PATH." >&2
-  echo "Run: npx -y @opengsd/get-shit-done-redux@latest --claude --local" >&2
-  exit 1
-fi
-INIT=$($GSD_SDK query init.progress)
+_GSD_SHIM_NAME="gsd-tools.cjs"; GSD_TOOLS="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}/get-shit-done/bin/${_GSD_SHIM_NAME}"; if [ -f "$GSD_TOOLS" ]; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif command -v gsd-tools >/dev/null 2>&1; then GSD_TOOLS="$(command -v gsd-tools)"; gsd_run() { "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd-tools is not on PATH. Run: npx -y @opengsd/get-shit-done-redux@latest --claude --local" >&2; exit 1; fi
+INIT=$(gsd_run query init.progress)
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 ```
 
 Extract from init JSON: `project_exists`, `roadmap_exists`, `state_exists`, `phases`, `current_phase`, `next_phase`, `milestone_version`, `completed_count`, `phase_count`, `paused_at`, `state_path`, `roadmap_path`, `project_path`, `config_path`.
 
 ```bash
-DISCUSS_MODE=$($GSD_SDK query config-get workflow.discuss_mode 2>/dev/null || echo "discuss")
+DISCUSS_MODE=$(gsd_run query config-get workflow.discuss_mode 2>/dev/null || echo "discuss")
 ```
 
 If `project_exists` is false (no `.planning/` directory):
@@ -67,7 +56,7 @@ This minimizes orchestrator context usage.
 **Get comprehensive roadmap analysis (replaces manual parsing):**
 
 ```bash
-ROADMAP=$($GSD_SDK query roadmap.analyze)
+ROADMAP=$(gsd_run query roadmap.analyze)
 ```
 
 This returns structured JSON with:
@@ -86,7 +75,7 @@ Use this instead of manually reading/parsing ROADMAP.md.
 - Find the 2-3 most recent SUMMARY.md files
 - Use `summary-extract` for efficient parsing:
   ```bash
-  $GSD_SDK query summary-extract <path> --fields one_liner
+  gsd_run query summary-extract <path> --fields one_liner
   ```
 - This shows "what we've been working on"
   </step>
@@ -110,7 +99,7 @@ Use this instead of manually reading/parsing ROADMAP.md.
 
 ```bash
 # Get formatted progress bar
-PROGRESS_BAR=$($GSD_SDK query progress.bar --raw)
+PROGRESS_BAR=$(gsd_run query progress.bar --raw)
 ```
 
 Present:
@@ -158,7 +147,7 @@ CONTEXT: [✓ if has_context | - if not]
 Resolve `MVP_MODE` per phase via the centralized resolver. progress has no `--mvp` CLI flag (mode is inherited from the planned phase), so we omit `--cli-flag`:
 
 ```bash
-MVP_MODE=$($GSD_SDK query phase.mvp-mode "${PHASE_NUMBER}" --pick active)
+MVP_MODE=$(gsd_run query phase.mvp-mode "${PHASE_NUMBER}" --pick active)
 ```
 
 When `MVP_MODE=true`, the per-phase progress block adds a **user-flow status** sub-block sourced from the phase's PLAN.md task names. Each task whose name reads like a user-visible capability (e.g., "Register flow", "Login flow", "Password reset") is rendered as a status line:
@@ -179,6 +168,55 @@ When `MVP_MODE=false` (mode is null, absent, or the phase has no `**Mode:**` lin
 
 <step name="route">
 **Determine next action based on verified counts.**
+
+**Step 0: Resume-incomplete-phase invariant (Route 0)**
+
+Before any current-phase-scoped counting, scan ALL phases for incomplete execution. This catches the case where STATE.md's `current_phase` was advanced past the phase that actually has unfinished work (common after a mid-execution session death from hang, token exhaustion, or API disruption). Without this guard, the current-phase-scoped count in Step 1 would inspect the wrong phase and the routing would skip the unfinished work.
+
+**Skip if `--no-resume` or `--force` is present in `$ARGUMENTS`.**
+
+Scan all phases via the `$ROADMAP` JSON already loaded in `analyze_roadmap`. For each phase entry, compare `plans` length to `summaries` length using the same plans-without-summaries predicate as `determine_next_action` Route 4 (`plans.length > summaries.length`). Stop at the first (lowest-numbered) phase where the predicate is true. Record its phase number as `INCOMPLETE_PHASE`.
+
+If `$ROADMAP` is empty or the query failed, surface a warning rather than silently proceeding:
+
+```bash
+INCOMPLETE_PHASE=""
+if [ -z "$ROADMAP" ]; then
+  echo "⚠ WARNING: resume-incomplete-phase scan could not run (\$ROADMAP is empty)." >&2
+  echo "  The incomplete-phase invariant (#160) could not be verified." >&2
+  echo "  Review project state carefully before continuing." >&2
+else
+  for PHASE_NUM in $(echo "$ROADMAP" | jq -r '.phases[] | (.number // .phase_number)'); do
+    PHASE_DATA=$(echo "$ROADMAP" | jq --arg n "$PHASE_NUM" '.phases[] | select((.number // .phase_number) == ($n | tonumber))')
+    PLAN_COUNT=$(echo "$PHASE_DATA" | jq '(.plans // []) | length')
+    SUMMARY_COUNT=$(echo "$PHASE_DATA" | jq '(.summaries // []) | length')
+    if [ "${PLAN_COUNT:-0}" -gt "${SUMMARY_COUNT:-0}" ]; then
+      INCOMPLETE_PHASE="$PHASE_NUM"
+      break
+    fi
+  done
+fi
+```
+
+**If `INCOMPLETE_PHASE` is non-empty:** emit a one-line resume notice in the routing output and route to `/gsd:execute-phase ${INCOMPLETE_PHASE}` instead of running Step 1's current-phase routing. The progress report (already displayed by the `report` step above) gives the user full project status before this routing decision is shown.
+
+```
+---
+
+## ▶ Next Up — Resuming incomplete Phase ${INCOMPLETE_PHASE}
+
+`/clear` then:
+
+`/gsd:execute-phase ${INCOMPLETE_PHASE} ${GSD_WS}`
+
+(plans without summaries detected; use --no-resume to skip this check and route by current_phase instead; --force to skip all gates)
+
+---
+```
+
+Then exit the route step. Do NOT run Steps 1 through Routes A-F.
+
+**If `INCOMPLETE_PHASE` is empty:** continue to Step 1.
 
 **Step 1: Count plans, summaries, and issues in current phase**
 
@@ -210,7 +248,7 @@ Track:
 Scan ALL phases in the current milestone for outstanding verification debt using the CLI (which respects milestone boundaries via `getMilestonePhaseFilter`):
 
 ```bash
-DEBT=$($GSD_SDK query audit-uat --raw 2>/dev/null)
+DEBT=$(gsd_run query audit-uat --raw 2>/dev/null)
 ```
 
 Parse JSON for `summary.total_items` and `summary.total_files`.
@@ -273,7 +311,7 @@ Check if `{phase_num}-CONTEXT.md` exists in phase directory.
 Check if current phase has UI indicators:
 
 ```bash
-PHASE_SECTION=$($GSD_SDK query roadmap.get-phase "${CURRENT_PHASE}" 2>/dev/null)
+PHASE_SECTION=$(gsd_run query roadmap.get-phase "${CURRENT_PHASE}" 2>/dev/null)
 PHASE_HAS_UI=$(echo "$PHASE_SECTION" | grep -qi "UI hint.*yes" && echo "true" || echo "false")
 ```
 
@@ -419,7 +457,7 @@ Read ROADMAP.md to get the next phase's name and goal.
 Check if next phase has UI indicators:
 
 ```bash
-NEXT_PHASE_SECTION=$($GSD_SDK query roadmap.get-phase "$((Z+1))" 2>/dev/null)
+NEXT_PHASE_SECTION=$(gsd_run query roadmap.get-phase "$((Z+1))" 2>/dev/null)
 NEXT_HAS_UI=$(echo "$NEXT_PHASE_SECTION" | grep -qi "UI hint.*yes" && echo "true" || echo "false")
 ```
 
