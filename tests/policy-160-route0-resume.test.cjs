@@ -241,21 +241,21 @@ describe('Route 0: resume_incomplete_phase invariant (#160)', () => {
 
     // ── SHOULD-FIX 2: SDK form and fail-closed error surfacing ──
 
-    test('scan uses $GSD_SDK (canonical resolver form, not bare gsd-sdk)', () => {
+    test('scan uses gsd_run (canonical resolver form, not bare gsd-sdk)', () => {
       const content = fs.readFileSync(nextMdPath, 'utf8');
       const route0Start = content.indexOf('name="resume_incomplete_phase"');
       const route0End = content.indexOf('</step>', route0Start);
       const route0Block = content.slice(route0Start, route0End);
-      // Must use $GSD_SDK, not bare gsd-sdk
+      // Must use gsd_run, not bare gsd-sdk
       assert.ok(
-        route0Block.includes('$GSD_SDK'),
-        'Route 0 scan must use $GSD_SDK (canonical resolver), not bare gsd-sdk'
+        route0Block.includes('gsd_run'),
+        'Route 0 scan must use gsd_run (canonical resolver), not bare gsd-sdk'
       );
       // Must NOT use bare gsd-sdk (without $)
       const bareGsdSdkPattern = /(?<!\$)gsd-sdk/;
       assert.ok(
         !bareGsdSdkPattern.test(route0Block),
-        'Route 0 must not use bare gsd-sdk — use $GSD_SDK to match the file convention'
+        'Route 0 must not use bare gsd-sdk — use gsd_run to match the file convention'
       );
     });
 
