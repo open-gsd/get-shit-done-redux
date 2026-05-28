@@ -441,10 +441,23 @@ function forEachArchivedPhaseToken(planBase, onPhase) {
 }
 
 function getActiveMilestoneArchiveDir(planBase) {
+  // Knuth invariant: the resolver answers exactly one question —
+  // "what archive directory holds the active milestone's phases?"
+  // Answer space: <dir> | null.
+  //
+  // When STATE.md is present and names a milestone:
+  //   - If a matching milestones/<vX.Y>-phases/ directory exists → return it.
+  //   - If no matching directory exists → return null. The active milestone
+  //     has no archive yet (phases live in flat phases/). Falling through to
+  //     an older milestone's archive is wrong and produces W007 false positives.
+  //
+  // The version-sort fallback to the newest archive fires ONLY when STATE.md is
+  // absent or unparseable — not when it cleanly names an unarchived milestone.
+
   const archiveDirs = listMilestoneArchiveDirs(planBase);
   if (archiveDirs.length === 0) return null;
 
-  // Prefer STATE.md milestone when it maps to an on-disk archive dir.
+  // STATE.md present and parseable: match wins, no-match returns null.
   try {
     const statePath = path.join(planBase, 'STATE.md');
     if (fs.existsSync(statePath)) {
@@ -453,12 +466,13 @@ function getActiveMilestoneArchiveDir(planBase) {
       if (m && m[1]) {
         const milestone = m[1].trim();
         const candidate = path.join(planBase, 'milestones', `${milestone}-phases`);
-        if (archiveDirs.includes(candidate)) return candidate;
+        // Return the matching archive, or null if the active milestone has no archive yet.
+        return archiveDirs.includes(candidate) ? candidate : null;
       }
     }
-  } catch { /* intentionally empty */ }
+  } catch { /* intentionally empty — fall through to version-sort below */ }
 
-  // Fallback when STATE.md is absent/stale: highest (most recent) archive by version-ish name.
+  // Fallback: STATE.md is absent or unparseable — highest (most recent) archive by version-ish name.
   return archiveDirs[archiveDirs.length - 1];
 }
 
