@@ -347,6 +347,53 @@ describe('runtime-launcher-parity (#373)', () => {
     }
   });
 
+  // ─── (G) ~/.claude fallback arm is present (#211) ───────────────────────────
+  test('(G) snippet and all propagated workflow .md files contain the $HOME/.claude fallback arm between PATH check and hard error', () => {
+    // The resolution order must be:
+    //   (1) local/RUNTIME_DIR  →  (2) PATH  →  (3) $HOME/.claude/get-shit-done/bin  →  (4) hard error
+    // We probe for .claude/get-shit-done/bin (using ${_GSD_SHIM_NAME} indirection)
+    // between the `command -v gsd-tools` elif and the hard-error else branch.
+    const CLAUDE_HOME_PROBE = '.claude/get-shit-done/bin/';
+
+    // Assert snippet itself contains the probe
+    const snippetContent = fs.readFileSync(SNIPPET_FILE, 'utf8');
+    assert.ok(
+      snippetContent.includes(CLAUDE_HOME_PROBE),
+      `_runtime-launcher.snippet.sh must contain the $HOME/.claude fallback arm (probing "${CLAUDE_HOME_PROBE}"). ` +
+        `Add an elif arm that checks $HOME/.claude/get-shit-done/bin/\${_GSD_SHIM_NAME} before the hard-error else.`,
+    );
+
+    // Assert the probe appears BEFORE the hard-error text in the snippet
+    const probePos = snippetContent.indexOf(CLAUDE_HOME_PROBE);
+    const errorPos = snippetContent.indexOf('exit 1');
+    assert.ok(
+      probePos < errorPos,
+      `The $HOME/.claude fallback arm (at index ${probePos}) must appear before "exit 1" (at index ${errorPos}) in the snippet.`,
+    );
+
+    // Assert every propagated workflow .md file that uses gsd_run also contains the probe
+    const files = collectWorkflowFiles();
+    const missing = [];
+    for (const f of files) {
+      const content = fs.readFileSync(f, 'utf8');
+      const blocks = extractShellBlocks(content);
+      const allBlockLines = blocks.flatMap((b) => b.lines);
+      const fileHasGsdRun = allBlockLines.some((l) => /\bgsd_run\b/.test(l));
+      if (!fileHasGsdRun) continue;
+      const allContent = allBlockLines.join('\n');
+      if (!allContent.includes(CLAUDE_HOME_PROBE)) {
+        missing.push(path.relative(WORKFLOWS_DIR, f));
+      }
+    }
+    assert.deepStrictEqual(
+      missing,
+      [],
+      `These workflow files use gsd_run but are missing the $HOME/.claude fallback arm ("${CLAUDE_HOME_PROBE}"). ` +
+        `Run \`node scripts/sync-runtime-launcher.cjs\` to propagate:\n` +
+        missing.join('\n'),
+    );
+  });
+
   // ─── (F) Regression locks: no /gsd-tools substring; no do.md dispatcher false-positive ──
   test('(F) snippet has no /gsd-tools substring; do.md has no /gsd[:-][a-z] matches', () => {
     // (F1) The snippet must not contain the literal substring /gsd-tools.
