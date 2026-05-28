@@ -211,7 +211,6 @@ if (fs.existsSync(LOCKFILE)) {
     const res = spawnSync('npm', ['ci', '--dry-run'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf8',
-      timeout: 60_000,
     });
     if (res.status === 0) {
       addCheck('lockfile-sync', 'pass', 'package-lock.json is in sync with package.json');
