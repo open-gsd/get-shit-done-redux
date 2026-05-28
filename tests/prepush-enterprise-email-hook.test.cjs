@@ -14,6 +14,46 @@ function writeExec(filePath, content) {
   fs.writeFileSync(filePath, content, { mode: 0o755 });
 }
 
+/**
+ * Write a mock executable into binDir with cross-platform shims.
+ *
+ * On Windows, bash (Git Bash / MSYS2) PATH scanning finds extensionless files,
+ * but cmd.exe and Win32 process creation use PATHEXT (.CMD, .EXE, etc.).
+ * When a bash hook script calls `git` inside a Node `execFileSync('bash', ...)`
+ * invocation on Windows, both resolution paths may fire depending on where the
+ * shell delegates execution — so we need all three shim files.
+ *
+ * Pattern: npm/cmd-shim (https://github.com/npm/cmd-shim) — generates
+ * <name>, <name>.cmd, <name>.ps1 per bin. Used for test mocking by
+ * stevemao/mock-bin (https://github.com/stevemao/mock-bin), AppVeyor CI green.
+ *
+ * MSYS2_PATH_TYPE=inherit does NOT work here because it is only read in
+ * /etc/profile (login shell path). `execFileSync('bash', ...)` launches bash
+ * non-interactively without --login, so /etc/profile is never sourced:
+ * https://github.com/msys2/MSYS2-packages/blob/master/filesystem/profile
+ */
+function writeMockBin(binDir, name, bashBody) {
+  // 1. Extensionless bash script — bash PATH scan picks this up.
+  writeExec(path.join(binDir, name), bashBody);
+
+  if (process.platform === 'win32') {
+    // 2. .cmd — cmd.exe / PATHEXT / Win32 spawn resolution.
+    //    Delegates to the extensionless script via bash so mock logic stays DRY.
+    //    cmd-shim pattern: https://github.com/npm/cmd-shim
+    fs.writeFileSync(
+      path.join(binDir, `${name}.cmd`),
+      `@SETLOCAL\r\n@bash "%~dp0${name}" %*\r\n`,
+      { encoding: 'utf-8' },
+    );
+    // 3. .ps1 — PowerShell PATH resolution (completeness, matches cmd-shim surface).
+    fs.writeFileSync(
+      path.join(binDir, `${name}.ps1`),
+      `#!/usr/bin/env pwsh\n& bash "$PSScriptRoot/${name}" $args\n`,
+      { encoding: 'utf-8' },
+    );
+  }
+}
+
 describe('.githooks/pre-push enterprise email guard', () => {
   test('blocks push when any to-be-pushed commit matches local blocked regex', (t) => {
     const tmpDir = createTempDir('gsd-prepush-hook-');
@@ -22,7 +62,7 @@ describe('.githooks/pre-push enterprise email guard', () => {
     const binDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
 
-    writeExec(path.join(binDir, 'git'), `#!/usr/bin/env bash
+    writeMockBin(binDir, 'git', `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == "rev-list" ]]; then
   echo "c1"
@@ -46,18 +86,6 @@ exit 1
         cwd: ROOT,
         env: {
           ...process.env,
-          // MSYS2_PATH_TYPE=inherit prevents Git Bash (MSYS2) on Windows from
-          // prepending its own system directories (/mingw64/bin, /usr/bin, /bin)
-          // ahead of the Windows PATH entries. Without this, the real git binary
-          // in MSYS2 system dirs takes priority over the mock git stub in binDir
-          // even though binDir is first in the Windows PATH we pass here. The
-          // real git rejects placeholder SHAs (refs-local-sha, refs-remote-sha)
-          // with a fatal "ambiguous argument" error instead of returning the
-          // fixture commit list from the mock stub.
-          // With inherit, MSYS2 uses only the converted Windows PATH, keeping
-          // binDir first. On macOS/Linux this variable is ignored.
-          // Source: https://www.msys2.org/wiki/MSYS2-introduction/#path
-          MSYS2_PATH_TYPE: 'inherit',
           PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
           GSD_BLOCKED_AUTHOR_REGEX: '@example-corp\\.com$',
         },
@@ -74,7 +102,7 @@ exit 1
     const binDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
 
-    writeExec(path.join(binDir, 'git'), `#!/usr/bin/env bash
+    writeMockBin(binDir, 'git', `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == "rev-list" ]]; then
   echo "c1"
@@ -92,9 +120,6 @@ exit 1
       cwd: ROOT,
       env: {
         ...process.env,
-        // See comment above — same MSYS2 system-dir prepend fix applies here.
-        // Source: https://www.msys2.org/wiki/MSYS2-introduction/#path
-        MSYS2_PATH_TYPE: 'inherit',
         PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
         GSD_BLOCKED_AUTHOR_REGEX: '@example-corp\\.com$',
       },

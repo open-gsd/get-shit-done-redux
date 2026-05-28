@@ -14,6 +14,56 @@ function writeExec(filePath, content) {
   fs.writeFileSync(filePath, content, { mode: 0o755 });
 }
 
+/**
+ * Write a mock executable into binDir.
+ *
+ * On Windows, `bash` (Git Bash / MSYS2) resolves commands by scanning PATH for
+ * files with no extension *before* checking PATHEXT-registered extensions.
+ * However, `cmd.exe` and Windows Win32 process creation (used by npm scripts,
+ * PowerShell, etc.) resolve via PATHEXT (.COM, .EXE, .BAT, .CMD).  When both
+ * are in play — a bash hook script that calls `git` or `npm`, running inside
+ * a node `execFileSync('bash', ...)` — we need both resolution paths covered.
+ *
+ * The canonical pattern used by npm itself is the cmd-shim package:
+ * https://github.com/npm/cmd-shim
+ * It generates three files per bin: <name> (extensionless bash shim),
+ * <name>.cmd (Windows batch), and <name>.ps1 (PowerShell).
+ * The same pattern is used for test mocking by stevemao/mock-bin:
+ * https://github.com/stevemao/mock-bin (AppVeyor Windows CI green).
+ *
+ * MSYS2_PATH_TYPE=inherit is insufficient because it is read only in
+ * /etc/profile (login-shell path), which `execFileSync('bash', ...)` never
+ * sources — bash launched non-interactively without --login skips /etc/profile
+ * entirely:
+ * https://github.com/msys2/MSYS2-packages/blob/master/filesystem/profile
+ *
+ * The reliable fix is to write all three shim files so that regardless of
+ * which resolution mechanism fires, it finds and runs the mock body.
+ */
+function writeMockBin(binDir, name, bashBody) {
+  // 1. Extensionless bash script — bash's own PATH scan picks this up.
+  writeExec(path.join(binDir, name), bashBody);
+
+  if (process.platform === 'win32') {
+    // 2. .cmd batch wrapper — cmd.exe / PATHEXT resolution and Win32 spawn.
+    //    Uses bash to delegate to the extensionless script body so the mock
+    //    logic is kept in one place.
+    //    cmd-shim pattern: https://github.com/npm/cmd-shim
+    fs.writeFileSync(
+      path.join(binDir, `${name}.cmd`),
+      `@SETLOCAL\r\n@bash "%~dp0${name}" %*\r\n`,
+      { encoding: 'utf-8' },
+    );
+    // 3. .ps1 wrapper — PowerShell PATH resolution (less common in CI but
+    //    included for completeness, matching the full cmd-shim surface).
+    fs.writeFileSync(
+      path.join(binDir, `${name}.ps1`),
+      `#!/usr/bin/env pwsh\n& bash "$PSScriptRoot/${name}" $args\n`,
+      { encoding: 'utf-8' },
+    );
+  }
+}
+
 describe('.githooks/pre-commit alias drift guard', () => {
   test('runs npm check when staged files include command-manifest/alias artifacts', (t) => {
     const tmpDir = createTempDir('gsd-precommit-hook-');
@@ -22,8 +72,8 @@ describe('.githooks/pre-commit alias drift guard', () => {
     const binDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
 
-    writeExec(path.join(binDir, 'git'), `#!/usr/bin/env bash\nprintf "%s\\n" "${'sdk/src/query/command-manifest.phase.ts'}"\n`);
-    writeExec(path.join(binDir, 'npm'), `#!/usr/bin/env bash\nprintf "called" > "$GSD_TEST_NPM_MARKER"\n`);
+    writeMockBin(binDir, 'git', `#!/usr/bin/env bash\nprintf "%s\\n" "${'sdk/src/query/command-manifest.phase.ts'}"\n`);
+    writeMockBin(binDir, 'npm', `#!/usr/bin/env bash\nprintf "called" > "$GSD_TEST_NPM_MARKER"\n`);
 
     const marker = path.join(tmpDir, 'npm-called.txt');
 
@@ -31,15 +81,6 @@ describe('.githooks/pre-commit alias drift guard', () => {
       cwd: ROOT,
       env: {
         ...process.env,
-        // MSYS2_PATH_TYPE=inherit prevents Git Bash (MSYS2) on Windows from
-        // prepending its own system directories (/mingw64/bin, /usr/bin, /bin)
-        // ahead of the Windows PATH entries. Without this, the real git/npm
-        // binaries in MSYS2 system dirs take priority over the mock stubs in
-        // binDir even though binDir is first in the Windows PATH we pass here.
-        // With inherit, MSYS2 uses only the converted Windows PATH, keeping
-        // binDir first. On macOS/Linux this variable is ignored.
-        // Source: https://www.msys2.org/wiki/MSYS2-introduction/#path
-        MSYS2_PATH_TYPE: 'inherit',
         PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
         GSD_TEST_NPM_MARKER: marker,
       },
@@ -56,8 +97,8 @@ describe('.githooks/pre-commit alias drift guard', () => {
     const binDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
 
-    writeExec(path.join(binDir, 'git'), `#!/usr/bin/env bash\nprintf "%s\\n" "README.md"\n`);
-    writeExec(path.join(binDir, 'npm'), `#!/usr/bin/env bash\nprintf "called" > "$GSD_TEST_NPM_MARKER"\n`);
+    writeMockBin(binDir, 'git', `#!/usr/bin/env bash\nprintf "%s\\n" "README.md"\n`);
+    writeMockBin(binDir, 'npm', `#!/usr/bin/env bash\nprintf "called" > "$GSD_TEST_NPM_MARKER"\n`);
 
     const marker = path.join(tmpDir, 'npm-called.txt');
 
@@ -65,9 +106,6 @@ describe('.githooks/pre-commit alias drift guard', () => {
       cwd: ROOT,
       env: {
         ...process.env,
-        // See comment above — same MSYS2 system-dir prepend fix applies here.
-        // Source: https://www.msys2.org/wiki/MSYS2-introduction/#path
-        MSYS2_PATH_TYPE: 'inherit',
         PATH: `${binDir}${path.delimiter}${process.env.PATH}`,
         GSD_TEST_NPM_MARKER: marker,
       },
