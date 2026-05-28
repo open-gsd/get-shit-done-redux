@@ -9810,8 +9810,8 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   // For non-Claude runtimes, set resolve_model_ids: "omit" in ~/.gsd/defaults.json
   // so resolveModelInternal() returns '' instead of Claude aliases (opus/sonnet/haiku)
   // that the runtime can't resolve. Users can still use model_overrides for explicit IDs.
-  // See #1156.
-  if (runtime !== 'claude') {
+  // See #1156. Guard matches the #130-class pattern on configureOpencodePermissions above.
+  if (runtime !== 'claude' && !process.env.GSD_TEST_MODE) {
     const gsdDir = path.join(os.homedir(), '.gsd');
     const defaultsPath = path.join(gsdDir, 'defaults.json');
     try {
