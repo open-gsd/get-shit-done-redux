@@ -12,6 +12,14 @@ const HOOK_PATH = path.join(ROOT, '.githooks', 'pre-commit');
 
 function writeExec(filePath, content) {
   fs.writeFileSync(filePath, content, { mode: 0o755 });
+  if (process.platform === 'win32') {
+    // Node's fs.writeFileSync mode=0o755 is a no-op for the execute bit on NTFS
+    // per https://nodejs.org/docs/latest-v22.x/api/fs.html — "on Windows only
+    // the write permission can be changed". Bash's access(X_OK) skips the file.
+    // The canonical MSYS2/Cygwin pattern is to chmod via the POSIX emulation layer:
+    const posixPath = filePath.replace(/\\/g, '/');
+    execFileSync('bash', ['-c', `chmod +x "${posixPath}"`], { stdio: 'pipe' });
+  }
 }
 
 /**
