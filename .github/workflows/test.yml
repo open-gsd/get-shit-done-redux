@@ -209,9 +209,6 @@ jobs:
     if: needs.changes.outputs.code_changed == 'true' && needs.changes.outputs.full_matrix == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
     env:
       GSD_PLUGIN_ROOT: .ci-gsd-plugin-root-disabled
     strategy:
@@ -244,12 +241,14 @@ jobs:
           token: ${{ github.token }}
 
       - name: Guard — require GitHub-hosted runner
+        shell: ${{ matrix.shell }}
         run: node scripts/ci-guard-runner.cjs
 
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+        shell: ${{ matrix.shell }}
         run: node scripts/ci-rebase-check.cjs
 
       - name: Set up Node.js ${{ matrix.node-version }}
@@ -259,21 +258,27 @@ jobs:
           cache: 'npm'
 
       - name: Environment check
+        shell: ${{ matrix.shell }}
         run: npm run check:env
 
       - name: Install dependencies
+        shell: ${{ matrix.shell }}
         run: npm ci
 
       - name: Dependency integrity gate
+        shell: ${{ matrix.shell }}
         run: node scripts/check-npm-integrity.cjs
 
       - name: Run unit tests
+        shell: ${{ matrix.shell }}
         run: npm run test:unit
 
       - name: Run integration tests
+        shell: ${{ matrix.shell }}
         run: npm run test:integration
 
       - name: Run security tests
+        shell: ${{ matrix.shell }}
         run: npm run test:security
 
   coverage:
