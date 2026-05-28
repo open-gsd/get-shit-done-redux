@@ -83,7 +83,12 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           FULL_ONLY: ${{ matrix.full_only }}
-        run: node scripts/ci-smoke-skip.cjs
+        run: |
+          if [ "$EVENT" = "pull_request" ] && [ "$FULL_ONLY" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         if: steps.skip.outputs.skip != 'true'
