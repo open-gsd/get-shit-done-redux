@@ -16,9 +16,10 @@ const path = require('path');
 
 function run(cmd, args, opts) {
   try {
-    return execFileSync(cmd, args, { stdio: 'inherit', ...opts });
+    execFileSync(cmd, args, { stdio: 'inherit', ...opts });
+    return true; // success sentinel; execFileSync returns null with stdio:'inherit'
   } catch (e) {
-    return null; // caller checks return value
+    return false;
   }
 }
 
@@ -52,7 +53,7 @@ if (token && repo) {
 let fetched = false;
 for (let attempt = 1; attempt <= 3; attempt++) {
   const result = run('git', ['fetch', 'origin', baseBranch]);
-  if (result !== null) {
+  if (result) {
     fetched = true;
     break;
   }
