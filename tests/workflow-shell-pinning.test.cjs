@@ -21,7 +21,7 @@ process.env.GSD_TEST_MODE = '1';
  * includes a windows target (to catch unshelled npm steps in sibling jobs that
  * could be copy-pasted to a windows context).
  *
- * Acceptable shell values: bash, pwsh, sh, cmd.
+ * Acceptable shell values: bash, pwsh, sh, cmd, zsh.
  */
 
 const { test, describe } = require('node:test');

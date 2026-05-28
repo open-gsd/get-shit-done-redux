@@ -83,6 +83,12 @@ function parseMatrixIncludes(src) {
         current.full_only = foMatch[1].trim() === 'true';
         continue;
       }
+      // `shell:` field of current entry (12-space indent)
+      const shellMatch = line.match(/^            shell:\s+(.+)/);
+      if (shellMatch && current) {
+        current.shell = shellMatch[1].trim();
+        continue;
+      }
     }
   }
   // Flush final entry
@@ -131,6 +137,50 @@ describe('bug-428: install-smoke matrix must include windows-latest', () => {
       true,
       `Expected windows-latest entry to have full_only: true so it is skipped on PR triggers. ` +
       `Got: ${JSON.stringify(windowsEntry)}`
+    );
+  });
+
+  test('ubuntu rows carry shell: bash', () => {
+    const ubuntuEntries = includes.filter(e => e.os === 'ubuntu-latest');
+    assert.ok(
+      ubuntuEntries.length > 0,
+      `Expected at least one ubuntu-latest entry but found none. Entries: ${JSON.stringify(includes)}`
+    );
+    for (const entry of ubuntuEntries) {
+      assert.strictEqual(
+        entry.shell,
+        'bash',
+        `Expected ubuntu-latest entry to have shell: bash but got shell: ${entry.shell}. ` +
+        `Entry: ${JSON.stringify(entry)}`
+      );
+    }
+  });
+
+  test('macos row carries shell: zsh', () => {
+    const macosEntry = includes.find(e => e.os === 'macos-latest');
+    assert.ok(
+      macosEntry !== undefined,
+      `Expected a macos-latest entry but found none. Entries: ${JSON.stringify(includes)}`
+    );
+    assert.strictEqual(
+      macosEntry.shell,
+      'zsh',
+      `Expected macos-latest entry to have shell: zsh (macOS default since 10.15+) but got shell: ${macosEntry.shell}. ` +
+      `Entry: ${JSON.stringify(macosEntry)}`
+    );
+  });
+
+  test('windows row carries shell: pwsh', () => {
+    const windowsEntry = includes.find(e => e.os === 'windows-latest');
+    assert.ok(
+      windowsEntry !== undefined,
+      `Expected a windows-latest entry but found none. Entries: ${JSON.stringify(includes)}`
+    );
+    assert.strictEqual(
+      windowsEntry.shell,
+      'pwsh',
+      `Expected windows-latest entry to have shell: pwsh (native Windows PowerShell 7) but got shell: ${windowsEntry.shell}. ` +
+      `Entry: ${JSON.stringify(windowsEntry)}`
     );
   });
 });

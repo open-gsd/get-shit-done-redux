@@ -64,15 +64,19 @@ jobs:
           - os: ubuntu-latest
             node-version: 22
             full_only: false
+            shell: bash
           - os: ubuntu-latest
             node-version: 24
             full_only: true
+            shell: bash
           - os: macos-latest
             node-version: 24
             full_only: true
+            shell: zsh
           - os: windows-latest
             node-version: 24
             full_only: true
+            shell: pwsh
 
     steps:
       - name: Skip full-only matrix entry on PR
@@ -129,7 +133,7 @@ jobs:
 
       - name: Install root deps
         if: steps.skip.outputs.skip != 'true'
-        shell: bash
+        shell: ${{ matrix.shell }}
         run: npm ci
 
       - name: Pack root tarball
