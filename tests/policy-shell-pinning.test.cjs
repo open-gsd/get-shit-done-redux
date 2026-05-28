@@ -491,3 +491,65 @@ jobs:
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test 8 — Counter-test: two macos-latest matrix.include rows where
+// row 1 has shell: zsh (compliant) and row 2 has shell: bash (violation).
+// Guards against the dedup bug where runner-label-only deduplication would
+// collapse both rows into one, hiding the second row's policy violation.
+// Expected: EXACTLY ONE WRONG_SHELL_FOR_OS violation (on the second row).
+// ---------------------------------------------------------------------------
+describe('counter-test: two macos-latest rows — dedup must not hide second row violation', () => {
+  const TWO_MACOS_ROWS_YAML = `
+name: Two macOS Rows
+jobs:
+  build:
+    runs-on: \${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            node-version: 22
+            shell: zsh
+          - os: macos-latest
+            node-version: 24
+            shell: bash
+    steps:
+      - name: Run tests
+        shell: \${{ matrix.shell }}
+        run: npm test
+`;
+
+  test('two macos-latest matrix.include rows (zsh + bash) produce exactly one WRONG_SHELL_FOR_OS violation on the second row', () => {
+    const result = inspectWorkflow(TWO_MACOS_ROWS_YAML, { filePath: '<synthetic-two-macos-rows>' });
+
+    const violations = result.jobs
+      .flatMap(j => j.steps)
+      .filter(s => s.violation !== null);
+
+    assert.strictEqual(
+      violations.length,
+      1,
+      `Expected exactly 1 violation (second macos-latest row shell:bash → WRONG_SHELL_FOR_OS) but got ${violations.length}: ` +
+      violations.map(v => `runner=${v.runner} shell=${v.effectiveShell} type=${v.violation}`).join(', ')
+    );
+
+    assert.strictEqual(
+      violations[0].violation,
+      VIOLATION.WRONG_SHELL_FOR_OS,
+      `Expected WRONG_SHELL_FOR_OS but got ${violations[0].violation}`
+    );
+
+    assert.strictEqual(
+      violations[0].runner,
+      'macos-latest',
+      `Expected violation runner to be macos-latest but got ${violations[0].runner}`
+    );
+
+    assert.strictEqual(
+      violations[0].effectiveShell,
+      'bash',
+      `Expected effectiveShell to be bash (the violating row) but got ${violations[0].effectiveShell}`
+    );
+  });
+});

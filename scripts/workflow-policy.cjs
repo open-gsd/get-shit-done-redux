@@ -71,19 +71,19 @@ function expandRunsOn(runsOnRaw, matrix) {
 
   // matrix.include entries carry complete row context — prefer them as they
   // contain all keys (os, node-version, shell, full_only, etc.).
+  // Each include row is a distinct CI realization and must be validated
+  // independently — even if two rows share the same runner label, their
+  // contexts (and therefore effective shells) may differ.
   if (Array.isArray(matrix.include)) {
     for (const entry of matrix.include) {
       if (entry && entry[key] != null) {
         const runner = String(entry[key]);
-        // Avoid duplicating runners already added from base list
-        if (!realizations.find(r => r.runner === runner)) {
-          // Clone all keys from include row as the realization context
-          const context = {};
-          for (const [k, v] of Object.entries(entry)) {
-            context[k] = v != null ? String(v) : '';
-          }
-          realizations.push({ runner, resolvable: true, context });
+        // Clone all keys from include row as the realization context
+        const context = {};
+        for (const [k, v] of Object.entries(entry)) {
+          context[k] = v != null ? String(v) : '';
         }
+        realizations.push({ runner, resolvable: true, context });
       }
     }
   }
