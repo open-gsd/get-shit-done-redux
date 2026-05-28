@@ -39,7 +39,6 @@ jobs:
 
       - name: Classify changed paths
         id: scope
-        shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
@@ -94,19 +93,14 @@ jobs:
         with:
           node-version: 24
       - name: Lint — skill dependency graph
-        shell: bash
         run: npm run lint:skill-deps
       - name: Lint — no source-grep tests
-        shell: bash
         run: node scripts/lint-no-source-grep.cjs
       - name: Lint — test file count per module
-        shell: bash
         run: node scripts/lint-test-file-count.cjs
       - name: Lint — command contract (ADR-0002)
-        shell: bash
         run: node scripts/lint-command-contract.cjs
       - name: Lint — PR checks use projectDir
-        shell: bash
         run: node scripts/lint-pr-check-project-dir.cjs
 
   test:
@@ -154,42 +148,13 @@ jobs:
           token: ${{ github.token }}
 
       - name: Guard — require GitHub-hosted runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
-            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
-            exit 1
-          fi
+        run: node scripts/ci-guard-runner.cjs
 
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
-        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.email "ci@gsd-redux"
-          git config user.name "CI Rebase Check"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
-          for attempt in 1 2 3; do
-            if git fetch origin "$BASE_BRANCH"; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::git fetch origin $BASE_BRANCH failed after 3 attempts."
-              exit 1
-            fi
-            sleep $((attempt * 4))
-          done
-          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
-            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
-            echo "::error::Conflicting files:"
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
-          fi
+        run: node scripts/ci-rebase-check.cjs
 
       - name: Set up Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
@@ -198,77 +163,44 @@ jobs:
           cache: 'npm'
 
       - name: Environment check
-        shell: bash
         run: npm run check:env
 
       - name: Install dependencies
-        shell: bash
         run: npm ci
 
       - name: Dependency integrity gate
-        shell: bash
-        run: |
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+        run: node scripts/check-npm-integrity.cjs
 
       - name: Prepare scoped test list
         if: matrix.scope != 'full'
-        shell: bash
         env:
           TEST_SCOPE: ${{ matrix.scope }}
           TARGETED_TESTS: ${{ needs.changes.outputs.targeted_tests }}
           WINDOWS_TESTS: ${{ needs.changes.outputs.windows_tests }}
-        run: |
-          set -euo pipefail
-          case "$TEST_SCOPE" in
-            windows)
-              selected="$WINDOWS_TESTS"
-              ;;
-            targeted)
-              selected="$TARGETED_TESTS"
-              ;;
-            *)
-              echo "::error::Unknown test scope: $TEST_SCOPE"
-              exit 1
-              ;;
-          esac
-
-          if [ -z "${selected// }" ]; then
-            selected="tests/command-contract.test.cjs tests/commands.test.cjs tests/core.test.cjs tests/package-manifest.test.cjs"
-          fi
-
-          printf '%s\n' "$selected" | tr ' ' '\n' | sed '/^$/d' > .ci-selected-tests.txt
-          echo "Scoped tests:"
-          cat .ci-selected-tests.txt
+        run: node scripts/ci-prepare-test-scope.cjs
 
       - name: Run scoped tests
         if: matrix.scope != 'full'
-        shell: bash
         run: node scripts/run-tests.cjs --files-from .ci-selected-tests.txt
 
       - name: Run unit tests
         if: matrix.scope == 'full'
-        shell: bash
         run: npm run test:unit
 
       - name: Run integration tests
         if: matrix.scope == 'full'
-        shell: bash
         run: npm run test:integration
 
       - name: Run security tests
         if: matrix.scope == 'full'
-        shell: bash
         run: npm run test:security
 
       - name: Run install tests
         if: matrix.scope == 'full' && needs.changes.outputs.full_matrix == 'true'
-        shell: bash
         run: npm run test:install
 
       - name: Run slow tests
         if: matrix.scope == 'full' && needs.changes.outputs.full_matrix == 'true'
-        shell: bash
         run: npm run test:slow
 
   test-full:
@@ -306,42 +238,13 @@ jobs:
           token: ${{ github.token }}
 
       - name: Guard — require GitHub-hosted runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
-            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
-            exit 1
-          fi
+        run: node scripts/ci-guard-runner.cjs
 
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
-        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.email "ci@gsd-redux"
-          git config user.name "CI Rebase Check"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
-          for attempt in 1 2 3; do
-            if git fetch origin "$BASE_BRANCH"; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::git fetch origin $BASE_BRANCH failed after 3 attempts."
-              exit 1
-            fi
-            sleep $((attempt * 4))
-          done
-          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
-            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
-            echo "::error::Conflicting files:"
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
-          fi
+        run: node scripts/ci-rebase-check.cjs
 
       - name: Set up Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
@@ -350,29 +253,21 @@ jobs:
           cache: 'npm'
 
       - name: Environment check
-        shell: bash
         run: npm run check:env
 
       - name: Install dependencies
-        shell: bash
         run: npm ci
 
       - name: Dependency integrity gate
-        shell: bash
-        run: |
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+        run: node scripts/check-npm-integrity.cjs
 
       - name: Run unit tests
-        shell: bash
         run: npm run test:unit
 
       - name: Run integration tests
-        shell: bash
         run: npm run test:integration
 
       - name: Run security tests
-        shell: bash
         run: npm run test:security
 
   coverage:
@@ -389,54 +284,22 @@ jobs:
           persist-credentials: true
           token: ${{ github.token }}
       - name: Guard — require GitHub-hosted runner
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${RUNNER_ENVIRONMENT:-}" != "github-hosted" ]; then
-            echo "::error::Expected github-hosted runner. RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT:-unset}"
-            exit 1
-          fi
+        run: node scripts/ci-guard-runner.cjs
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
-        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.email "ci@gsd-redux"
-          git config user.name "CI Rebase Check"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
-          for attempt in 1 2 3; do
-            if git fetch origin "$BASE_BRANCH"; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::git fetch origin $BASE_BRANCH failed after 3 attempts."
-              exit 1
-            fi
-            sleep $((attempt * 4))
-          done
-          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
-            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
-            git merge --abort
-            exit 1
-          fi
+        run: node scripts/ci-rebase-check.cjs
       - name: Set up Node.js 24
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
         with:
           node-version: 24
           cache: 'npm'
       - name: Install dependencies
-        shell: bash
         run: npm ci
       - name: Dependency integrity gate
-        shell: bash
-        run: |
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+        run: node scripts/check-npm-integrity.cjs
       - name: Unit coverage
-        shell: bash
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: npm run test:coverage:unit
@@ -463,7 +326,6 @@ jobs:
     timeout-minutes: 1
     steps:
       - name: Summarize required test gate
-        shell: bash
         env:
           CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
           CHANGES_RESULT: ${{ needs.changes.result }}

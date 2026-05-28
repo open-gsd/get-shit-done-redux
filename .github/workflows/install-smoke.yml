@@ -74,16 +74,10 @@ jobs:
     steps:
       - name: Skip full-only matrix entry on PR
         id: skip
-        shell: bash
         env:
           EVENT: ${{ github.event_name }}
           FULL_ONLY: ${{ matrix.full_only }}
-        run: |
-          if [ "$EVENT" = "pull_request" ] && [ "$FULL_ONLY" = "true" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: node scripts/ci-smoke-skip.cjs
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         if: steps.skip.outputs.skip != 'true'
@@ -102,20 +96,7 @@ jobs:
       # instead of a downstream build error that looks unrelated.
       - name: Rebase check — merge PR base branch into PR head
         if: steps.skip.outputs.skip != 'true' && github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.email "ci@gsd-redux"
-          git config user.name "CI Rebase Check"
-          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
-          git fetch origin "$BASE_BRANCH"
-          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
-            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
-            echo "::error::Conflicting files:"
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
-          fi
+        run: node scripts/ci-rebase-check.cjs
 
       - name: Set up Node.js ${{ matrix.node-version }}
         if: steps.skip.outputs.skip != 'true'
@@ -131,7 +112,6 @@ jobs:
       - name: Pack root tarball
         if: steps.skip.outputs.skip != 'true'
         id: pack
-        shell: bash
         run: |
           set -euo pipefail
           TARBALL=$(npm pack --silent)
@@ -141,7 +121,6 @@ jobs:
 
       - name: Ensure npm global bin is on PATH (CI runner default may differ)
         if: steps.skip.outputs.skip != 'true'
-        shell: bash
         run: |
           NPM_BIN="$(npm config get prefix)/bin"
           echo "$NPM_BIN" >> "$GITHUB_PATH"
@@ -149,7 +128,6 @@ jobs:
 
       - name: Install tarball globally
         if: steps.skip.outputs.skip != 'true'
-        shell: bash
         env:
           TARBALL: ${{ steps.pack.outputs.tarball }}
           WORKSPACE: ${{ github.workspace }}
@@ -170,7 +148,6 @@ jobs:
 
       - name: Assert gsd-tools resolves on PATH
         if: steps.skip.outputs.skip != 'true'
-        shell: bash
         run: |
           set -euo pipefail
           if ! command -v gsd-tools >/dev/null 2>&1; then
@@ -184,7 +161,6 @@ jobs:
 
       - name: Assert gsd-tools is executable
         if: steps.skip.outputs.skip != 'true'
-        shell: bash
         run: |
           set -euo pipefail
           gsd-tools --help
@@ -193,7 +169,6 @@ jobs:
       - name: Lifecycle smoke
         if: steps.skip.outputs.skip != 'true'
         id: lifecycle-smoke
-        shell: bash
         run: |
           set -euo pipefail
           node scripts/release-tarball-smoke.cjs --json | tee /tmp/release-smoke.json
@@ -226,20 +201,7 @@ jobs:
       # latest target.
       - name: Rebase check — merge PR base branch into PR head
         if: github.event_name == 'pull_request'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.email "ci@gsd-redux"
-          git config user.name "CI Rebase Check"
-          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
-          git fetch origin "$BASE_BRANCH"
-          if ! git merge --no-edit --no-ff "origin/$BASE_BRANCH"; then
-            echo "::error::This PR cannot cleanly merge origin/$BASE_BRANCH. Rebase your branch onto current $BASE_BRANCH and push again."
-            echo "::error::Conflicting files:"
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
-          fi
+        run: node scripts/ci-rebase-check.cjs
 
       - name: Set up Node.js 22
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
@@ -251,14 +213,12 @@ jobs:
         run: npm ci
 
       - name: Ensure npm global bin is on PATH
-        shell: bash
         run: |
           NPM_BIN="$(npm config get prefix)/bin"
           echo "$NPM_BIN" >> "$GITHUB_PATH"
           echo "npm global bin: $NPM_BIN"
 
       - name: Install from unpacked directory (no npm pack)
-        shell: bash
         run: |
           set -euo pipefail
           TMPDIR_ROOT=$(mktemp -d)
@@ -268,7 +228,6 @@ jobs:
           get-shit-done-redux --claude --local || true
 
       - name: Assert gsd-tools resolves on PATH after unpacked install
-        shell: bash
         run: |
           set -euo pipefail
           if ! command -v gsd-tools >/dev/null 2>&1; then
@@ -280,7 +239,6 @@ jobs:
           echo "✓ gsd-tools resolves at: $(command -v gsd-tools)"
 
       - name: Assert gsd-tools is executable after unpacked install
-        shell: bash
         run: |
           set -euo pipefail
           gsd-tools --help
