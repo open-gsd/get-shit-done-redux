@@ -95,7 +95,7 @@ This catches the common failure mode where a session died mid-execution (hang, t
 
 **Why Route 0 runs here (after Gates 1-3, before the prior-phase defer prompt):** This step is a hard invariant independent of `current_phase`'s value — it must run before any routing rule that reads `current_phase`. Gates 1-3 are cheap repo/state validity checks that must always run — skipping them on the resume path would risk advancing into a broken-state project. The prior-phase completeness-scan DEFER PROMPT, however, must NOT run in the default (no-flag) case when Route 0 is about to resume the phase automatically: that would force a double-decision (prompt first, then resume anyway), overriding the user's choice. Route 0 placed here means: default = resume silently (no defer prompt); `--no-resume` = skip Route 0 and fall through to the prior-phase defer prompt in `prior_phase_completeness`; `--force` = jump straight to `determine_next_action` at `safety_gates` (never reaches Route 0 or `prior_phase_completeness` at all).
 
-Scan ALL phases in ROADMAP order (lowest-numbered to highest) for incomplete-execution state. Use `$GSD_SDK query roadmap.analyze` to get the phase list, then for each phase number `N` query `$GSD_SDK query find-phase <N>` JSON and inspect its `plans` and `summaries` arrays. A phase is **incomplete-execution** when `plans.length > summaries.length` (at least one PLAN.md has no matching SUMMARY.md).
+Scan ALL phases in ROADMAP order (lowest-numbered to highest) for incomplete-execution state. Use `gsd_run query roadmap.analyze` to get the phase list, then for each phase number `N` query `gsd_run query find-phase <N>` JSON and inspect its `plans` and `summaries` arrays. A phase is **incomplete-execution** when `plans.length > summaries.length` (at least one PLAN.md has no matching SUMMARY.md).
 
 Stop at the first such phase. Record its phase number as `INCOMPLETE_PHASE`. This is the lowest-numbered phase that needs continued execution.
 
@@ -103,7 +103,7 @@ Illustrative bash:
 
 ```bash
 INCOMPLETE_PHASE=""
-ROADMAP_JSON=$($GSD_SDK query roadmap.analyze)
+ROADMAP_JSON=$(gsd_run query roadmap.analyze)
 if [ $? -ne 0 ] || [ -z "$ROADMAP_JSON" ]; then
   echo "⚠ WARNING: resume-incomplete-phase scan could not run (roadmap.analyze failed)." >&2
   echo "  The incomplete-phase invariant (#160) could not be verified." >&2
@@ -111,7 +111,7 @@ if [ $? -ne 0 ] || [ -z "$ROADMAP_JSON" ]; then
   # Fall through to prior_phase_completeness rather than silently skipping
 else
   for PHASE_NUM in $(echo "$ROADMAP_JSON" | jq -r '.phases[] | (.number // .phase_number // empty)'); do
-    PHASE_JSON=$($GSD_SDK query find-phase "$PHASE_NUM")
+    PHASE_JSON=$(gsd_run query find-phase "$PHASE_NUM")
     if [ $? -ne 0 ] || [ -z "$PHASE_JSON" ]; then
       echo "⚠ WARNING: Could not query phase $PHASE_NUM — skipping in resume scan." >&2
       continue
@@ -143,7 +143,7 @@ Then invoke via SlashCommand. Do not continue to subsequent steps.
 **Prior-phase completeness scan (runs when `--no-resume` was passed and Route 0 was skipped, or when Route 0 found no incomplete-execution phases in the default case). NOT reached under `--force` — that flag jumps directly to `determine_next_action` at `safety_gates`.**
 
 **Prior-phase completeness scan:**
-Scan all phases that precede the current phase in ROADMAP.md order for incomplete work. For each prior phase number `N`, use `$GSD_SDK query find-phase <N>` JSON (plans, summaries, incomplete_plans, etc.) to inspect that phase.
+Scan all phases that precede the current phase in ROADMAP.md order for incomplete work. For each prior phase number `N`, use `gsd_run query find-phase <N>` JSON (plans, summaries, incomplete_plans, etc.) to inspect that phase.
 
 Detect three categories of incomplete work:
 1. **Plans without summaries** — a PLAN.md exists in a prior phase directory but no matching SUMMARY.md exists (execution started but not completed).
@@ -291,7 +291,7 @@ Resume with: `/gsd:progress --next --auto` once resolved.
 - [ ] Default (no flag): Route 0 resumes incomplete phase silently, exits — user never sees the prior-phase defer prompt
 - [ ] `--no-resume`: Route 0 skipped, prior_phase_completeness defer prompt runs as before
 - [ ] `--force`: everything skipped (Gates, Route 0, prior_phase_completeness) → straight to `determine_next_action`
-- [ ] Scan uses `$GSD_SDK` (canonical resolver form); errors are surfaced rather than suppressed
+- [ ] Scan uses `gsd_run` (canonical resolver form); errors are surfaced rather than suppressed
 - [ ] Predicate is plans-without-summaries (`plans.length > summaries.length`) — consistent with `determine_next_action` Route 4
 - [ ] Next action correctly determined from routing rules
 - [ ] Command invoked immediately without user confirmation
