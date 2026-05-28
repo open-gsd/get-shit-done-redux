@@ -179,7 +179,7 @@ if (!currentNode) {
 const enginesNpm = pkgField('engines.npm');
 let currentNpm = '';
 try {
-  const res = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: 10_000 });
+  const res = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: 10_000, shell: process.platform === 'win32' });
   if (res.status === 0 && res.stdout) {
     currentNpm = res.stdout.trim();
   }
@@ -215,6 +215,7 @@ if (fs.existsSync(LOCKFILE)) {
     const res = spawnSync(npmCmd, ['ci', '--dry-run'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf8',
+      shell: process.platform === 'win32',
     });
     if (res.status === 0) {
       addCheck('lockfile-sync', 'pass', 'package-lock.json is in sync with package.json');
