@@ -189,8 +189,7 @@ jobs:
       - name: Install and test
         run: |
           npm ci
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+          node scripts/check-npm-integrity.cjs
           npm run test:coverage:unit
 
       - name: Commit pre-release version bump
@@ -321,8 +320,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: |
           npm ci
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+          node scripts/check-npm-integrity.cjs
           npm run test:coverage:unit
 
       # npm bundled with Node 24 (pinned via setup-node) already supports trusted publishing (#318)

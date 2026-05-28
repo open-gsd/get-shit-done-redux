@@ -43,9 +43,7 @@ jobs:
         run: npm ci
 
       - name: Dependency integrity gate
-        run: |
-          chmod +x scripts/check-npm-integrity.sh
-          scripts/check-npm-integrity.sh
+        run: node scripts/check-npm-integrity.cjs
 
       - name: Prompt injection scan
         env:

@@ -56,9 +56,9 @@
   },
   "scripts": {
     "sync:launcher": "node scripts/sync-runtime-launcher.cjs",
-    "check:env": "bash scripts/check-env.sh",
+    "check:env": "node scripts/check-env.cjs",
     "check:alias-drift": "node scripts/check-alias-drift.cjs",
-    "check:integrity": "./scripts/check-npm-integrity.sh",
+    "check:integrity": "node scripts/check-npm-integrity.cjs",
     "build": "npm run build:hooks",
     "build:hooks": "node scripts/build-hooks.js",
     "prepublishOnly": "npm run build:hooks",

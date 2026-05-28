@@ -1,5 +1,5 @@
 /**
- * Tests for scripts/check-env.sh (issue #117).
+ * Tests for scripts/check-env.cjs (issue #117).
  *
  * Verifies the environment validator exits correctly and emits
  * structured output for every documented check:
@@ -24,12 +24,12 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
-const SCRIPT = path.resolve(__dirname, '..', 'scripts', 'check-env.sh');
+const SCRIPT = path.resolve(__dirname, '..', 'scripts', 'check-env.cjs');
 const FIXTURE_ROOT = path.resolve(__dirname, 'fixtures', 'check-env');
 const LIVE_ROOT = path.resolve(__dirname, '..');
 
 /**
- * Run check-env.sh synchronously in `cwd` with optional extra args.
+ * Run check-env.cjs synchronously in `cwd` with optional extra args.
  * Returns { status, stdout, stderr }.
  * @param {string} cwd
  * @param {string[]} args
@@ -38,7 +38,7 @@ const LIVE_ROOT = path.resolve(__dirname, '..');
  *   so that version-manager-pin is exercised even inside CI runners.
  */
 function runScript(cwd, args = [], envOverrides = {}) {
-  const result = spawnSync('bash', [SCRIPT, ...args], {
+  const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd,
     encoding: 'utf8',
     timeout: 30_000,
@@ -51,7 +51,7 @@ function runScript(cwd, args = [], envOverrides = {}) {
   };
 }
 
-describe('check-env.sh', () => {
+describe('check-env.cjs', () => {
   // -------------------------------------------------------------------------
   // Dynamic .nvmrc setup: write fixture .nvmrc files at test-run time so the
   // tests are correct across all Node major versions in the CI matrix (Node 22,

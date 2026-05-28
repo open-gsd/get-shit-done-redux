@@ -3,7 +3,7 @@
 /**
  * Regression test for #114 — npm dependency integrity gate.
  *
- * Verifies that scripts/check-npm-integrity.sh correctly detects:
+ * Verifies that scripts/check-npm-integrity.cjs correctly detects:
  *   1. Clean install  — exits 0, no stderr findings
  *   2. Version drift  — exits 1, stderr names the offending package + both versions
  *                       (reproduces the ws 8.20.1 declared vs 8.20.0 installed incident)
@@ -24,7 +24,7 @@ const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCRIPT = path.join(ROOT, 'scripts', 'check-npm-integrity.sh');
+const SCRIPT = path.join(ROOT, 'scripts', 'check-npm-integrity.cjs');
 const FIXTURES = path.join(__dirname, 'fixtures', 'npm-integrity');
 
 /**
@@ -36,7 +36,7 @@ const FIXTURES = path.join(__dirname, 'fixtures', 'npm-integrity');
  */
 function runGate(fixtureName, extraArgs = []) {
   const fixtureDir = path.join(FIXTURES, fixtureName);
-  const result = spawnSync('bash', [SCRIPT, ...extraArgs], {
+  const result = spawnSync(process.execPath, [SCRIPT, ...extraArgs], {
     cwd: fixtureDir,
     encoding: 'utf-8',
     timeout: 30_000,
@@ -145,7 +145,7 @@ describe('#114: npm integrity gate — missing fixture', () => {
 
 describe('#114: npm integrity gate — --help output', () => {
   test('exits 0 with --help flag', () => {
-    const result = spawnSync('bash', [SCRIPT, '--help'], {
+    const result = spawnSync(process.execPath, [SCRIPT, '--help'], {
       cwd: ROOT,
       encoding: 'utf-8',
       timeout: 10_000,
@@ -154,17 +154,16 @@ describe('#114: npm integrity gate — --help output', () => {
   });
 
   test('--help output mentions --ignore-extraneous', () => {
-    const result = spawnSync('bash', [SCRIPT, '--help'], {
+    const result = spawnSync(process.execPath, [SCRIPT, '--help'], {
       cwd: ROOT,
       encoding: 'utf-8',
       timeout: 10_000,
     });
-    // The script routes --help output to stderr (cat >&2). Assert on stderr
-    // specifically so a stray stdout match cannot produce a false positive.
-    const helpText = result.stderr ?? '';
+    // The .cjs script writes --help to stdout.
+    const helpText = (result.stdout ?? '') + (result.stderr ?? '');
     assert.ok(
       helpText.includes('--ignore-extraneous'),
-      `expected --help stderr to document --ignore-extraneous; got:\n${helpText}`
+      `expected --help output to document --ignore-extraneous; got:\n${helpText}`
     );
   });
 });

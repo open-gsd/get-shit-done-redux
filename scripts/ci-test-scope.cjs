@@ -29,8 +29,8 @@ const RULES = [
   {
     name: 'environment and dependency gates',
     match: path => [
-      'scripts/check-env.sh',
-      'scripts/check-npm-integrity.sh',
+      'scripts/check-env.cjs',
+      'scripts/check-npm-integrity.cjs',
       'package.json',
       'package-lock.json',
     ].includes(path),
