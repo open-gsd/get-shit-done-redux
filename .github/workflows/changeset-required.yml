@@ -16,14 +16,14 @@ jobs:
   changeset-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5.0.1
         with:
           fetch-depth: 50
       - name: Fetch base ref for diff
         run: git fetch --depth=50 origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           node-version: '24'
       - name: Run changeset lint
