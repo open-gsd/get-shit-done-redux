@@ -462,7 +462,7 @@ function getActiveMilestoneArchiveDir(planBase) {
     const statePath = path.join(planBase, 'STATE.md');
     if (fs.existsSync(statePath)) {
       const state = fs.readFileSync(statePath, 'utf-8');
-      const m = state.match(/^\s*(?:\*\*)?milestone(?:\*\*)?:\s*([^\s\r\n#]+).*$/mi);
+      const m = state.match(/^\s*(?:\*\*)?milestone(?:\*\*)?:\s*\*{0,2}\s*([^\s*\r\n#][^\s\r\n#]*)/mi);
       if (m && m[1]) {
         const milestone = m[1].trim();
         const candidate = path.join(planBase, 'milestones', `${milestone}-phases`);
