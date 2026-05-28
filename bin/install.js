@@ -9304,13 +9304,92 @@ function install(isGlobal, runtime = 'claude', options = {}) {
     return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir };
   }
 
-  // Configure statusline and hooks in settings.json
+  // Configure statusline and hooks in settings.json (or settings.local.json for local Claude installs).
   // Gemini and Antigravity use AfterTool instead of PostToolUse for post-tool hooks
   const postToolEvent = (runtime === 'gemini' || runtime === 'antigravity') ? 'AfterTool' : 'PostToolUse';
-  const settingsPath = path.join(targetDir, 'settings.json');
+  // #338: local Claude installs write to settings.local.json (Claude Code's per-user/gitignored slot)
+  // so engineer-specific absolute paths (Node binary, home dir) never land in the repo-shared
+  // settings.json. Global installs and all other runtimes continue to use settings.json.
+  const isLocalClaude = (runtime === 'claude' && !isGlobal);
+  const settingsFileName = isLocalClaude ? 'settings.local.json' : 'settings.json';
+  const settingsPath = path.join(targetDir, settingsFileName);
+
+  // #338 migration: if a prior local Claude install wrote GSD-shaped entries to settings.json,
+  // relocate them to settings.local.json and clear them from the shared file in the same run.
+  if (isLocalClaude) {
+    const sharedSettingsPath = path.join(targetDir, 'settings.json');
+    const sharedRaw = readSettings(sharedSettingsPath);
+    if (sharedRaw && typeof sharedRaw === 'object') {
+      const hasGsdHooks = sharedRaw.hooks && Object.values(sharedRaw.hooks).some(
+        entries => Array.isArray(entries) && entries.some(
+          entry => entry && entry.hooks && Array.isArray(entry.hooks) && entry.hooks.some(
+            h => h && typeof h.command === 'string' && isManagedHookCommand(h.command, { surface: 'settings-json' })
+          )
+        )
+      );
+      const hasGsdStatusline = sharedRaw.statusLine && sharedRaw.statusLine.command &&
+        isManagedHookCommand(sharedRaw.statusLine.command, { surface: 'settings-json' });
+      if (hasGsdHooks || hasGsdStatusline) {
+        // Merge GSD entries into settings.local.json
+        const localRaw = readSettings(settingsPath) || {};
+        if (hasGsdStatusline && !localRaw.statusLine) {
+          localRaw.statusLine = sharedRaw.statusLine;
+        }
+        if (hasGsdHooks) {
+          if (!localRaw.hooks) localRaw.hooks = {};
+          for (const [eventName, entries] of Object.entries(sharedRaw.hooks || {})) {
+            if (!Array.isArray(entries)) continue;
+            const gsdEntries = entries.filter(
+              entry => entry && entry.hooks && Array.isArray(entry.hooks) && entry.hooks.some(
+                h => h && typeof h.command === 'string' && isManagedHookCommand(h.command, { surface: 'settings-json' })
+              )
+            );
+            if (gsdEntries.length > 0) {
+              if (!localRaw.hooks[eventName]) localRaw.hooks[eventName] = [];
+              // Only merge entries not already present in local
+              for (const entry of gsdEntries) {
+                const alreadyPresent = localRaw.hooks[eventName].some(
+                  le => le && le.hooks && Array.isArray(le.hooks) && le.hooks.some(
+                    lh => lh && entry.hooks.some(eh => eh && eh.command === lh.command)
+                  )
+                );
+                if (!alreadyPresent) localRaw.hooks[eventName].push(entry);
+              }
+            }
+          }
+        }
+        fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+        writeSettings(settingsPath, localRaw);
+
+        // Remove GSD entries from shared settings.json
+        if (hasGsdStatusline) {
+          delete sharedRaw.statusLine;
+        }
+        if (hasGsdHooks) {
+          for (const [eventName, entries] of Object.entries(sharedRaw.hooks || {})) {
+            if (!Array.isArray(entries)) continue;
+            sharedRaw.hooks[eventName] = entries.filter(
+              entry => !(entry && entry.hooks && Array.isArray(entry.hooks) && entry.hooks.some(
+                h => h && typeof h.command === 'string' && isManagedHookCommand(h.command, { surface: 'settings-json' })
+              ))
+            );
+            if (sharedRaw.hooks[eventName].length === 0) {
+              delete sharedRaw.hooks[eventName];
+            }
+          }
+          if (sharedRaw.hooks && Object.keys(sharedRaw.hooks).length === 0) {
+            delete sharedRaw.hooks;
+          }
+        }
+        writeSettings(sharedSettingsPath, sharedRaw);
+        console.log(`  ${green}✓${reset} Migrated GSD hook entries from settings.json to settings.local.json (#338)`);
+      }
+    }
+  }
+
   const rawSettings = readSettings(settingsPath);
   if (rawSettings === null) {
-    console.log('  ' + yellow + 'i' + reset + '  Skipping settings.json configuration — file could not be parsed (comments or malformed JSON). Your existing settings are preserved.');
+    console.log('  ' + yellow + 'i' + reset + '  Skipping settings.local.json configuration — file could not be parsed (comments or malformed JSON). Your existing settings are preserved.');
     persistActiveProfileMarker();
     return;
   }

@@ -52,7 +52,7 @@ describe('#2248: local Claude install does not clobber profile-level statusLine'
     cleanup(tmpDir);
   });
 
-  test('local install does not write statusLine to .claude/settings.json', (t) => {
+  test('local install writes hooks to .claude/settings.local.json and does not write statusLine', (t) => {
     const origCwd = process.cwd();
     t.after(() => { process.chdir(origCwd); });
     process.chdir(tmpDir);
@@ -60,7 +60,8 @@ describe('#2248: local Claude install does not clobber profile-level statusLine'
     // Phase 1: copy files (mirrors installAllRuntimes)
     const result = install(false, 'claude');
 
-    // Phase 2: configure settings.json (mirrors installAllRuntimes → finalize)
+    // Phase 2: configure settings.local.json (mirrors installAllRuntimes → finalize)
+    // #338: local Claude installs now write to settings.local.json, not settings.json.
     // shouldInstallStatusline=true mirrors what handleStatusline picks for a fresh install
     finishInstall(
       result.settingsPath,
@@ -71,17 +72,26 @@ describe('#2248: local Claude install does not clobber profile-level statusLine'
       false   // isGlobal=false → local install
     );
 
-    const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    // #338: local installs write to settings.local.json, not settings.json
+    const localSettingsPath = path.join(tmpDir, '.claude', 'settings.local.json');
     assert.ok(
-      fs.existsSync(settingsPath),
-      '.claude/settings.json must exist after local install'
+      fs.existsSync(localSettingsPath),
+      '.claude/settings.local.json must exist after local Claude install (#338)'
     );
 
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const settings = JSON.parse(fs.readFileSync(localSettingsPath, 'utf-8'));
     assert.strictEqual(
       settings.statusLine,
       undefined,
-      'Local install must not write statusLine to repo settings.json — it would clobber profile-level settings (#2248)'
+      'Local install must not write statusLine to settings.local.json — it would clobber profile-level settings (#2248)'
+    );
+
+    // settings.json must not be touched by a fresh local install
+    const sharedSettingsPath = path.join(tmpDir, '.claude', 'settings.json');
+    assert.strictEqual(
+      fs.existsSync(sharedSettingsPath),
+      false,
+      '.claude/settings.json must NOT be created by a fresh local Claude install (#338)'
     );
   });
 
