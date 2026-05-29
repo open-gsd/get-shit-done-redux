@@ -54,8 +54,13 @@ function readFrontmatter(mdPath) {
  *   claude   → CLAUDE_CONFIG_DIR
  *   gemini   → GEMINI_CONFIG_DIR
  *   codex    → CODEX_HOME
+ *
+ * The working directory is set to REPO_ROOT so install() can find the source
+ * agents/. For config-driven tests, place tmpHome inside the project dir
+ * so that readGsdEffectiveEffortConfig(targetDir) can walk up from tmpHome
+ * and find .planning/config.json.
  */
-function runGlobalInstall(runtime, tmpHome, { projectDir = null } = {}) {
+function runGlobalInstall(runtime, tmpHome) {
   const envVarMap = {
     claude: 'CLAUDE_CONFIG_DIR',
     gemini: 'GEMINI_CONFIG_DIR',
@@ -68,9 +73,7 @@ function runGlobalInstall(runtime, tmpHome, { projectDir = null } = {}) {
   const prevCwd = process.cwd();
 
   process.env[envVar] = tmpHome;
-  // chdir to projectDir (if provided, to let install probe .planning/config.json)
-  // or REPO_ROOT (so install can find the source agents/).
-  process.chdir(projectDir || REPO_ROOT);
+  process.chdir(REPO_ROOT);
 
   try {
     install(true, runtime);
@@ -185,18 +188,26 @@ describe('#443 Codex install: model_reasoning_effort in .toml (unified resolver)
 });
 
 // ─── describe 4: Config-driven proof ─────────────────────────────────────────
+//
+// The runtime home dir must be INSIDE (or a sibling of) the project root so
+// that readGsdEffectiveEffortConfig(targetDir) can walk up from the runtime
+// home and find .planning/config.json. We put .claude/ and .codex/ as siblings
+// of .planning/ inside the project dir — this is the natural local-install shape.
 
 describe('#443 Config-driven: effort.agent_overrides drives install-time effort', () => {
   let tmpDir;
   let claudeHome;
   let codexHome;
-  let projectDir;
 
   beforeEach(() => {
+    // Layout: tmpDir/project/  <-- project root (cwd for install)
+    //           .planning/config.json
+    //           .claude/          <-- claudeHome (CLAUDE_CONFIG_DIR)
+    //           .codex/           <-- codexHome (CODEX_HOME)
     tmpDir = makeTmpDir('gsd-443-cfg-');
-    claudeHome = path.join(tmpDir, 'claude-home');
-    codexHome = path.join(tmpDir, 'codex-home');
-    projectDir = path.join(tmpDir, 'project');
+    const projectDir = path.join(tmpDir, 'project');
+    claudeHome = path.join(projectDir, '.claude');
+    codexHome = path.join(projectDir, '.codex');
 
     fs.mkdirSync(claudeHome, { recursive: true });
     fs.mkdirSync(codexHome, { recursive: true });
@@ -221,14 +232,16 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
   });
 
   test('Claude .md gets effort: low when agent_overrides.gsd-planner=low', () => {
-    runGlobalInstall('claude', claudeHome, { projectDir });
+    // projectDir is the cwd for install — chdir handled inside runGlobalInstall.
+    // claudeHome is inside projectDir, so walking up from claudeHome finds .planning/config.json.
+    runGlobalInstall('claude', claudeHome);
     const fm = readFrontmatter(path.join(claudeHome, 'agents', 'gsd-planner.md'));
     assert.match(fm, /^effort:\s*low$/m,
       `gsd-planner should have effort: low from config override\nActual:\n${fm}`);
   });
 
   test('Codex .toml gets model_reasoning_effort = "low" when agent_overrides.gsd-planner=low', () => {
-    runGlobalInstall('codex', codexHome, { projectDir });
+    runGlobalInstall('codex', codexHome);
     const tomlContent = fs.readFileSync(
       path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
     );
@@ -237,6 +250,7 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
   });
 
   test('Codex .toml clamps effort max → xhigh when agent_overrides.gsd-planner=max', () => {
+    const projectDir = path.dirname(codexHome);
     // Overwrite config with max override
     const config = {
       effort: {
@@ -250,7 +264,7 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
       JSON.stringify(config, null, 2)
     );
 
-    runGlobalInstall('codex', codexHome, { projectDir });
+    runGlobalInstall('codex', codexHome);
     const tomlContent = fs.readFileSync(
       path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
     );
