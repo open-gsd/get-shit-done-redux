@@ -1,0 +1,87 @@
+'use strict';
+
+/**
+ * Fake clock helper for deterministic lock tests (issue #453).
+ *
+ * Usage:
+ *   const { makeFakeClock } = require('./helpers/clock.cjs');
+ *   const clock = makeFakeClock(0); // start at t=0
+ *   clock.advance(5000);            // jump 5 000 ms forward
+ *   acquireStateLock(path, clock);  // no real waits; timeout/stale logic driven by advance()
+ *
+ * The fake clock returned by makeFakeClock() is compatible with the clock seam
+ * accepted by acquireStateLock(statePath, clock) in state.cjs and
+ * withPlanningLock(cwd, fn, clock) in planning-workspace.cjs.
+ *
+ * API
+ * ───
+ * now()          → returns the current virtual epoch milliseconds.
+ * sleep(ms)      → records a sleep call without blocking; advances virtual time by ms.
+ * advance(ms)    → advance the virtual clock by ms without sleeping. Use between
+ *                  synchronous retries to simulate elapsed time.
+ * sleepCalls     → array of ms values passed to sleep(), for assertion use.
+ * nowValue       → current virtual milliseconds (same as calling now()).
+ *
+ * Design notes
+ * ────────────
+ * • sleep() advances the clock by the requested duration so that a retry loop
+ *   checking `clock.now() - startedAt >= maxWaitMs` eventually trips the timeout
+ *   without needing any real sleeps in between.
+ * • advance() allows the test to simulate arbitrary elapsed time without triggering
+ *   a sleep call (useful for driving the stale-lock check independently).
+ * • Both now() and sleep() are intentionally synchronous so tests using them remain
+ *   fully synchronous — no async needed for lock serialization / timeout assertions.
+ */
+
+/**
+ * @param {number} [startMs=0] - initial virtual epoch milliseconds
+ * @returns {{ now(): number, sleep(ms: number): void, advance(ms: number): void, sleepCalls: number[], nowValue: number }}
+ */
+function makeFakeClock(startMs) {
+  if (startMs === undefined) startMs = 0;
+
+  let _now = startMs;
+  const _sleepCalls = [];
+
+  const clock = {
+    /** Return current virtual time (epoch ms). */
+    now() {
+      return _now;
+    },
+
+    /**
+     * Record a sleep call and advance virtual time by ms.
+     * Does NOT block.
+     *
+     * @param {number} ms
+     */
+    sleep(ms) {
+      _sleepCalls.push(ms);
+      _now += ms;
+    },
+
+    /**
+     * Advance the virtual clock by ms without recording a sleep call.
+     * Use to simulate time passing between lock attempts.
+     *
+     * @param {number} ms
+     */
+    advance(ms) {
+      _now += ms;
+    },
+
+    /** Array of ms values passed to sleep() in call order. */
+    get sleepCalls() {
+      return _sleepCalls;
+    },
+
+    /** Current virtual time (same as now()). */
+    get nowValue() {
+      return _now;
+    },
+  };
+
+  return clock;
+}
+
+module.exports = { makeFakeClock };
