@@ -7,6 +7,7 @@ const path = require('path');
 const { escapeRegex, loadConfig, getMilestoneInfo, getMilestonePhaseFilter, output, error } = require('./core.cjs');
 const { platformWriteSync, platformReadSync, platformEnsureDir } = require('./shell-command-projection.cjs');
 const { planningDir, planningPaths } = require('./planning-workspace.cjs');
+const { realClock } = require('./clock.cjs');
 const { extractFrontmatter, reconstructFrontmatter } = require('./frontmatter.cjs');
 const scanPhasePlans = require('./plan-scan.cjs');
 const {
@@ -992,14 +993,20 @@ const ACQUIRE_LOCK_RETRY_ERRNOS = new Set([
 /**
  * Acquire a lockfile for STATE.md operations.
  * Returns the lock path for later release.
+ *
+ * @param {string} statePath
+ * @param {{ now(): number, sleep(ms: number): void }} [clock]
+ *   Optional clock seam for testing. Defaults to realClock (Date.now + Atomics.wait).
+ *   Pass a fake clock from tests/helpers/clock.cjs to drive timeout/stale logic
+ *   without real wall-clock waits.
  */
-function acquireStateLock(statePath) {
+function acquireStateLock(statePath, clock) {
+  if (clock === undefined) clock = realClock;
   const lockPath = statePath + '.lock';
   const retryDelay = 200; // ms
   const staleThresholdMs = 10000;
   const maxWaitMs = 30000;
-  const startedAt = Date.now();
-  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4)); // hoisted; value stays 0, pure Atomics.wait timeout target
+  const startedAt = clock.now();
 
    
   while (true) {
@@ -1021,19 +1028,19 @@ function acquireStateLock(statePath) {
       // writer causes lost updates (#3711 regression).
       try {
         const stat = fs.statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > staleThresholdMs) {
+        if (clock.now() - stat.mtimeMs > staleThresholdMs) {
           try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
           continue;
         }
       } catch { continue; /* released between EEXIST and stat */ }
-      if (Date.now() - startedAt >= maxWaitMs) {
+      if (clock.now() - startedAt >= maxWaitMs) {
         throw new Error(
           'acquireStateLock: ' + lockPath + ' held by live process for ' +
-          (Date.now() - startedAt) + 'ms (exceeded ' + maxWaitMs + 'ms budget)'
+          (clock.now() - startedAt) + 'ms (exceeded ' + maxWaitMs + 'ms budget)'
         );
       }
       const jitter = Math.floor(Math.random() * 50);
-      Atomics.wait(sleepBuffer, 0, 0, retryDelay + jitter);
+      clock.sleep(retryDelay + jitter);
     }
   }
 }
@@ -1048,14 +1055,20 @@ function releaseStateLock(lockPath) {
  * All STATE.md writes should use this instead of raw writeFileSync.
  * Uses a simple lockfile to prevent parallel agents from overwriting
  * each other's changes (race condition with read-modify-write cycle).
+ *
+ * @param {string} statePath
+ * @param {string} content
+ * @param {string} [cwd]
+ * @param {{ now(): number, sleep(ms: number): void }} [clock]
+ *   Optional clock seam; defaults to realClock. Passed through to acquireStateLock.
  */
-function writeStateMd(statePath, content, cwd) {
+function writeStateMd(statePath, content, cwd, clock) {
   // Invalidate disk scan cache before computing new frontmatter — the write
   // may create new PLAN/SUMMARY files that buildStateFrontmatter must see.
   // Safe for any calling pattern, not just short-lived CLI processes (#1967).
   if (cwd) _diskScanCache.delete(cwd);
   const synced = syncStateFrontmatter(content, cwd);
-  const lockPath = acquireStateLock(statePath);
+  const lockPath = acquireStateLock(statePath, clock);
   try {
     platformWriteSync(statePath, synced);
   } finally {
@@ -1080,10 +1093,12 @@ function writeStateMd(statePath, content, cwd) {
  *   When resync is false, syncStateFrontmatter still runs to maintain/create the
  *   frontmatter block, but any existing progress.* sub-keys are preserved from
  *   the pre-transform file rather than being rebuilt from disk.
+ * @param {{ now(): number, sleep(ms: number): void }} [clock]
+ *   Optional clock seam; defaults to realClock. Passed through to acquireStateLock.
  */
-function readModifyWriteStateMd(statePath, transformFn, cwd, options) {
+function readModifyWriteStateMd(statePath, transformFn, cwd, options, clock) {
   const resync = !options || options.resync !== false;
-  const lockPath = acquireStateLock(statePath);
+  const lockPath = acquireStateLock(statePath, clock);
   try {
     const content = platformReadSync(statePath) || '';
     // Snapshot the existing progress block BEFORE the transform so we can
@@ -1979,6 +1994,8 @@ module.exports = {
   stateExtractField,
   stateReplaceField,
   stateReplaceFieldWithFallback,
+  acquireStateLock,
+  releaseStateLock,
   writeStateMd,
   readModifyWriteStateMd,
   updatePerformanceMetricsSection,

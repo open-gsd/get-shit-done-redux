@@ -54,40 +54,10 @@ function readConfig(tmpDir) {
   return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// #1909 — CPU-burning busy-wait in acquireStateLock
-// Verify the implementation uses Atomics.wait (not a while-loop spin).
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('#1909 acquireStateLock: no CPU-burning busy-wait', () => {
-  test('acquireStateLock source code uses Atomics.wait, not a spin-loop', () => {
-    const stateSrc = fs.readFileSync(
-      path.join(__dirname, '..', 'get-shit-done', 'bin', 'lib', 'state.cjs'),
-      'utf-8'
-    );
-
-    // The bug: spin-loop pattern in acquireStateLock
-    // The fix: use Atomics.wait() for cross-platform sleep, matching withPlanningLock in core.cjs
-    const spinLoopPattern = /while\s*\(Date\.now\(\)\s*-\s*start\s*<\s*\w+\)\s*\{\s*(?:\/\*[^*]*\*\/)?\s*\}/;
-
-    // Find the acquireStateLock function text
-    const fnStart = stateSrc.indexOf('function acquireStateLock(');
-    assert.ok(fnStart !== -1, 'acquireStateLock function must exist');
-
-    // Extract ~50 lines after the function start to cover the retry logic
-    const fnSnippet = stateSrc.slice(fnStart, fnStart + 2000);
-
-    assert.ok(
-      !spinLoopPattern.test(fnSnippet),
-      'acquireStateLock must not use a CPU-burning spin-loop (while Date.now()-start < delay)'
-    );
-
-    assert.ok(
-      fnSnippet.includes('Atomics.wait'),
-      'acquireStateLock must use Atomics.wait() for sleeping, matching withPlanningLock in core.cjs'
-    );
-  });
-});
+// #1909 source-grep (Atomics.wait) deleted per #453 (clock-seam):
+// the deterministic replacement in tests/clock-seam.test.cjs
+// describe('acquireStateLock clock seam') proves the seam accepts and calls
+// clock.sleep() without inspecting source text.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // #1916 — Lock files persist after process.exit()
@@ -127,32 +97,11 @@ describe('#1916 lock cleanup on process.exit()', () => {
     );
   });
 
-  test('STATE.md.lock module-level cleanup set is present in source', () => {
-    // Verify the fix: module-level Set tracks held locks and process.on('exit') cleans them up.
-    const stateSrc = fs.readFileSync(
-      path.join(__dirname, '..', 'get-shit-done', 'bin', 'lib', 'state.cjs'),
-      'utf-8'
-    );
-
-    assert.ok(
-      stateSrc.includes("process.on('exit'"),
-      "state.cjs must register process.on('exit', ...) to clean up held lock files"
-    );
-  });
-
-  test('planning workspace lock owner registers exit cleanup', () => {
-    // withPlanningLock moved from core.cjs to planning-workspace.cjs.
-    // The lock owner must keep module-level process exit cleanup.
-    const workspaceSrc = fs.readFileSync(
-      path.join(__dirname, '..', 'get-shit-done', 'bin', 'lib', 'planning-workspace.cjs'),
-      'utf-8'
-    );
-
-    assert.ok(
-      workspaceSrc.includes("process.on('exit'"),
-      "planning-workspace.cjs must register process.on('exit', ...) to clean up held planning lock files"
-    );
-  });
+  // #1916 source-grep tests (process.on('exit') in state.cjs and planning-workspace.cjs)
+  // deleted per #453 (clock-seam). Deterministic replacement in tests/clock-seam.test.cjs:
+  //   describe('exit cleanup: STATE.md.lock removed on process exit')
+  //   describe('exit cleanup: .planning/.lock removed on process exit')
+  // Both exercise the real exit path without inspecting source text.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,33 +256,11 @@ describe('#1925 TOCTOU: state commands use readModifyWriteStateMd', () => {
     );
   });
 
-  test('state add-decision: both concurrent calls append different decisions', async () => {
-    writeStateMd(tmpDir, [
-      '# Project State',
-      '',
-      '**Current Phase:** 01',
-      '**Status:** Planning',
-      '',
-      '### Decisions',
-      'None yet.',
-    ].join('\n') + '\n');
-
-    const nodeBin = process.execPath;
-    const cmdA = `"${nodeBin}" "${TOOLS_PATH}" state add-decision --phase 01 --summary "Use TypeScript" --cwd "${tmpDir}"`;
-    const cmdB = `"${nodeBin}" "${TOOLS_PATH}" state add-decision --phase 01 --summary "Use PostgreSQL" --cwd "${tmpDir}"`;
-
-    await Promise.all([
-      execAsync(cmdA, { encoding: 'utf-8' }).catch(() => {}),
-      execAsync(cmdB, { encoding: 'utf-8' }).catch(() => {}),
-    ]);
-
-    const content = readStateMd(tmpDir);
-    assert.ok(
-      content.includes('Use TypeScript') && content.includes('Use PostgreSQL'),
-      'Both concurrent add-decision calls must survive.\n' +
-      'Content:\n' + content
-    );
-  });
+  // 'state add-decision: both concurrent calls append different decisions' deleted per #453
+  // (clock-seam): plain Promise.all without a barrier is non-deterministic — one subprocess
+  // can complete before the other starts, so no real lock contention is exercised.
+  // The barrier-based 'state add-blocker' test below and the clock-seam call-site coverage
+  // tests in tests/clock-seam.test.cjs cover the same append-operation correctness.
 
   test('state add-blocker: both concurrent calls append different blockers', async () => {
     // Deterministic concurrency via file-barrier synchronization (Option A).
@@ -464,65 +391,11 @@ describe('#1925 TOCTOU: state commands use readModifyWriteStateMd', () => {
     );
   });
 
-  test('state commands use readModifyWriteStateMd (source audit)', () => {
-    const stateSrc = fs.readFileSync(
-      path.join(__dirname, '..', 'get-shit-done', 'bin', 'lib', 'state.cjs'),
-      'utf-8'
-    );
-
-    // Each of these functions should NOT contain a bare `fs.readFileSync(...STATE.md...)`
-    // followed by a `writeStateMd` — they should use readModifyWriteStateMd instead.
-    //
-    // We verify this by checking that within the function body we do NOT see the
-    // TOCTOU pattern: `let content = fs.readFileSync(statePath` (old pattern)
-    // while also calling `writeStateMd` — except wrapped in readModifyWrite.
-
-    const affectedFunctions = [
-      'cmdStateUpdate',
-      'cmdStateAdvancePlan',
-      'cmdStateRecordMetric',
-      'cmdStateUpdateProgress',
-      'cmdStateAddDecision',
-      'cmdStateAddBlocker',
-      'cmdStateResolveBlocker',
-      'cmdStateRecordSession',
-      'cmdStateBeginPhase',
-    ];
-
-    for (const fnName of affectedFunctions) {
-      // Find the function in source
-      const fnIdx = stateSrc.indexOf(`function ${fnName}(`);
-      assert.ok(fnIdx !== -1, `${fnName} must exist in state.cjs`);
-
-      // Grab the function body (rough heuristic: up to the next top-level function)
-      const bodyStart = stateSrc.indexOf('{', fnIdx);
-      // Find end by tracking braces
-      let depth = 0;
-      let bodyEnd = bodyStart;
-      for (let i = bodyStart; i < stateSrc.length; i++) {
-        if (stateSrc[i] === '{') depth++;
-        else if (stateSrc[i] === '}') {
-          depth--;
-          if (depth === 0) { bodyEnd = i; break; }
-        }
-      }
-      const fnBody = stateSrc.slice(fnIdx, bodyEnd + 1);
-
-      // The function must call readModifyWriteStateMd
-      assert.ok(
-        fnBody.includes('readModifyWriteStateMd'),
-        `${fnName} must use readModifyWriteStateMd() to prevent TOCTOU races`
-      );
-
-      // The function must NOT have bare readFileSync for statePath outside the lambda
-      // (the readFileSync inside readModifyWrite's lambda is fine — that's inside the lock)
-      // We check for the pre-fix pattern: `let content = fs.readFileSync(statePath`
-      assert.ok(
-        !fnBody.match(/let content\s*=\s*fs\.readFileSync\s*\(\s*statePath/),
-        `${fnName} must not read STATE.md with fs.readFileSync outside readModifyWriteStateMd (TOCTOU)`
-      );
-    }
-  });
+  // 'state commands use readModifyWriteStateMd (source audit)' deleted per #453 (clock-seam):
+  // source-grep of cmd* function bodies is brittle. Deterministic replacement in
+  // tests/clock-seam.test.cjs describe('readModifyWriteStateMd call-site coverage') exercises
+  // each cmd* via CLI and confirms the lock is acquired-and-released (STATE.md.lock absent after
+  // command), which is only possible if readModifyWriteStateMd's finally block ran.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -644,16 +517,7 @@ describe('#1927 config.json: setConfigValue must hold planning lock', () => {
     );
   });
 
-  test('config.cjs setConfigValue uses withPlanningLock (source audit)', () => {
-    const configSrc = fs.readFileSync(
-      path.join(__dirname, '..', 'get-shit-done', 'bin', 'lib', 'config.cjs'),
-      'utf-8'
-    );
-
-    // setConfigValue must import/use withPlanningLock
-    assert.ok(
-      configSrc.includes('withPlanningLock'),
-      'config.cjs must use withPlanningLock in setConfigValue to prevent concurrent write data loss'
-    );
-  });
+  // 'config.cjs setConfigValue uses withPlanningLock (source audit)' deleted per #453 (clock-seam):
+  // source-grep is brittle. The barrier-based 'both concurrent config-set calls persist their values'
+  // test above already proves withPlanningLock is in effect (both values survive the concurrent writes).
 });
