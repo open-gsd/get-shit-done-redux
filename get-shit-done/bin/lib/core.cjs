@@ -1254,9 +1254,9 @@ function _resetRuntimeWarningCacheForTests() {
 /**
  * #2517 — Resolve the runtime-aware tier entry for (runtime, tier).
  *
- * Single source of truth shared by core.cjs (resolveModelInternal /
- * resolveReasoningEffortInternal) and bin/install.js (Codex/OpenCode TOML emit
- * paths). Always merges built-in defaults with user overrides at the field
+ * Single source of truth shared by core.cjs (resolveModelInternal)
+ * and bin/install.js (Codex/OpenCode TOML emit paths). Always merges
+ * built-in defaults with user overrides at the field
  * level so partial overrides keep the unspecified fields:
  *
  *   `{ codex: { opus: "gpt-5-pro" } }`           keeps reasoning_effort: 'xhigh'
@@ -1293,7 +1293,7 @@ function resolveTierEntry({ runtime, tier, overrides }) {
 }
 
 /**
- * Convenience wrapper used by resolveModelInternal / resolveReasoningEffortInternal.
+ * Convenience wrapper used by resolveModelInternal.
  * Pulls runtime + overrides out of a loaded config and delegates to resolveTierEntry.
  */
 function _resolveRuntimeTier(config, tier) {
@@ -1479,68 +1479,6 @@ function resolveModelForTier(cwd, agentType, attempt) {
     return resolveModelInternal(cwd, agentType);
   }
   return alias;
-}
-
-/**
- * #2517 — Resolve runtime-specific reasoning_effort for an agent.
- * Returns null unless:
- *   - `runtime` is explicitly set in config,
- *   - the runtime supports reasoning_effort (currently: codex),
- *   - profile is not 'inherit',
- *   - the resolved tier entry has a `reasoning_effort` value.
- *
- * Never returns a value for Claude — keeps reasoning_effort out of Claude spawn paths.
- */
-function resolveReasoningEffortInternal(cwd, agentType) {
-  const config = loadConfig(cwd);
-  if (!config.runtime) return null;
-  // Strict allowlist: reasoning_effort only propagates for runtimes whose
-  // install path actually accepts it. Adding a new runtime here is the only
-  // way to enable effort propagation — overrides cannot bypass the gate.
-  // Without this, a typo in `runtime` (e.g. `"codx"`) plus a user override
-  // for that typo would leak `xhigh` into a Claude or unknown install
-  // (review finding #3).
-  if (!RUNTIMES_WITH_REASONING_EFFORT.has(config.runtime)) return null;
-  // Per-agent override means user supplied a fully-qualified ID; reasoning_effort
-  // for that case must be set via per-agent mechanism, not tier inference.
-  if (config.model_overrides?.[agentType]) return null;
-
-  const profile = String(config.model_profile || 'balanced').toLowerCase();
-  const agentModels = MODEL_PROFILES[agentType];
-  if (!agentModels) return null;
-
-  // #3023 (CR Major): mirror the phase-type tier lookup from
-  // resolveModelInternal. Without this, `model` and `reasoning_effort`
-  // derive from different tier sources on Codex when models.<phase_type>
-  // overrides the profile.
-  //
-  // #3030 CR follow-up: do NOT short-circuit on profile === 'inherit'
-  // before reading the phase-type tier. A config like
-  //   { model_profile: 'inherit', models: { execution: 'opus' } }
-  // must produce the opus runtime effort, not null. Compute tier from
-  // phase-type first; only fall back to profile when there's no valid
-  // phase-type override; only return null when the resolved tier is
-  // 'inherit' or unknown.
-  const phaseType = AGENT_TO_PHASE_TYPE[agentType];
-  const phaseTypeTier = (phaseType && config.models && typeof config.models === 'object')
-    ? config.models[phaseType]
-    : undefined;
-  // Explicit phase-type 'inherit' is the user opting out of tier-based
-  // effort for this phase — return null instead of falling through to
-  // profile (which would silently emit the profile's effort and
-  // contradict the user's choice).
-  if (phaseTypeTier === 'inherit') return null;
-  const VALID_TIERS = new Set(['opus', 'sonnet', 'haiku']);
-  const tier = (phaseTypeTier && VALID_TIERS.has(phaseTypeTier))
-    ? phaseTypeTier
-    : (profile === 'inherit'
-      ? 'inherit'
-      : (agentModels[profile] || agentModels['balanced']));
-  // 'inherit' (from profile fallback) yields no runtime effort.
-  if (!tier || tier === 'inherit') return null;
-
-  const entry = _resolveRuntimeTier(config, tier);
-  return entry?.reasoning_effort || null;
 }
 
 // ─── #443 — Unified effort + fast_mode resolvers ─────────────────────────────
@@ -2124,7 +2062,6 @@ module.exports = {
   getRoadmapPhaseInternal,
   resolveModelInternal,
   resolveModelForTier,
-  resolveReasoningEffortInternal,
   resolveEffortInternal,
   resolveFastModeInternal,
   resolveEffortForTier,
