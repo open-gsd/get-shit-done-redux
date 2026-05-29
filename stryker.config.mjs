@@ -10,14 +10,14 @@
  *
  * coverageAnalysis: 'off' — command runner does not support per-mutant coverage
  * thresholds: high=80, low=60, break=50
- * incremental: true — caches results; use --since for PR-scoped runs
+ * incremental: true — caches results; PR-scoped runs pass --mutate <changed-files>
  *
  * Reports:
  *   - html: reports/mutation/mutation.html
  *   - clear-text (console)
  *   - progress (spinner)
  *
- * NOTE: This is incremental / changed-files-only in CI (--since origin/next)
+ * NOTE: This is incremental / changed-files-only in CI (--mutate <changed-files>)
  * to stay bounded. Full runs are for local exploration only.
  */
 
@@ -68,7 +68,7 @@ export default {
 
   // ── Incremental mode ─────────────────────────────────────────────────────────
   // Cache mutation results; re-run only changed mutants on subsequent calls.
-  // In CI use: stryker run --incremental --since origin/next
+  // In CI the workflow computes changed files and passes: stryker run --incremental --mutate <list>
   incremental: true,
   incrementalFile: '.stryker-incremental.json',
 
