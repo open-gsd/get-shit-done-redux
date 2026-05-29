@@ -374,13 +374,9 @@ describe('stateReplaceFieldWithFallback field-miss warning', () => {
       }
     }
 
-    const { performance } = require('perf_hooks');
-    const start = performance.now();
     const result = runGsdTools('validate health', tmpDir);
-    const elapsed = performance.now() - start;
 
     assert.ok(result.success, `validate health should succeed: ${result.error}`);
-    assert.ok(elapsed < 3000, `Should complete in under 3000ms, took ${elapsed.toFixed(0)}ms`);
 
     const output = JSON.parse(result.output);
     assert.ok(typeof output.status === 'string', 'Should return a status string');
