@@ -234,13 +234,17 @@ describe('bug-474: installer-migrations lock-loop timeout is deterministic via c
     const LOCK_NAME = 'gsd-install-migration.lock';
     const lockPath = path.join(configDir, LOCK_NAME);
 
-    // Write a lock file held by PID 1 (init/launchd on POSIX, always alive;
-    // on Windows isPidAlive(1) is also true for the system idle process).
-    // Because PID 1 is neither our process nor a dead process, stale-lock
-    // reclamation is NOT triggered — the loop must reach the timeout check.
+    // Write a lock file held by process.ppid (the parent process, always alive
+    // and never equal to process.pid on every platform).  pid 1 was used
+    // previously but isPidAlive(1) returns false on Windows (no init/launchd
+    // pid-1 concept), so the lock was treated as stale, reclaimed, and
+    // acquireInstallMigrationLock succeeded instead of throwing — failing the
+    // timeout assertion on windows-latest,22 (#474).  process.ppid is a live,
+    // non-self process on all platforms, so the lock is correctly seen as held
+    // and the timeout path throws deterministically cross-platform.
     fs.writeFileSync(
       lockPath,
-      JSON.stringify({ pid: 1, acquiredAt: new Date().toISOString() }) + '\n',
+      JSON.stringify({ pid: process.ppid, acquiredAt: new Date().toISOString() }) + '\n',
     );
 
     // TIMEOUT_MS is non-zero so the first EEXIST iteration does NOT immediately
