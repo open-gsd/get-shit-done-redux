@@ -55,6 +55,18 @@ function readFrontmatter(mdPath) {
  *   gemini   → GEMINI_CONFIG_DIR
  *   codex    → CODEX_HOME
  *
+ * HOME is also redirected to an isolated temp dir for the duration of the
+ * install call. This prevents any install.js code that uses os.homedir()
+ * directly (e.g. ~/.cache/gsd update-check deletion, ~/.gsd/defaults.json
+ * reads, stale-SDK npm subprocess writes to ~/.npm) from touching the real
+ * HOME and polluting the test environment for other concurrently-running
+ * test files (e.g. runtime-launcher-parity test (D) checks that
+ * $HOME/.claude/get-shit-done/bin/gsd-tools.cjs is absent).
+ *
+ * GSD_SKIP_STALE_SDK_CHECK=1 is set to suppress the `npm ls -g` subprocess
+ * that the installer spawns for global installs — that subprocess is slow,
+ * writes to ~/.npm cache, and is irrelevant to effort-wiring assertions.
+ *
  * The working directory is set to REPO_ROOT so install() can find the source
  * agents/. For config-driven tests, place tmpHome inside the project dir
  * so that readGsdEffectiveEffortConfig(targetDir) can walk up from tmpHome
@@ -69,10 +81,19 @@ function runGlobalInstall(runtime, tmpHome) {
   const envVar = envVarMap[runtime];
   if (!envVar) throw new Error(`Unsupported runtime in test: ${runtime}`);
 
+  // Isolate HOME to a fresh temp dir so install.js code that calls
+  // os.homedir() (cache deletion, defaults.json reads, npm subprocess)
+  // never touches the real $HOME/.claude / $HOME/.cache / $HOME/.gsd.
+  const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-443-home-'));
+
   const prev = process.env[envVar];
   const prevCwd = process.cwd();
+  const prevHome = process.env.HOME;
+  const prevSkipStale = process.env.GSD_SKIP_STALE_SDK_CHECK;
 
   process.env[envVar] = tmpHome;
+  process.env.HOME = isolatedHome;
+  process.env.GSD_SKIP_STALE_SDK_CHECK = '1';
   process.chdir(REPO_ROOT);
 
   try {
@@ -81,6 +102,12 @@ function runGlobalInstall(runtime, tmpHome) {
     process.chdir(prevCwd);
     if (prev === undefined) delete process.env[envVar];
     else process.env[envVar] = prev;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevSkipStale === undefined) delete process.env.GSD_SKIP_STALE_SDK_CHECK;
+    else process.env.GSD_SKIP_STALE_SDK_CHECK = prevSkipStale;
+    // Clean up the isolated HOME dir
+    try { fs.rmSync(isolatedHome, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
   }
 
   return tmpHome;
