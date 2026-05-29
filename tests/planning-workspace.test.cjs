@@ -125,6 +125,25 @@ describe('planning-workspace: lock seam', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test('does not retry errors thrown by locked work', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-planning-lock-work-error-'));
+    let attempts = 0;
+    try {
+      assert.throws(() => {
+        withPlanningLock(tmpDir, () => {
+          attempts += 1;
+          const err = new Error('write failed inside critical section');
+          err.code = 'EIO';
+          throw err;
+        });
+      }, /write failed inside critical section/);
+      assert.strictEqual(attempts, 1);
+      assert.ok(!fs.existsSync(path.join(tmpDir, '.planning', '.lock')));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('core compatibility adapter: planning workspace functions', () => {

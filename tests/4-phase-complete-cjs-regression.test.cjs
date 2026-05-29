@@ -207,6 +207,39 @@ describe('issue #4 (CJS): cmdPhaseComplete — idempotency (blind-increment bug)
       `STATE after second call (body: ${completedAfter2Body}, fm: ${completedAfter2Fm}):\n${stateAfter2}`,
     );
   });
+
+  test('rolls back ROADMAP when STATE write fails during phase completion', (t) => {
+    const roadmapPath = path.join(tmpDir, '.planning', 'ROADMAP.md');
+    const statePath = path.join(tmpDir, '.planning', 'STATE.md');
+    const originalRoadmap = fs.readFileSync(roadmapPath, 'utf8');
+    const originalState = fs.readFileSync(statePath, 'utf8');
+    const originalWriteFileSync = fs.writeFileSync;
+
+    t.mock.method(fs, 'writeFileSync', function injectedStateWriteFailure(target, ...args) {
+      const targetPath = String(target);
+      const content = String(args[0] ?? '');
+      const isStatePublish = targetPath === statePath || targetPath === `${statePath}.tmp.${process.pid}`;
+      if (isStatePublish && content.includes('Ready to plan')) {
+        const err = new Error('injected STATE.md write failure');
+        err.code = 'EIO';
+        throw err;
+      }
+      return originalWriteFileSync.call(this, target, ...args);
+    });
+
+    assert.throws(
+      () => capturePhaseComplete(tmpDir, '1'),
+      /injected STATE\.md write failure/,
+    );
+
+    const roadmapAfter = fs.readFileSync(roadmapPath, 'utf8');
+    const stateAfter = fs.readFileSync(statePath, 'utf8');
+
+    assert.ok(!roadmapAfter.includes('[x]'), 'ROADMAP.md should not leave phase checkbox marked complete');
+    assert.ok(!roadmapAfter.includes('Complete    '), 'ROADMAP.md should not leave progress row marked complete');
+    assert.ok(originalRoadmap.includes('Phase 01: Foundation'), 'fixture sanity check');
+    assert.equal(stateAfter, originalState, 'STATE.md should remain unchanged after injected write failure');
+  });
 });
 
 // ── T2: Progress percent must never exceed 100% ──────────────────────────────
