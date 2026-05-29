@@ -2223,7 +2223,7 @@ describe('Codex uninstall symmetry for hook-enabled configs', () => {
     assert.strictEqual(countMatches(cleaned, /\[agents\.gsd-/g), 0, 'removes managed GSD agent sections');
   });
 
-  test('install then uninstall preserves a pre-existing quoted [features].\"codex_hooks\" = true', () => {
+  test('install then uninstall preserves a pre-existing quoted [features]."codex_hooks" = true', () => {
     writeCodexConfig(codexHome, [
       '[features]',
       '"codex_hooks" = true',
