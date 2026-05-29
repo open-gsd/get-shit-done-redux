@@ -35,7 +35,7 @@ function parseWorkflowStructure(src) {
       // A new top-level key ends the `on:` block
       if (/^[a-zA-Z]/.test(line) && !line.startsWith(' ')) { inOn = false; continue; }
       // Direct children of `on:` are trigger names at 2-space indent
-      const m = line.match(/^  ([a-zA-Z_][a-zA-Z0-9_]*):/);
+      const m = line.match(/^ {2}([a-zA-Z_][a-zA-Z0-9_]*):/);
       if (m) onTriggers.push(m[1]);
     }
   }
@@ -45,17 +45,17 @@ function parseWorkflowStructure(src) {
   let inPrPaths = false;
   let inPullRequest = false;
   for (const line of lines) {
-    if (/^  pull_request:/.test(line)) { inPullRequest = true; continue; }
+    if (/^ {2}pull_request:/.test(line)) { inPullRequest = true; continue; }
     if (inPullRequest) {
-      if (/^    paths:/.test(line)) { inPrPaths = true; continue; }
+      if (/^ {4}paths:/.test(line)) { inPrPaths = true; continue; }
       if (inPrPaths) {
-        const m = line.match(/^      - '(.+)'/);
+        const m = line.match(/^ {6}- '(.+)'/);
         if (m) { prPaths.push(m[1]); continue; }
         // End of paths list
-        if (/^    [a-zA-Z]/.test(line)) inPrPaths = false;
+        if (/^ {4}[a-zA-Z]/.test(line)) inPrPaths = false;
       }
       // End of pull_request block
-      if (/^  [a-zA-Z]/.test(line) && !line.startsWith('    ')) inPullRequest = false;
+      if (/^ {2}[a-zA-Z]/.test(line) && !line.startsWith('    ')) inPullRequest = false;
     }
   }
 
@@ -67,46 +67,46 @@ function parseWorkflowStructure(src) {
 
   for (const line of lines) {
     // Step boundary: 6-space "- name:" or "- uses:"
-    if (/^      - name:/.test(line)) {
+    if (/^ {6}- name:/.test(line)) {
       if (currentStep && runLines.length) {
         currentStep.run = runLines.join('\n');
       }
       if (currentStep) steps.push(currentStep);
-      currentStep = { name: line.replace(/^      - name:\s*/, '').trim() };
+      currentStep = { name: line.replace(/^ {6}- name:\s*/, '').trim() };
       inRun = false;
       runLines = [];
       continue;
     }
-    if (/^      - uses:/.test(line)) {
+    if (/^ {6}- uses:/.test(line)) {
       if (currentStep && runLines.length) {
         currentStep.run = runLines.join('\n');
       }
       if (currentStep) steps.push(currentStep);
-      currentStep = { uses: line.replace(/^      - uses:\s*/, '').trim() };
+      currentStep = { uses: line.replace(/^ {6}- uses:\s*/, '').trim() };
       inRun = false;
       runLines = [];
       continue;
     }
     // uses: field inside a named step (e.g. "- name: Foo\n  uses: actions/...")
-    if (currentStep && /^        uses:\s/.test(line)) {
-      currentStep.uses = line.replace(/^        uses:\s*/, '').trim();
+    if (currentStep && /^ {8}uses:\s/.test(line)) {
+      currentStep.uses = line.replace(/^ {8}uses:\s*/, '').trim();
       continue;
     }
     // run: block inside a step
-    if (currentStep && /^        run:\s*\|/.test(line)) {
+    if (currentStep && /^ {8}run:\s*\|/.test(line)) {
       inRun = true;
       runLines = [];
       continue;
     }
-    if (currentStep && /^        run:\s*(?!\|)/.test(line)) {
+    if (currentStep && /^ {8}run:\s*(?!\|)/.test(line)) {
       // Inline run (no |)
-      currentStep.run = line.replace(/^        run:\s*/, '').trim();
+      currentStep.run = line.replace(/^ {8}run:\s*/, '').trim();
       inRun = false;
       continue;
     }
     if (inRun) {
       // Lines deeper than 8 spaces belong to the run block
-      if (/^          /.test(line) || line.trim() === '') {
+      if (/^ {10}/.test(line) || line.trim() === '') {
         runLines.push(line);
       } else {
         inRun = false;

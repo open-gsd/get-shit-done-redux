@@ -53,7 +53,7 @@ function extractFrontmatter(content) {
 
   // Stack to track nested objects: [{obj, key, indent}]
   // obj = object to write to, key = current key collecting array items, indent = indentation level
-  let stack = [{ obj: frontmatter, key: null, indent: -1 }];
+  const stack = [{ obj: frontmatter, key: null, indent: -1 }];
 
   for (const line of lines) {
     // Skip empty lines

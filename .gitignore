@@ -1,5 +1,8 @@
 node_modules/
 .DS_Store
+
+# ESLint cache
+node_modules/.cache/eslint/
 TO-DOS.md
 CLAUDE.md
 /research.claude/
