@@ -505,9 +505,9 @@ describe('resolveModelInternal', () => {
 
   describe('resolve_model_ids: true', () => {
     // Regression test for #2712: MODEL_ALIAS_MAP must track current model releases.
-    test('opus alias resolves to claude-opus-4-7', () => {
+    test('opus alias resolves to claude-opus-4-8', () => {
       writeConfig({ resolve_model_ids: true, model_profile: 'quality' });
-      assert.strictEqual(resolveModelInternal(tmpDir, 'gsd-planner'), 'claude-opus-4-7');
+      assert.strictEqual(resolveModelInternal(tmpDir, 'gsd-planner'), 'claude-opus-4-8');
     });
 
     test('sonnet alias resolves to claude-sonnet-4-6', () => {
