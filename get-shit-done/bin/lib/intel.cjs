@@ -457,6 +457,70 @@ function intelValidate(planningDir) {
 }
 
 /**
+ * Render .planning/intel/api-map.json into a human-readable API-SURFACE.md.
+ * Always writes the file — even when api-map.json is absent or empty, the
+ * surface will contain an explicit "incomplete" banner so consumers never
+ * mistake silence for "nothing exists".
+ *
+ * @param {string} planningDir - Path to .planning directory
+ * @returns {{ written: string, symbolCount: number, stale: boolean } | { disabled: true, message: string }}
+ */
+function intelApiSurface(planningDir) {
+  if (!isIntelEnabled(planningDir)) return disabledResponse();
+
+  const intelPath = ensureIntelDir(planningDir);
+  const apiMapPath = path.join(intelPath, INTEL_FILES.apis);
+  const outputPath = path.join(intelPath, 'API-SURFACE.md');
+
+  const data = safeReadJson(apiMapPath);
+  const entries = (data && data.entries && typeof data.entries === 'object')
+    ? Object.entries(data.entries)
+    : [];
+  const symbolCount = entries.length;
+
+  // Staleness: reuse the _meta.updated_at field if present
+  const STALE_MS = 24 * 60 * 60 * 1000;
+  let stale = true;
+  if (data && data._meta && data._meta.updated_at) {
+    const age = Date.now() - new Date(data._meta.updated_at).getTime();
+    stale = age > STALE_MS;
+  }
+
+  const lines = [];
+  lines.push('# API Surface');
+  lines.push('');
+  lines.push('> Generated from `.planning/intel/api-map.json`. Do not edit by hand.');
+  lines.push('');
+
+  if (symbolCount === 0) {
+    lines.push('> **Incomplete:** api-map.json has no entries (intel extraction is regex/JS-only or not yet populated).');
+    lines.push('> Treat absence here as "unknown", not "does not exist".');
+    lines.push('');
+  } else {
+    if (stale) {
+      lines.push('> **Warning:** api-map.json is stale (>24 hours old). Data below may be out of date.');
+      lines.push('');
+    }
+
+    for (const [symbol, info] of entries) {
+      lines.push(`## \`${symbol}\``);
+      lines.push('');
+      if (info && typeof info === 'object') {
+        for (const [field, val] of Object.entries(info)) {
+          const display = Array.isArray(val) ? val.join(', ') : String(val);
+          lines.push(`- **${field}:** ${display}`);
+        }
+      }
+      lines.push('');
+    }
+  }
+
+  platformWriteSync(outputPath, lines.join('\n'));
+
+  return { written: outputPath, symbolCount, stale };
+}
+
+/**
  * Patch _meta.updated_at in a JSON intel file to the current timestamp.
  * Reads the file, updates _meta.updated_at, increments version, writes back.
  *
@@ -632,6 +696,7 @@ module.exports = {
   intelValidate,
   intelExtractExports,
   intelPatchMeta,
+  intelApiSurface,
 
   // Utilities
   ensureIntelDir,

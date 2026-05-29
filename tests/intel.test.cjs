@@ -21,6 +21,7 @@ const {
   intelSnapshot,
   intelPatchMeta,
   intelExtractExports,
+  intelApiSurface,
   ensureIntelDir,
   isIntelEnabled,
   INTEL_FILES,
@@ -702,5 +703,146 @@ describe('gsd-tools intel subcommands', () => {
     const output = JSON.parse(result.output);
     assert.strictEqual(output.valid, false);
     assert.ok(output.errors.length > 0);
+  });
+
+  test('unknown intel subcommand error lists api-surface', () => {
+    const result = runGsdTools(['intel', 'nonexistent-subcmd'], tmpDir);
+    assert.strictEqual(result.success, false);
+    const errorText = result.error || '';
+    assert.ok(errorText.includes('api-surface'), 'error message must list api-surface');
+  });
+
+  test('flag-looking intel subcommand treated as unknown, not crash', () => {
+    const result = runGsdTools(['intel', '--api-surface'], tmpDir);
+    assert.strictEqual(result.success, false);
+    const errorText = result.error || '';
+    assert.ok(errorText.includes('Unknown intel subcommand'), 'must emit typed unknown-subcommand error');
+  });
+
+  test('intel api-surface returns disabled message when not enabled', () => {
+    const result = runGsdTools(['intel', 'api-surface'], tmpDir);
+    assert.strictEqual(result.success, true);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.disabled, true);
+  });
+
+  test('intel api-surface writes API-SURFACE.md when enabled with populated api-map.json', () => {
+    const planningDir = path.join(tmpDir, '.planning');
+    enableIntel(planningDir);
+    writeIntelJson(planningDir, 'api-map.json', {
+      _meta: { updated_at: new Date().toISOString() },
+      entries: {
+        'intelQuery': { method: 'function', handler: 'intelQuery', role: 'query intel files' },
+        'intelStatus': { method: 'function', handler: 'intelStatus', role: 'report freshness' },
+      },
+    });
+    const result = runGsdTools(['intel', 'api-surface'], tmpDir);
+    assert.strictEqual(result.success, true);
+    const output = JSON.parse(result.output);
+    assert.ok(output.written, 'result must include written path');
+    assert.strictEqual(output.symbolCount, 2);
+    const mdContent = fs.readFileSync(output.written, 'utf8');
+    assert.ok(mdContent.includes('intelQuery'), 'API-SURFACE.md must list intelQuery symbol');
+    assert.ok(mdContent.includes('intelStatus'), 'API-SURFACE.md must list intelStatus symbol');
+  });
+});
+
+// ─── intelApiSurface ────────────────────────────────────────────────────────
+
+describe('intelApiSurface', () => {
+  let tmpDir;
+  let planningDir;
+
+  beforeEach(() => {
+    tmpDir = createTempProject();
+    planningDir = path.join(tmpDir, '.planning');
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('returns disabled response when intel is off', () => {
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.disabled, true);
+    assert.ok(result.message.includes('disabled'));
+  });
+
+  test('writes API-SURFACE.md with symbol entries from api-map.json', () => {
+    enableIntel(planningDir);
+    writeIntelJson(planningDir, 'api-map.json', {
+      _meta: { updated_at: new Date().toISOString() },
+      entries: {
+        'authenticate': { method: 'POST', handler: 'authController', role: 'user login' },
+        'createUser': { method: 'POST', handler: 'userController', role: 'user registration' },
+      },
+    });
+
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.symbolCount, 2);
+    assert.ok(result.written.endsWith('API-SURFACE.md'));
+
+    const content = fs.readFileSync(result.written, 'utf8');
+    assert.ok(content.includes('authenticate'), 'must include symbol name authenticate');
+    assert.ok(content.includes('createUser'), 'must include symbol name createUser');
+    assert.ok(content.includes('authController'), 'must include field value authController');
+  });
+
+  test('writes API-SURFACE.md with incomplete banner when api-map.json is absent', () => {
+    enableIntel(planningDir);
+    // No api-map.json written
+
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.symbolCount, 0);
+    assert.ok(result.written.endsWith('API-SURFACE.md'));
+
+    const content = fs.readFileSync(result.written, 'utf8');
+    assert.ok(content.includes('Incomplete'), 'must contain Incomplete banner when no entries');
+    assert.ok(content.includes('unknown'), 'must say treat absence as "unknown"');
+  });
+
+  test('writes API-SURFACE.md with incomplete banner when entries is empty object', () => {
+    enableIntel(planningDir);
+    writeIntelJson(planningDir, 'api-map.json', {
+      _meta: { updated_at: new Date().toISOString() },
+      entries: {},
+    });
+
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.symbolCount, 0);
+
+    const content = fs.readFileSync(result.written, 'utf8');
+    assert.ok(content.includes('Incomplete'), 'empty entries must still emit incomplete banner');
+  });
+
+  test('returns stale=false for fresh api-map.json', () => {
+    enableIntel(planningDir);
+    writeIntelJson(planningDir, 'api-map.json', {
+      _meta: { updated_at: new Date().toISOString() },
+      entries: { 'myFunc': { method: 'function' } },
+    });
+
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.stale, false);
+  });
+
+  test('returns stale=true for old api-map.json', () => {
+    enableIntel(planningDir);
+    const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    writeIntelJson(planningDir, 'api-map.json', {
+      _meta: { updated_at: oldDate },
+      entries: { 'myFunc': { method: 'function' } },
+    });
+
+    const result = intelApiSurface(planningDir);
+    assert.strictEqual(result.stale, true);
+  });
+
+  test('return shape has written, symbolCount, stale fields', () => {
+    enableIntel(planningDir);
+    const result = intelApiSurface(planningDir);
+    assert.ok('written' in result, 'result must have written field');
+    assert.ok('symbolCount' in result, 'result must have symbolCount field');
+    assert.ok('stale' in result, 'result must have stale field');
   });
 });

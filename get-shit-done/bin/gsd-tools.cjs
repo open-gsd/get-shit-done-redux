@@ -83,6 +83,7 @@
  *   intel patch-meta <file>        Update _meta.updated_at in an intel file
  *   intel validate                 Validate intel file structure
  *   intel extract-exports <file>   Extract exported symbols from a source file
+ *   intel api-surface               Render api-map.json into API-SURFACE.md
  *
  * Scaffolding:
  *   scaffold context --phase <N>       Create CONTEXT.md template
@@ -1266,8 +1267,11 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
       } else if (subcommand === 'update') {
         const planningDir = path.join(cwd, '.planning');
         core.output(intel.intelUpdate(planningDir), raw);
+      } else if (subcommand === 'api-surface') {
+        const planningDir = path.join(cwd, '.planning');
+        core.output(intel.intelApiSurface(planningDir), raw);
       } else {
-        error('Unknown intel subcommand. Available: query, status, update, diff, snapshot, patch-meta, validate, extract-exports', ERROR_REASON.SDK_UNKNOWN_COMMAND);
+        error('Unknown intel subcommand. Available: query, status, update, diff, snapshot, patch-meta, validate, extract-exports, api-surface', ERROR_REASON.SDK_UNKNOWN_COMMAND);
       }
       break;
     }
