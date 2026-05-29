@@ -11534,7 +11534,7 @@ module.exports = {
   };
 
 // Main logic — only run when not loaded as a module for testing
-if (!process.env.GSD_TEST_MODE) {
+if (require.main === module && !process.env.GSD_TEST_MODE) {
   if (hasSkillsRoot) {
     // Print the skills root directory for a given runtime (used by /gsd-sync-skills).
     // Usage: node install.js --skills-root <runtime>
