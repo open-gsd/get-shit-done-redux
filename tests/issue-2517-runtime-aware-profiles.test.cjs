@@ -580,10 +580,13 @@ describe('issue #2517: install end-to-end — per-project config reaches Codex T
     assert.match(toml, /^model_reasoning_effort = "xhigh"$/m);
   });
 
-  test('generated TOML omits reasoning_effort when runtime has none', () => {
-    // For a known runtime with model but no reasoning_effort, only model is emitted.
-    // Use the user-override path to simulate this with codex (no built-in returns
-    // model alone, so fabricate via override of an unknown-runtime entry).
+  test('generated TOML always includes model_reasoning_effort even when model_profile_overrides sets reasoning_effort to empty (#443 unified)', () => {
+    // Under the unified effort design (#443), model_reasoning_effort in the Codex TOML
+    // is driven by the unified effort resolver (resolveInstallTimeEffort / effortCfg),
+    // NOT by model_profile_overrides.reasoning_effort. Setting reasoning_effort: '' in
+    // model_profile_overrides does NOT suppress the unified effort — the TOML always
+    // carries a valid model_reasoning_effort drawn from the agent's routing tier.
+    // gsd-planner is a heavy-tier agent → unified default resolves to "xhigh".
     writeConfig(tmpDir, {
       runtime: 'codex',
       model_profile: 'quality',
@@ -596,8 +599,12 @@ describe('issue #2517: install end-to-end — per-project config reaches Codex T
       null,
       resolver
     );
+    // Model override (from model_profile_overrides) is still respected.
     assert.match(toml, /^model = "custom"$/m);
-    assert.doesNotMatch(toml, /model_reasoning_effort/);
+    // Unified effort always fires — model_reasoning_effort is present and valid.
+    assert.match(toml, /^model_reasoning_effort = "(minimal|low|medium|high|xhigh)"$/m);
+    // gsd-planner is heavy-tier, so with no effortCfg the manifest tier default applies → xhigh.
+    assert.match(toml, /^model_reasoning_effort = "xhigh"$/m);
   });
 
   test('resolver returns null with no global, no per-project config', () => {
