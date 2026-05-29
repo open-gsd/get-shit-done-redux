@@ -992,3 +992,108 @@ describe('config-path command (#2282)', () => {
     assert.strictEqual(configContent.model_profile, 'quality', 'config-path should point to the file config-set wrote');
   });
 });
+
+// ─── plan_review.source_grounding + _authority (#22) ─────────────────────────
+
+describe('plan_review.source_grounding and plan_review.source_grounding_authority (#22)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = createTempProject();
+    runGsdTools('config-ensure-section', tmpDir, { HOME: tmpDir, USERPROFILE: tmpDir });
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  // (a) Default of plan_review.source_grounding is true
+  test('plan_review.source_grounding defaults to true when not set in config.json', () => {
+    const config = readConfig(tmpDir);
+    assert.strictEqual(
+      config.plan_review?.source_grounding,
+      true,
+      'plan_review.source_grounding must default to true'
+    );
+  });
+
+  // (b) Default of plan_review.source_grounding_authority is "grep"
+  test('plan_review.source_grounding_authority defaults to "grep" when not set in config.json', () => {
+    const config = readConfig(tmpDir);
+    assert.strictEqual(
+      config.plan_review?.source_grounding_authority,
+      'grep',
+      'plan_review.source_grounding_authority must default to "grep"'
+    );
+  });
+
+  // (c) Both keys are recognized as valid config keys
+  test('plan_review.source_grounding is a valid config key accepted by config-set', () => {
+    const result = runGsdTools('config-set plan_review.source_grounding false', tmpDir);
+    assert.ok(result.success, `config-set plan_review.source_grounding failed: ${result.error}`);
+
+    const config = readConfig(tmpDir);
+    assert.strictEqual(config.plan_review.source_grounding, false);
+  });
+
+  test('plan_review.source_grounding_authority is a valid config key accepted by config-set', () => {
+    const result = runGsdTools('config-set plan_review.source_grounding_authority intel', tmpDir);
+    assert.ok(result.success, `config-set plan_review.source_grounding_authority failed: ${result.error}`);
+
+    const config = readConfig(tmpDir);
+    assert.strictEqual(config.plan_review.source_grounding_authority, 'intel');
+  });
+
+  // Enum positive: all valid authority values
+  test('plan_review.source_grounding_authority accepts all valid enum values', () => {
+    const validValues = ['grep', 'intel', 'treesitter', 'lsp', 'scip'];
+    for (const v of validValues) {
+      const result = runGsdTools(`config-set plan_review.source_grounding_authority ${v}`, tmpDir);
+      assert.ok(result.success, `config-set plan_review.source_grounding_authority ${v} failed: ${result.error}`);
+      const config = readConfig(tmpDir);
+      assert.strictEqual(config.plan_review.source_grounding_authority, v);
+    }
+  });
+
+  // (d) NEGATIVE MATRIX — invalid enum values are rejected
+  test('plan_review.source_grounding_authority rejects invalid value "bogus"', () => {
+    const result = runGsdTools('config-set plan_review.source_grounding_authority bogus', tmpDir);
+    assert.strictEqual(result.success, false, 'bogus should be rejected');
+    assert.ok(
+      result.error.includes('Invalid plan_review.source_grounding_authority'),
+      `Expected "Invalid plan_review.source_grounding_authority" in error: ${result.error}`
+    );
+  });
+
+  test('plan_review.source_grounding_authority rejects flag-looking value "--grep"', () => {
+    const result = runGsdTools(['config-set', 'plan_review.source_grounding_authority', '--grep'], tmpDir);
+    assert.strictEqual(result.success, false, '--grep should be rejected');
+    assert.ok(
+      result.error.includes('Invalid plan_review.source_grounding_authority'),
+      `Expected "Invalid plan_review.source_grounding_authority" in error: ${result.error}`
+    );
+  });
+
+  test('plan_review.source_grounding_authority rejects empty string', () => {
+    const result = runGsdTools(['config-set', 'plan_review.source_grounding_authority', ''], tmpDir);
+    assert.strictEqual(result.success, false, 'empty string should be rejected');
+  });
+
+  test('plan_review.source_grounding rejects non-boolean value "yes"', () => {
+    const result = runGsdTools('config-set plan_review.source_grounding yes', tmpDir);
+    assert.strictEqual(result.success, false, '"yes" should be rejected as non-boolean');
+    assert.ok(
+      result.error.includes('Invalid plan_review.source_grounding'),
+      `Expected "Invalid plan_review.source_grounding" in error: ${result.error}`
+    );
+  });
+
+  test('plan_review.source_grounding rejects numeric value 1', () => {
+    const result = runGsdTools('config-set plan_review.source_grounding 1', tmpDir);
+    assert.strictEqual(result.success, false, 'numeric 1 should be rejected as non-boolean');
+    assert.ok(
+      result.error.includes('Invalid plan_review.source_grounding'),
+      `Expected "Invalid plan_review.source_grounding" in error: ${result.error}`
+    );
+  });
+});

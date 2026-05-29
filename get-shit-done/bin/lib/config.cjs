@@ -208,6 +208,10 @@ function buildNewProjectConfig(userChoices) {
     phase_naming: 'sequential',
     agent_skills: {},
     claude_md_path: './CLAUDE.md',
+    plan_review: {
+      source_grounding: true,
+      source_grounding_authority: 'grep',
+    },
   };
 
   // Three-level deep merge: hardcoded <- userDefaults <- choices
@@ -239,6 +243,11 @@ function buildNewProjectConfig(userChoices) {
       ...hardcoded.agent_skills,
       ...(userDefaults.agent_skills || {}),
       ...(choices.agent_skills || {}),
+    },
+    plan_review: {
+      ...hardcoded.plan_review,
+      ...(userDefaults.plan_review || {}),
+      ...(choices.plan_review || {}),
     },
   };
 
@@ -474,6 +483,19 @@ function cmdConfigSet(cwd, keyPath, value, raw) {
   const VALID_FALLOW_PROFILES = ['minimal', 'standard', 'strict'];
   if (keyPath === 'code_quality.fallow.profile' && !VALID_FALLOW_PROFILES.includes(String(parsedValue))) {
     error(`Invalid code_quality.fallow.profile '${value}'. Valid values: ${VALID_FALLOW_PROFILES.join(', ')}`);
+  }
+
+  // plan_review.source_grounding (#22) — boolean only
+  if (keyPath === 'plan_review.source_grounding') {
+    if (typeof parsedValue !== 'boolean') {
+      error(`Invalid plan_review.source_grounding '${value}'. Must be a boolean (true or false).`);
+    }
+  }
+
+  // plan_review.source_grounding_authority (#22) — enum
+  const VALID_SOURCE_GROUNDING_AUTHORITIES = ['grep', 'intel', 'treesitter', 'lsp', 'scip'];
+  if (keyPath === 'plan_review.source_grounding_authority' && !VALID_SOURCE_GROUNDING_AUTHORITIES.includes(String(parsedValue))) {
+    error(`Invalid plan_review.source_grounding_authority '${value}'. Valid values: ${VALID_SOURCE_GROUNDING_AUTHORITIES.join(', ')}`);
   }
 
   if (keyPath === 'review.default_reviewers') {

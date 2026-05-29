@@ -98,7 +98,9 @@
     "runtime",
     "resolve_model_ids",
     "effort.default",
-    "fast_mode.enabled"
+    "fast_mode.enabled",
+    "plan_review.source_grounding",
+    "plan_review.source_grounding_authority"
   ],
   "runtimeStateKeys": [
     "workflow._auto_chain_active"
