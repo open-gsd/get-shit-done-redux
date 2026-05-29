@@ -145,6 +145,7 @@ const { MODEL_PROFILES: GSD_MODEL_PROFILES } = require(path.join(_gsdLibDir, 'mo
 const {
   RUNTIME_PROFILE_MAP: GSD_RUNTIME_PROFILE_MAP,
   resolveTierEntry: gsdResolveTierEntry,
+  EFFORT_SET: GSD_EFFORT_SET,
 } = require(path.join(_gsdLibDir, 'core.cjs'));
 
 // #443 — model-catalog and config-defaults.manifest.json exports needed only
@@ -1509,12 +1510,16 @@ function readGsdEffectiveEffortConfig(targetDir = null) {
  * @returns {string}                Universal effort string (low/medium/high/xhigh/max/minimal)
  */
 function resolveInstallTimeEffort(effortCfg, agentName) {
+  // Validates each candidate against the canonical EFFORT_SET (sourced once
+  // from core.cjs) before accepting it, mirroring resolveEffortInternal exactly.
+  // Invalid values fall through to the next precedence layer; final fallback 'high'.
+
   // Step 1: agent_overrides
   if (effortCfg) {
     const ao = effortCfg.agent_overrides;
     if (ao && typeof ao === 'object' && !Array.isArray(ao)) {
       const v = ao[agentName];
-      if (typeof v === 'string') return v;
+      if (typeof v === 'string' && GSD_EFFORT_SET.has(v)) return v;
     }
   }
 
@@ -1526,11 +1531,11 @@ function resolveInstallTimeEffort(effortCfg, agentName) {
         typeof effortCfg.routing_tier_defaults === 'object' &&
         !Array.isArray(effortCfg.routing_tier_defaults)) {
       const v = effortCfg.routing_tier_defaults[agentTier];
-      if (typeof v === 'string') return v;
+      if (typeof v === 'string' && GSD_EFFORT_SET.has(v)) return v;
     } else if (!effortCfg) {
       // No effort config — use manifest tier defaults
       const v = EFFORT_MANIFEST_TIER_DEFAULTS[agentTier];
-      if (typeof v === 'string') return v;
+      if (typeof v === 'string' && GSD_EFFORT_SET.has(v)) return v;
     }
     // effortCfg exists but has no routing_tier_defaults — fall through
   }
@@ -1538,11 +1543,15 @@ function resolveInstallTimeEffort(effortCfg, agentName) {
   // Step 3: effort.default
   if (effortCfg) {
     const d = effortCfg.default;
-    if (typeof d === 'string') return d;
+    if (typeof d === 'string' && GSD_EFFORT_SET.has(d)) return d;
   }
 
   // Step 4: manifest default (sourced from config-defaults.manifest.json effort.default)
-  return EFFORT_MANIFEST_DEFAULT;
+  // If even the manifest default is invalid, fall back to 'high'.
+  if (typeof EFFORT_MANIFEST_DEFAULT === 'string' && GSD_EFFORT_SET.has(EFFORT_MANIFEST_DEFAULT)) {
+    return EFFORT_MANIFEST_DEFAULT;
+  }
+  return 'high';
 }
 
 /**

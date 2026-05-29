@@ -303,6 +303,88 @@ describe('#443 Config-driven: effort.agent_overrides drives install-time effort'
   });
 });
 
+// ─── describe 5b: Invalid effort tokens fall through (Codex adversarial finding #2) ─
+//
+// These tests FAIL before the fix: resolveInstallTimeEffort returns the raw
+// invalid string without validating it against VALID_EFFORTS.
+
+describe('#443 resolveInstallTimeEffort: invalid tokens fall through to valid effort', () => {
+  let tmpDir;
+  let claudeHome;
+  let codexHome;
+
+  beforeEach(() => {
+    // Layout: tmpDir/project/  <-- project root
+    //           .planning/config.json
+    //           .claude/          <-- claudeHome
+    //           .codex/           <-- codexHome
+    tmpDir = makeTmpDir('gsd-443-invalid-effort-');
+    const projectDir = path.join(tmpDir, 'project');
+    claudeHome = path.join(projectDir, '.claude');
+    codexHome = path.join(projectDir, '.codex');
+
+    fs.mkdirSync(claudeHome, { recursive: true });
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(path.join(projectDir, '.planning'), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeProjectConfig(config) {
+    const projectDir = path.dirname(claudeHome);
+    fs.writeFileSync(
+      path.join(projectDir, '.planning', 'config.json'),
+      JSON.stringify(config, null, 2)
+    );
+  }
+
+  const VALID_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+  test('effort.default="ultra" (invalid) -> Claude .md effort: is a VALID value (falls through to high)', () => {
+    // BUG before fix: resolveInstallTimeEffort returns "ultra" verbatim
+    writeProjectConfig({ effort: { default: 'ultra' } });
+    runGlobalInstall('claude', claudeHome);
+    const fm = readFrontmatter(path.join(claudeHome, 'agents', 'gsd-planner.md'));
+    const match = fm.match(/^effort:\s*(\S+)$/m);
+    assert.ok(match, `effort: must be present in frontmatter\nActual:\n${fm}`);
+    assert.ok(VALID_EFFORTS.includes(match[1]),
+      `effort: must be a VALID effort string, got: "${match[1]}"\nActual frontmatter:\n${fm}`);
+  });
+
+  test('effort.agent_overrides.gsd-planner="bogus" (invalid) with valid default -> falls through to valid default', () => {
+    // BUG before fix: "bogus" is returned and written verbatim
+    writeProjectConfig({
+      effort: {
+        agent_overrides: { 'gsd-planner': 'bogus' },
+        default: 'medium',
+      },
+    });
+    runGlobalInstall('claude', claudeHome);
+    const fm = readFrontmatter(path.join(claudeHome, 'agents', 'gsd-planner.md'));
+    const match = fm.match(/^effort:\s*(\S+)$/m);
+    assert.ok(match, `effort: must be present in frontmatter\nActual:\n${fm}`);
+    assert.ok(VALID_EFFORTS.includes(match[1]),
+      `effort: must be a VALID effort string, got: "${match[1]}"\nActual frontmatter:\n${fm}`);
+    // Falls through invalid "bogus" -> valid tier default or "medium" default
+    // "medium" is valid, so it should appear (or tier default if medium is invalid, but medium is valid)
+  });
+
+  test('effort.default="ultra" (invalid) -> Codex .toml model_reasoning_effort is VALID', () => {
+    // BUG before fix: "ultra" written into .toml verbatim
+    writeProjectConfig({ effort: { default: 'ultra' } });
+    runGlobalInstall('codex', codexHome);
+    const tomlContent = fs.readFileSync(
+      path.join(codexHome, 'agents', 'gsd-planner.toml'), 'utf8'
+    );
+    const match = tomlContent.match(/^model_reasoning_effort\s*=\s*"([^"]+)"/m);
+    assert.ok(match, `model_reasoning_effort must be present in .toml\nActual:\n${tomlContent.slice(0, 500)}`);
+    assert.ok(VALID_EFFORTS.includes(match[1]),
+      `model_reasoning_effort must be VALID, got: "${match[1]}"\nActual:\n${tomlContent.slice(0, 500)}`);
+  });
+});
+
 // ─── describe 5: Source stays clean ──────────────────────────────────────────
 
 describe('#443 Source purity: agents/gsd-planner.md has no effort: key', () => {

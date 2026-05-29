@@ -656,3 +656,114 @@ describe('#443 config schema: new effort/fast_mode keys valid', () => {
     assert.ok(!isValidConfigKey('effort.routing_tier_defaults.super'));
   });
 });
+
+// ─── resolve-execution arg parsing matrix (Codex adversarial finding #1) ──────
+//
+// These tests FAIL before the fix: flags-first ordering misroutes the agent.
+
+describe('#443 resolve-execution: deterministic arg parsing (flags-first ordering)', () => {
+  let tmpDir;
+  beforeEach(() => {
+    tmpDir = createTempProject();
+    process.env._GSD_TEST_HOME_OVERRIDE = tmpDir;
+  });
+  afterEach(() => {
+    cleanup(tmpDir);
+    delete process.env._GSD_TEST_HOME_OVERRIDE;
+  });
+
+  test('flags-first: --effort low gsd-planner resolves gsd-planner (NOT "low" as agent)', () => {
+    // BUG: before fix, agentTypeArg = 'low' (first non-dash token) -> unknown_agent:true
+    const result = runGsdTools(
+      ['resolve-execution', '--effort', 'low', 'gsd-planner'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(!output.unknown_agent, `agent must be resolved (not unknown_agent), got: ${JSON.stringify(output)}`);
+    assert.strictEqual(output.effort, 'low', `effort should be low, got: ${output.effort}`);
+  });
+
+  test('flags-first: --attempt 1 gsd-codebase-mapper resolves gsd-codebase-mapper (NOT "1" as agent)', () => {
+    // BUG: before fix, agentTypeArg = '1' -> unknown_agent:true
+    const result = runGsdTools(
+      ['resolve-execution', '--attempt', '1', 'gsd-codebase-mapper'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(!output.unknown_agent, `gsd-codebase-mapper must be resolved, got: ${JSON.stringify(output)}`);
+  });
+
+  test('agent-first parity: gsd-planner --effort low produces same effort as flags-first', () => {
+    const flagsFirst = runGsdTools(
+      ['resolve-execution', '--effort', 'low', 'gsd-planner'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    const agentFirst = runGsdTools(
+      ['resolve-execution', 'gsd-planner', '--effort', 'low'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(flagsFirst.success && agentFirst.success,
+      `Both orderings must succeed. flags-first err: ${flagsFirst.error} agent-first err: ${agentFirst.error}`);
+    const outFF = JSON.parse(flagsFirst.output);
+    const outAF = JSON.parse(agentFirst.output);
+    assert.strictEqual(outFF.effort, outAF.effort, 'effort must be identical for both orderings');
+    assert.strictEqual(outFF.model, outAF.model, 'model must be identical for both orderings');
+  });
+
+  test('error: missing agent (--effort low with no positional) -> non-zero exit, no stack trace', () => {
+    const result = runGsdTools(
+      ['resolve-execution', '--effort', 'low'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(!result.success, 'must exit non-zero when agent is missing');
+    assert.ok(!result.error.includes('at '), `error must not contain stack trace, got: ${result.error}`);
+    assert.ok(result.error.length > 0, 'must emit an error message');
+  });
+
+  test('error: two positional agents -> non-zero exit', () => {
+    const result = runGsdTools(
+      ['resolve-execution', 'gsd-planner', 'gsd-executor'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(!result.success, 'must exit non-zero when two agents are given');
+  });
+
+  test('error: --attempt notanumber -> non-zero exit, clear error', () => {
+    const result = runGsdTools(
+      ['resolve-execution', '--attempt', 'notanumber', 'gsd-planner'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(!result.success, 'must exit non-zero for non-integer --attempt');
+    assert.ok(result.error.length > 0, 'must emit an error message');
+  });
+
+  test('error: trailing --effort (no value) -> non-zero exit', () => {
+    const result = runGsdTools(
+      ['resolve-execution', 'gsd-planner', '--effort'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(!result.success, 'must exit non-zero for trailing --effort with no value');
+    assert.ok(result.error.length > 0, 'must emit an error message');
+  });
+
+  test('unknown agent positional -> unknown_agent:true (preserved behavior)', () => {
+    const result = runGsdTools(
+      ['resolve-execution', 'totally-not-an-agent'],
+      tmpDir,
+      { HOME: tmpDir }
+    );
+    assert.ok(result.success, `Should succeed (unknown agent is valid input): ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.unknown_agent, true, 'unknown agent must emit unknown_agent:true');
+  });
+});
