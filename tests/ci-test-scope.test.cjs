@@ -18,12 +18,14 @@ function scopeFor(files) {
 }
 
 describe('ci-test-scope.cjs', () => {
-  test('docs-only changes do not request code matrix work', () => {
+  test('docs-only changes mark code_changed and select docs-parity (new correct contract)', () => {
     const result = scopeFor(['docs/usage.md']);
-    assert.strictEqual(result.code_changed, false);
+    assert.strictEqual(result.code_changed, true);
     assert.strictEqual(result.full_matrix, false);
-    assert.deepStrictEqual(result.targeted_tests, []);
-    assert.deepStrictEqual(result.windows_tests, []);
+    assert.ok(
+      result.targeted_tests.some(t => t.includes('docs-parity-live-registry')),
+      `expected docs-parity-live-registry in targeted_tests, got: ${JSON.stringify(result.targeted_tests)}`,
+    );
   });
 
   test('workflow changes request full matrix and workflow contract tests', () => {
@@ -101,5 +103,49 @@ describe('ci-test-scope.cjs', () => {
     // allow-test-rule: the unit-fallback contract is the exact subject of bug #408.
     assert.deepStrictEqual(result.targeted_tests, ['unit'],
       'targeted_tests must be [\'unit\'] when code changed but no rule matched');
+  });
+});
+
+describe('ci-test-scope superset invariant (#494)', () => {
+  // Facet A: any tests/** change → full_matrix === true
+  test('A1: a specific changed test file forces full_matrix', () => {
+    const result = scopeFor(['tests/bug-1974-context-exhaustion-record.test.cjs']);
+    assert.strictEqual(result.full_matrix, true,
+      `expected full_matrix=true for tests/** change, got: ${JSON.stringify(result)}`);
+  });
+
+  test('A2: any tests/** path forces full_matrix', () => {
+    const result = scopeFor(['tests/some-new.test.cjs']);
+    assert.strictEqual(result.full_matrix, true,
+      `expected full_matrix=true for tests/** change, got: ${JSON.stringify(result)}`);
+  });
+
+  // Facet B: docs/**, commands/**, agents/** → code_changed AND docs-parity selected
+  test('B1: docs/adr change marks code_changed and selects docs-parity-live-registry', () => {
+    const result = scopeFor(['docs/adr/22-plan-drift-guard.md']);
+    assert.strictEqual(result.code_changed, true,
+      `expected code_changed=true for docs/** change, got: ${JSON.stringify(result)}`);
+    assert.ok(
+      result.targeted_tests.some(t => t.includes('docs-parity-live-registry')),
+      `expected docs-parity-live-registry in targeted_tests, got: ${JSON.stringify(result.targeted_tests)}`,
+    );
+  });
+
+  test('B2: docs locale dir change marks code_changed and selects docs-parity-live-registry', () => {
+    const result = scopeFor(['docs/ja-JP/USAGE.md']);
+    assert.strictEqual(result.code_changed, true,
+      `expected code_changed=true for docs/ja-JP/** change, got: ${JSON.stringify(result)}`);
+    assert.ok(
+      result.targeted_tests.some(t => t.includes('docs-parity-live-registry')),
+      `expected docs-parity-live-registry in targeted_tests, got: ${JSON.stringify(result.targeted_tests)}`,
+    );
+  });
+
+  test('B3: commands/** change selects docs-parity-live-registry', () => {
+    const result = scopeFor(['commands/gsd/plan-phase.md']);
+    assert.ok(
+      result.targeted_tests.some(t => t.includes('docs-parity-live-registry')),
+      `expected docs-parity-live-registry in targeted_tests for commands/** change, got: ${JSON.stringify(result.targeted_tests)}`,
+    );
   });
 });

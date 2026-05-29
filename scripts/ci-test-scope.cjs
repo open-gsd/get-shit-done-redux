@@ -105,6 +105,7 @@ const RULES = [
       'tests/command-contract.test.cjs',
       'tests/command-routing-hub.test.cjs',
       'tests/commands.test.cjs',
+      'tests/docs-parity-live-registry.test.cjs',
       'tests/phase-command-router.test.cjs',
       'tests/roadmap-command-router.test.cjs',
     ],
@@ -129,6 +130,15 @@ const RULES = [
       'tests/agent-skills.test.cjs',
       'tests/agent-skills-awareness.test.cjs',
       'tests/agent-required-reading-consistency.test.cjs',
+      'tests/docs-parity-live-registry.test.cjs',
+    ],
+  },
+  {
+    name: 'docs content',
+    match: path => path.startsWith('docs/'),
+    fullMatrix: false,
+    tests: [
+      'tests/docs-parity-live-registry.test.cjs',
     ],
   },
   {
@@ -219,7 +229,7 @@ function classify(files) {
   let fullMatrix = false;
 
   for (const file of files) {
-    if (/^(bin|get-shit-done|agents|commands|hooks|tests|scripts)\//.test(file) ||
+    if (/^(bin|get-shit-done|agents|commands|docs|hooks|tests|scripts)\//.test(file) ||
       /^package(-lock)?\.json$/.test(file) ||
       /^tsconfig.*\.json$/.test(file) ||
       file.startsWith('.github/workflows/') ||
@@ -229,6 +239,7 @@ function classify(files) {
 
     if (file.startsWith('tests/') && file.endsWith('.test.cjs')) {
       targeted.add(file);
+      fullMatrix = true;
       if (/windows|path|shell|workflow|install|hook/i.test(file)) {
         windows.add(file);
       }
