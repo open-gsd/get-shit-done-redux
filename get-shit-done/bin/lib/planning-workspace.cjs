@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { platformEnsureDir } = require('./shell-command-projection.cjs');
+const { realClock } = require('./clock.cjs');
 const {
   createSharedPointerAdapter,
   createSessionScopedPointerAdapter,
@@ -82,10 +83,19 @@ function planningPaths(cwd, ws) {
   };
 }
 
-function withPlanningLock(cwd, fn) {
+/**
+ * @param {string} cwd
+ * @param {function} fn - callback to run while holding the lock
+ * @param {{ now(): number, sleep(ms: number): void }} [clock]
+ *   Optional clock seam for testing. Defaults to realClock (Date.now + Atomics.wait).
+ *   Pass a fake clock from tests/helpers/clock.cjs to drive timeout/stale logic
+ *   without real wall-clock waits.
+ */
+function withPlanningLock(cwd, fn, clock) {
+  if (clock === undefined) clock = realClock;
   const lockPath = path.join(planningDir(cwd), '.lock');
   const lockTimeout = 10000; // 10 seconds
-  const start = Date.now();
+  const start = clock.now();
 
   // Ensure .planning/ exists
   try { platformEnsureDir(planningDir(cwd)); } catch { /* ok */ }
@@ -109,13 +119,7 @@ function withPlanningLock(cwd, fn) {
     }
   }
 
-  // Allocate once before the retry loop — reused on every Atomics.wait spin.
-  // The buffer value is always 0 (never written), so reuse is semantically
-  // identical to allocating fresh each time.  Mirrors the #316/#399 fix for
-  // acquireStateLock in state.cjs.
-  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
-
-  while (Date.now() - start < lockTimeout) {
+  while (clock.now() - start < lockTimeout) {
     try {
       return runWithHeldLock();
     } catch (err) {
@@ -123,21 +127,21 @@ function withPlanningLock(cwd, fn) {
       // are recoverable — wait and retry rather than propagating.
       // See PLANNING_LOCK_RETRY_ERRNOS for the full list and rationale.
       if (PLANNING_LOCK_RETRY_ERRNOS.has(err.code)) {
-        Atomics.wait(sleepBuf, 0, 0, 100);
+        clock.sleep(100);
         continue;
       }
       if (err.code === 'EEXIST') {
         // Lock exists — check if stale (>30s old)
         try {
           const stat = fs.statSync(lockPath);
-          if (Date.now() - stat.mtimeMs > 30000) {
+          if (clock.now() - stat.mtimeMs > 30000) {
             fs.unlinkSync(lockPath);
             continue; // retry
           }
         } catch { continue; }
 
         // Wait and retry (cross-platform, no shell dependency)
-        Atomics.wait(sleepBuf, 0, 0, 100);
+        clock.sleep(100);
         continue;
       }
       throw err;

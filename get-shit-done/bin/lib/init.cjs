@@ -985,7 +985,7 @@ function cmdInitMilestoneOp(cwd, raw) {
   // `phases clear` between milestones, on-disk dirs will be a subset of the
   // roadmap until each phase is materialized; reading from disk causes
   // `all_phases_complete: true` to fire prematurely.
-  let roadmapPhaseNumbers = [];
+  const roadmapPhaseNumbers = [];
   try {
     const roadmapPath = path.join(planningDir(cwd), 'ROADMAP.md');
     const roadmapRaw = fs.readFileSync(roadmapPath, 'utf-8');

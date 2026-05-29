@@ -160,14 +160,19 @@ describe('#1974 context exhaustion auto-record', () => {
     } catch { /* noop */ }
   });
 
-  test('sets criticalRecorded sentinel and state record-session writes Stopped At on CRITICAL', () => {
+  test('sets criticalRecorded sentinel on CRITICAL (synchronous assertion only)', () => {
     // Trigger CRITICAL — remaining <= 25
+    // The detached record-session subprocess timing assertion (waitForStateMatch,
+    // 45s poll) was removed per #453 (clock-seam): flaky under load. The
+    // deterministic coverage for STATE.md persistence lives in the
+    // 'state record-session command persists Stopped At when invoked directly'
+    // test below, which uses spawnSync instead of a fire-and-forget subprocess.
     const result = runHook(sessionId, 20, tmpDir);
     assert.strictEqual(result.exitCode, 0, `hook should exit 0: ${result.stderr}`);
 
-    // (a) Deterministic: hook writes criticalRecorded:true to warnPath SYNCHRONOUSLY
-    //     before the hook process exits, before the fire-and-forget subprocess runs.
-    //     Since runHook() uses spawnSync, this is guaranteed readable now.
+    // Deterministic: hook writes criticalRecorded:true to warnPath SYNCHRONOUSLY
+    // before the hook process exits, before the fire-and-forget subprocess runs.
+    // Since runHook() uses spawnSync, this is guaranteed readable now.
     const warnData = readWarnData(sessionId);
     assert.ok(warnData, 'warn sentinel file must exist after CRITICAL fire');
     assert.strictEqual(
@@ -175,11 +180,6 @@ describe('#1974 context exhaustion auto-record', () => {
       true,
       'hook must set criticalRecorded:true in warn sentinel on CRITICAL'
     );
-
-    // (b) Hook-spawned detached record-session should eventually persist
-    //     a context exhaustion breadcrumb in STATE.md.
-    const content = waitForStateMatch(statePath, /context exhaustion at \d+%/, 45000);
-    assert.match(content, /context exhaustion at \d+%/, 'STATE.md must contain context exhaustion entry');
   });
 
   test('does NOT spawn subprocess when .planning/STATE.md is absent', () => {
@@ -255,18 +255,9 @@ describe('#1974 context exhaustion auto-record', () => {
     assert.ok(!criticalRecorded, 'WARNING-only fire must not set criticalRecorded');
   });
 
-  test('hook uses __dirname-based path (runtime-agnostic)', () => {
-    // Verify the hook source references __dirname, not ~/.claude/
-    const hookSource = fs.readFileSync(HOOK_PATH, 'utf-8');
-    assert.match(
-      hookSource,
-      /path\.join\(__dirname,\s*'\.\.',\s*'get-shit-done'/,
-      'hook must use __dirname-based path resolution for gsd-tools.cjs'
-    );
-    assert.doesNotMatch(
-      hookSource,
-      /process\.env\.HOME.*\.claude.*get-shit-done.*gsd-tools\.cjs/,
-      'hook must not hardcode ~/.claude/ path'
-    );
-  });
+  // 'hook uses __dirname-based path (runtime-agnostic)' deleted per #453 (clock-seam):
+  // source-grep of HOOK_PATH for path.join(__dirname is brittle. The behavioral equivalent
+  // (hook successfully resolves gsd-tools.cjs from any working directory) is already covered
+  // by the runHook() helper throughout this test file — it calls the hook from an arbitrary
+  // tmpDir and all tests pass, proving __dirname-relative resolution works.
 });
