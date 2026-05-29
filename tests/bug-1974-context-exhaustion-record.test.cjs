@@ -82,20 +82,6 @@ function runRecordSession(cwd, stoppedAt) {
   };
 }
 
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function waitForStateMatch(statePath, regex, timeoutMs = 45000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const content = fs.readFileSync(statePath, 'utf-8');
-    if (regex.test(content)) return content;
-    sleep(100);
-  }
-  return fs.readFileSync(statePath, 'utf-8');
-}
-
 /**
  * Read and parse the warn sentinel file for a session.
  * Returns the parsed object, or null if the file does not exist.
@@ -140,17 +126,9 @@ describe('#1974 context exhaustion auto-record', () => {
   });
 
   afterEach(() => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        cleanup(tmpDir);
-        break;
-      } catch (err) {
-        const code = err && err.code;
-        const transient = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
-        if (!transient || attempt === 4) throw err;
-        sleep(250 * (attempt + 1));
-      }
-    }
+    // cleanup() uses fs.rmSync with maxRetries:20/retryDelay:250ms internally,
+    // which handles transient EBUSY/ENOTEMPTY on Windows. No outer sleep needed.
+    cleanup(tmpDir);
     // Clean up bridge files
     try {
       const warnPath = path.join(os.tmpdir(), `claude-ctx-${sessionId}-warned.json`);
