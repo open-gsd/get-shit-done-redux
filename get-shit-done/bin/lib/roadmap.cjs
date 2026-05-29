@@ -529,7 +529,7 @@ function cmdRoadmapAnnotateDependencies(cwd, phaseNum, raw) {
   // Patch ROADMAP.md
   let updated = false;
   withPlanningLock(cwd, () => {
-    let content = fs.readFileSync(roadmapPath, 'utf-8');
+    const content = fs.readFileSync(roadmapPath, 'utf-8');
 
     // Find the phase section.
     // #3537: padding-tolerant fragment so the caller's resolved padded id

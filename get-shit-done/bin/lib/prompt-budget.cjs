@@ -256,7 +256,7 @@ function applyBudget({ sections, budget, options = {} }) {
   const budgetUnderPressure = baseTokens > effectiveBudget;
 
   // Available for content (reserve note slot when under pressure)
-  let contentBudget = budgetUnderPressure
+  const contentBudget = budgetUnderPressure
     ? effectiveBudget - NOTE_RESERVE_TOKENS
     : effectiveBudget;
 

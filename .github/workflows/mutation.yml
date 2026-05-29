@@ -1,0 +1,94 @@
+name: Mutation Testing
+
+# PR-GATING: runs on every pull_request targeting `next` or `main`.
+# Computes changed core lib files via git diff and passes them to --mutate,
+# so only mutants in CHANGED files are tested — keeps the job bounded.
+# If no core lib files changed, the gate passes trivially (skip+exit 0).
+# Full-repo mutation runs are reserved for local exploration (npm run test:mutation).
+
+on:
+  pull_request:
+    branches:
+      - next
+      - main
+    paths:
+      # Only run when lib source or property tests change
+      - 'get-shit-done/bin/lib/**/*.cjs'
+      - 'tests/**/*.property.test.cjs'
+      - 'stryker.config.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: Stryker mutation score (changed files only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch base ref for diff
+        # Ensure the base branch tip is available for the git diff below.
+        # fetch-depth: 0 above gets all history, but the remote ref name must exist.
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Compute changed core lib files
+        id: changed
+        run: |
+          BASE_REF="origin/${{ github.base_ref }}"
+          # Find changed non-test, non-generated .cjs files in bin/lib
+          CHANGED=$(git diff --name-only "${BASE_REF}...HEAD" -- 'get-shit-done/bin/lib/**/*.cjs' \
+            | grep -v '\.test\.cjs$' \
+            | grep -v -E '/(configuration|command-aliases|commands|core|install-profiles|installer-migrations|phase|profile-output|state|verify|init|audit|gsd2-import)\.cjs$' \
+            || true)
+          if [ -z "$CHANGED" ]; then
+            echo "changed=" >> "$GITHUB_OUTPUT"
+          else
+            # Join with commas for --mutate
+            MUTATE_LIST=$(echo "$CHANGED" | paste -sd, -)
+            echo "changed=${MUTATE_LIST}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip mutation gate (no core lib files changed)
+        if: steps.changed.outputs.changed == ''
+        run: echo "No core lib files changed; skipping mutation gate"
+
+      - name: Run Stryker (incremental, changed files only)
+        if: steps.changed.outputs.changed != ''
+        # --mutate scopes mutation to only the changed production files.
+        # --incremental reuses cached results for unchanged mutants.
+        # The break threshold (50) is read from stryker.config.mjs and causes
+        # Stryker to exit non-zero when mutation score < 50%, failing the PR check.
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: |
+          MUTATE_LIST="${{ steps.changed.outputs.changed }}"
+          echo "Running Stryker --mutate '${MUTATE_LIST}'"
+          npx stryker run --incremental --mutate "${MUTATE_LIST}"
+
+      - name: Upload mutation HTML report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()  # upload even on failure so the score is visible
+        with:
+          name: mutation-report-${{ github.run_number }}
+          path: reports/mutation/mutation.html
+          retention-days: 14

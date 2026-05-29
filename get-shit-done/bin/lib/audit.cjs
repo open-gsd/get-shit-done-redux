@@ -121,7 +121,7 @@ function scanQuickTasks(planDir) {
     }
 
     let status = 'missing';
-    let description = '';
+    const description = '';
 
     if (summaryPath && fs.existsSync(summaryPath)) {
       let safeSum;

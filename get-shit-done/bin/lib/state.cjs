@@ -946,7 +946,7 @@ function stripFrontmatter(content) {
   // Handles CRLF line endings and multiple stacked blocks (corruption recovery).
   // Greedy: keeps stripping ---...--- blocks separated by optional whitespace.
   let result = content;
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const stripped = result.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*/, '');
     if (stripped === result) break;
@@ -1008,7 +1008,7 @@ function acquireStateLock(statePath, clock) {
   const maxWaitMs = 30000;
   const startedAt = clock.now();
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     try {
       const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
@@ -1406,7 +1406,7 @@ function cmdStatePlannedPhase(cwd, phaseNumber, planCount, raw) {
 
   // Update Total Plans in Phase
   if (planCount !== null && planCount !== undefined) {
-    let result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
+    const result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
     if (result) { content = result; updated.push('Total Plans in Phase'); }
   }
 
@@ -1418,7 +1418,7 @@ function cmdStatePlannedPhase(cwd, phaseNumber, planCount, raw) {
 
   // Update Last Activity Description
   {
-    let result = stateReplaceField(content, 'Last Activity Description', `Phase ${phaseNumber} planning complete — ${planCount || '?'} plans ready`);
+    const result = stateReplaceField(content, 'Last Activity Description', `Phase ${phaseNumber} planning complete — ${planCount || '?'} plans ready`);
     if (result) { content = result; updated.push('Last Activity Description'); }
   }
 
