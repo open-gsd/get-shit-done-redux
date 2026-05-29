@@ -31,6 +31,22 @@ const { cleanup } = require('./helpers.cjs');
 const HOOK_PATH = path.resolve(__dirname, '..', 'hooks', 'gsd-context-monitor.js');
 const GSD_TOOLS = path.resolve(__dirname, '..', 'get-shit-done', 'bin', 'gsd-tools.cjs');
 
+// Windows can hold a transient handle on the temp dir after a spawnSync child
+// exits (AV scanner / handle-release lag), so cleanup()'s internal rmSync retry
+// (~5s) occasionally still throws EBUSY/EPERM/ENOTEMPTY under CI load. Restore a
+// bounded outer retry with async backoff (NOT Atomics.wait — lint no-magic-sleep).
+// Re-adds the guard removed in #482. Refs #490.
+async function cleanupWithRetry(dir, attempts = 8) {
+  for (let i = 0; i < attempts; i += 1) {
+    try { cleanup(dir); return; }
+    catch (err) {
+      const transient = err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'ENOTEMPTY');
+      if (!transient || i === attempts - 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 100 * (i + 1)));
+    }
+  }
+}
+
 /**
  * Run the hook with a given session id and context percentage.
  * Writes a bridge metrics file first, then pipes the hook input via stdin.
@@ -125,10 +141,11 @@ describe('#1974 context exhaustion auto-record', () => {
     sessionId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   });
 
-  afterEach(() => {
-    // cleanup() uses fs.rmSync with maxRetries:20/retryDelay:250ms internally,
-    // which handles transient EBUSY/ENOTEMPTY on Windows. No outer sleep needed.
-    cleanup(tmpDir);
+  afterEach(async () => {
+    // cleanupWithRetry wraps cleanup() with a bounded outer retry (async setTimeout
+    // backoff, no Atomics.wait) to handle cases where windows-2022 CI load keeps
+    // the temp dir EBUSY beyond rmSync's internal ~5s retry window. Refs #490.
+    await cleanupWithRetry(tmpDir);
     // Clean up bridge files
     try {
       const warnPath = path.join(os.tmpdir(), `claude-ctx-${sessionId}-warned.json`);
