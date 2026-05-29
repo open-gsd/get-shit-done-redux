@@ -145,8 +145,8 @@ describe('Gemini Markdown Processor', () => {
 
     const result = convertClaudeToGeminiAgent(input);
 
-    assert.match(result, /^  - read_file$/m, 'Read should still map to Gemini read_file');
-    assert.doesNotMatch(result, /^  - ask_user$/m, 'ask_user must not be emitted as a Gemini tool');
+    assert.match(result, /^ {2}- read_file$/m, 'Read should still map to Gemini read_file');
+    assert.doesNotMatch(result, /^ {2}- ask_user$/m, 'ask_user must not be emitted as a Gemini tool');
     assert.doesNotMatch(result, /\bAskUserQuestion\b/, 'Claude tool references must be neutralized');
     assert.doesNotMatch(result, /\bask_user\b/, 'lowercase ask_user references must be neutralized');
     assert.match(result, /conversational prompting/, 'body should use runtime-neutral wording');
