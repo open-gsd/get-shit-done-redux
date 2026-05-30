@@ -141,3 +141,55 @@ describe('gsd-tools update-context (CLI): emits the JSON contract', () => {
     }
   });
 });
+
+describe('resolveUpdateContext: parity with the old inline bash (adversarial-review)', () => {
+  test('preferredConfigDir with a leading ~/ is expanded before the fast path', () => {
+    // The old inline bash ran `expand_home "$PREFERRED_CONFIG_DIR"` first, so a
+    // custom --config-dir like ~/custom-gsd must resolve, not fall to UNKNOWN.
+    const fs = fakeFs({
+      [ver(`${HOME}/custom-gsd`)]: '1.41.0\n',
+      [marker(`${HOME}/custom-gsd`)]: 'x',
+    });
+    const r = resolveUpdateContext({
+      home: HOME, cwd: CWD, env: {}, fs, preferredConfigDir: '~/custom-gsd',
+    });
+    assert.equal(r.installedVersion, '1.41.0');
+    assert.equal(r.scope, 'GLOBAL');
+    assert.ok(sameDir(r.gsdDir, `${HOME}/custom-gsd`), `gsdDir was ${r.gsdDir}`);
+  });
+
+  test('a VERSION-only dir (no update.md marker) is NOT trusted as a real version', () => {
+    // The old cascade required BOTH VERSION and the update.md marker before
+    // trusting the version; a partial dir falls to 0.0.0 but keeps scope.
+    const fs = fakeFs({ [ver(`${HOME}/.claude`)]: '1.40.0\n' }); // marker absent
+    const r = resolveUpdateContext({ home: HOME, cwd: CWD, env: {}, fs });
+    assert.equal(r.installedVersion, '0.0.0', 'VERSION-only dir must not be trusted');
+    assert.equal(r.scope, 'GLOBAL');
+    assert.equal(r.runtime, 'claude');
+    assert.ok(sameDir(r.gsdDir, `${HOME}/.claude`), `gsdDir was ${r.gsdDir}`);
+  });
+
+  test('fast path also requires the marker: VERSION-only preferredConfigDir -> 0.0.0', () => {
+    // The "trust = VERSION + marker" rule is consistent across every path, not
+    // just the cascade. A custom --config-dir with VERSION but no marker is a
+    // partial install: keep the dir/scope, report 0.0.0.
+    const custom = '/opt/gsd-partial';
+    const fs = fakeFs({ [ver(custom)]: '1.41.0\n' }); // marker absent
+    const r = resolveUpdateContext({
+      home: HOME, cwd: CWD, env: {}, fs, preferredConfigDir: custom, preferredRuntime: 'kilo',
+    });
+    assert.equal(r.installedVersion, '0.0.0', 'VERSION-only fast path must not be trusted');
+    assert.equal(r.scope, 'GLOBAL');
+    assert.ok(sameDir(r.gsdDir, custom), `gsdDir was ${r.gsdDir}`);
+  });
+
+  test('partial install with cwd===home does NOT misdetect as LOCAL (fallback dedup)', () => {
+    // Same same-path dedup the trusted path uses must apply to the 0.0.0
+    // fallback: a VERSION-only ~/.claude probed from cwd===home is GLOBAL.
+    const fs = fakeFs({ [ver(`${HOME}/.claude`)]: '1.40.0\n' }); // marker absent
+    const r = resolveUpdateContext({ home: HOME, cwd: HOME, env: {}, fs });
+    assert.equal(r.installedVersion, '0.0.0');
+    assert.equal(r.scope, 'GLOBAL', 'cwd===home partial must be GLOBAL, not LOCAL');
+    assert.ok(sameDir(r.gsdDir, `${HOME}/.claude`), `gsdDir was ${r.gsdDir}`);
+  });
+});

@@ -4,7 +4,7 @@ const cp = require('node:child_process');
 const path = require('node:path');
 
 const { parseFragment } = require('./parse.cjs');
-const { PACKAGE_NAME } = require('../../get-shit-done/bin/lib/package-identity.cjs');
+const { packageName, repoSlug: defaultRepoSlug } = require('../../get-shit-done/bin/lib/package-identity.cjs');
 
 const SECTION_ORDER = ['Fixed', 'Added', 'Changed', 'Deprecated', 'Removed', 'Security'];
 
@@ -146,8 +146,8 @@ function serializeGithubReleaseNotes({
   ir,
   fromRef,
   toRef,
-  repoSlug = 'open-gsd/get-shit-done-redux',
-  installCommand = `npx ${PACKAGE_NAME}@latest`,
+  repoSlug = defaultRepoSlug,
+  installCommand = `npx ${packageName}@latest`,
 }) {
   if (installCommand.includes('`')) {
     throw new Error('installCommand cannot contain backtick characters');

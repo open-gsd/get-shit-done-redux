@@ -59,6 +59,15 @@ function validVersionAt(fs, dir) {
   return SEMVER_PREFIX.test(trimmed) ? trimmed : null;
 }
 
+// A version is TRUSTED only when BOTH the VERSION file and the update.md marker
+// exist (and VERSION is valid semver) — the old inline cascade required both
+// (update.md ~lines 230/241). A VERSION-only or marker-only dir is a partial
+// install, so its version is not trusted (caller treats it as 0.0.0 = reinstall).
+// One rule, applied on every path (fast path + LOCAL/GLOBAL cascade).
+function trustedVersionAt(fs, dir) {
+  return dir && fs.exists(markerFile(dir)) ? validVersionAt(fs, dir) : null;
+}
+
 // Infer the preferred runtime from preferredConfigDir config files, then env.
 function inferPreferredRuntime({ fs, env, preferredConfigDir }) {
   if (preferredConfigDir) {
@@ -105,6 +114,11 @@ function preferFirst(entries, preferred) {
  * Pure resolver. Returns { installedVersion, scope, runtime, gsdDir }.
  */
 function resolveUpdateContext({ home, cwd, env = {}, fs, preferredConfigDir = '', preferredRuntime = '' }) {
+  // Expand a leading `~/` before any probe — the old inline bash ran
+  // `expand_home "$PREFERRED_CONFIG_DIR"` first, and a quoted shell path never
+  // tilde-expands, so a custom --config-dir like `~/custom-gsd` must resolve
+  // here or the fast path below silently misses the install (#498 parity).
+  preferredConfigDir = expandHome(preferredConfigDir, home);
   const preferred = preferredRuntime || inferPreferredRuntime({ fs, env, preferredConfigDir });
 
   // Fast path: a validated preferredConfigDir (custom --config-dir install).
@@ -115,7 +129,7 @@ function resolveUpdateContext({ home, cwd, env = {}, fs, preferredConfigDir = ''
       if (path.resolve(cwd, reldir) === resolvedPref) { scope = 'LOCAL'; break; }
     }
     return {
-      installedVersion: validVersionAt(fs, preferredConfigDir) || '0.0.0',
+      installedVersion: trustedVersionAt(fs, preferredConfigDir) || '0.0.0',
       scope,
       runtime: preferred,
       gsdDir: preferredConfigDir,
@@ -144,20 +158,24 @@ function resolveUpdateContext({ home, cwd, env = {}, fs, preferredConfigDir = ''
     }
   }
 
-  const localValid = localDir ? validVersionAt(fs, localDir) : null;
+  const localValid = trustedVersionAt(fs, localDir);
   const isLocal = !!localValid && (!globalDir || localDir !== globalDir);
 
   if (isLocal) {
     return { installedVersion: localValid, scope: 'LOCAL', runtime: localRuntime, gsdDir: localDir };
   }
-  const globalValid = globalDir ? validVersionAt(fs, globalDir) : null;
+  const globalValid = trustedVersionAt(fs, globalDir);
   if (globalValid) {
     return { installedVersion: globalValid, scope: 'GLOBAL', runtime: globalRuntime, gsdDir: globalDir };
   }
-  if (localRuntime && fs.exists(markerFile(localDir))) {
+  // A runtime dir was detected (VERSION or marker present) but is not a
+  // complete, valid install: keep scope/runtime/dir and report 0.0.0 so the
+  // caller re-installs (old inline `elif [ -n "$LOCAL_DIR" ]`). Apply the same
+  // same-path dedup as the trusted path so cwd===home does not misdetect as LOCAL.
+  if (localRuntime && (!globalDir || localDir !== globalDir)) {
     return { installedVersion: '0.0.0', scope: 'LOCAL', runtime: localRuntime, gsdDir: localDir };
   }
-  if (globalRuntime && fs.exists(markerFile(globalDir))) {
+  if (globalRuntime) {
     return { installedVersion: '0.0.0', scope: 'GLOBAL', runtime: globalRuntime, gsdDir: globalDir };
   }
   return { installedVersion: '0.0.0', scope: 'UNKNOWN', runtime: 'claude', gsdDir: '' };
