@@ -1,0 +1,108 @@
+'use strict';
+process.env.GSD_TEST_MODE = '1';
+
+// Issue #498: single Package Identity seam.
+// The package coordinates (npm name, bin name, repo slug, changelog URL) are
+// DERIVED from package.json, not re-typed. deriveIdentity is the pure core;
+// the generated runtime module get-shit-done/bin/lib/package-identity.cjs
+// bakes those values at build time so it survives the install layout where
+// the only package.json present is the synthetic {"type":"commonjs"} marker.
+
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+const fs = require('node:fs');
+
+const ROOT = path.join(__dirname, '..');
+const { deriveIdentity, formatManualInstall, render } = require(
+  path.join(ROOT, 'scripts', 'generate-package-identity.cjs'),
+);
+const GENERATED = path.join(ROOT, 'get-shit-done', 'bin', 'lib', 'package-identity.cjs');
+
+describe('Issue #498: deriveIdentity (pure, package.json -> coordinates)', () => {
+  const FAKE_PKG = {
+    name: '@scope/example-pkg',
+    bin: { 'example-pkg': 'bin/install.js', 'extra-tool': 'x.cjs' },
+    repository: { type: 'git', url: 'git+https://github.com/acme/example-pkg.git' },
+  };
+
+  test('packageName is package.json .name', () => {
+    assert.equal(deriveIdentity(FAKE_PKG).packageName, '@scope/example-pkg');
+  });
+
+  test('binName is the FIRST bin key (primary launcher)', () => {
+    assert.equal(deriveIdentity(FAKE_PKG).binName, 'example-pkg');
+  });
+
+  test('repoSlug is owner/name parsed from repository.url (git+ and .git stripped)', () => {
+    assert.equal(deriveIdentity(FAKE_PKG).repoSlug, 'acme/example-pkg');
+  });
+
+  test('repoUrl is the cleaned https github url', () => {
+    assert.equal(deriveIdentity(FAKE_PKG).repoUrl, 'https://github.com/acme/example-pkg');
+  });
+
+  test('changelogRawUrl points at raw.githubusercontent main CHANGELOG', () => {
+    assert.equal(
+      deriveIdentity(FAKE_PKG).changelogRawUrl,
+      'https://raw.githubusercontent.com/acme/example-pkg/main/CHANGELOG.md',
+    );
+  });
+
+  test('derives the real GSD coordinates from the repo package.json', () => {
+    const real = require(path.join(ROOT, 'package.json'));
+    const id = deriveIdentity(real);
+    assert.equal(id.packageName, '@opengsd/get-shit-done-redux');
+    assert.equal(id.binName, 'get-shit-done-redux');
+    assert.equal(id.repoSlug, 'open-gsd/get-shit-done-redux');
+  });
+});
+
+describe('Issue #498: formatManualInstall (the npx fallback command)', () => {
+  test('global scope, no runtime -> npx with --global only', () => {
+    assert.equal(
+      formatManualInstall({ packageName: '@scope/example-pkg', binName: 'example-pkg', scope: 'global' }),
+      'npx -y --package=@scope/example-pkg@latest -- example-pkg --global',
+    );
+  });
+
+  test('local scope with runtime -> --<runtime> before --<scope>', () => {
+    assert.equal(
+      formatManualInstall({ packageName: '@scope/example-pkg', binName: 'example-pkg', scope: 'local', runtime: 'claude' }),
+      'npx -y --package=@scope/example-pkg@latest -- example-pkg --claude --local',
+    );
+  });
+
+  test('matches the literal update.md uses for the real package (global+claude)', () => {
+    const id = deriveIdentity(require(path.join(ROOT, 'package.json')));
+    assert.equal(
+      formatManualInstall({ packageName: id.packageName, binName: id.binName, scope: 'global', runtime: 'claude' }),
+      'npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux --claude --global',
+    );
+  });
+});
+
+describe('Issue #498: generated runtime module (baked, drift-checked)', () => {
+  test('the committed generated file is in sync with package.json (no drift)', () => {
+    const expected = render(deriveIdentity(require(path.join(ROOT, 'package.json'))));
+    const actual = fs.readFileSync(GENERATED, 'utf8');
+    assert.equal(actual, expected,
+      'package-identity.cjs is stale — run `node scripts/generate-package-identity.cjs`');
+  });
+
+  test('requiring the generated module exposes the real coordinates', () => {
+    const id = require(GENERATED);
+    assert.equal(id.packageName, '@opengsd/get-shit-done-redux');
+    assert.equal(id.binName, 'get-shit-done-redux');
+    assert.equal(id.repoSlug, 'open-gsd/get-shit-done-redux');
+  });
+
+  test('generated manualInstallCommand closes over the baked coordinates', () => {
+    const id = require(GENERATED);
+    assert.equal(
+      id.manualInstallCommand({ scope: 'global', runtime: 'claude' }),
+      'npx -y --package=@opengsd/get-shit-done-redux@latest -- get-shit-done-redux --claude --global',
+    );
+  });
+});
