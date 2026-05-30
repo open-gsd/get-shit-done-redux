@@ -72,7 +72,7 @@ Currently accepted ADRs:
 | `0004-worktree-workstream-seam-module.md` | Planning Workspace Module as single seam for worktree and workstream state |
 | `0005-sdk-architecture-seam-map.md` | SDK Architecture seam map for query/runtime surfaces |
 | `0006-planning-path-projection-module.md` | Planning Path Projection Module for SDK query handlers |
-| `0007-sdk-package-seam-module.md` | SDK Package Seam Module owns SDK-to-get-shit-done-redux compatibility |
+| `0007-sdk-package-seam-module.md` | SDK Package Seam Module owns SDK-to-gsd-core compatibility |
 
 ### When an ADR is required
 

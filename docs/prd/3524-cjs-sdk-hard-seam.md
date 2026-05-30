@@ -2,7 +2,7 @@
 
 - **Status:** Reference
 - **Date:** 2026-05-14
-- **Tracking issue:** [#3524](https://github.com/open-gsd/get-shit-done-redux/issues/3524)
+- **Tracking issue:** [#3524](https://github.com/open-gsd/gsd-core/issues/3524)
 - **Related ADR:** [`docs/adr/3524-cjs-sdk-hard-seam.md`](../adr/3524-cjs-sdk-hard-seam.md)
 
 ## Why this PRD exists
@@ -11,7 +11,7 @@ The ADR defines the target architecture — one source of truth per Shared Modul
 
 ## Problem statement
 
-The CJS↔SDK boundary in `open-gsd/get-shit-done-redux` is structurally permeable. Multiple Shared Modules — STATE.md Document Module, Workstream Inventory Module, and several others — exist today as **hand-synced pairs** of `.cjs` and `.ts` files with character-identical implementations. Constants (`CONFIG_DEFAULTS`, `VALID_CONFIG_KEYS`) are likewise defined twice. The boundary is policed only by:
+The CJS↔SDK boundary in `open-gsd/gsd-core` is structurally permeable. Multiple Shared Modules — STATE.md Document Module, Workstream Inventory Module, and several others — exist today as **hand-synced pairs** of `.cjs` and `.ts` files with character-identical implementations. Constants (`CONFIG_DEFAULTS`, `VALID_CONFIG_KEYS`) are likewise defined twice. The boundary is policed only by:
 
 - A naming-parity test (`tests/config-schema-sdk-parity.test.cjs`)
 - Output-parity golden tests for read-only handlers (`sdk/src/golden/read-only-parity.integration.test.ts`)
@@ -209,7 +209,7 @@ Phase 5 specifically preserves the in-process model: `QueryRuntimeBridge.execute
 ### Build/install pipeline impact
 
 - Each generator runs at build time on the developer machine (and in CI for the freshness check). No runtime generator execution.
-- The published `@opengsd/get-shit-done-redux` package already includes both `get-shit-done/bin/` and `sdk/dist/`. The generated `.cjs` files are committed to the repo (like `command-aliases.generated.cjs` today), so the install flow is unchanged — no on-install code generation.
+- The published `@opengsd/gsd-core` package already includes both `get-shit-done/bin/` and `sdk/dist/`. The generated `.cjs` files are committed to the repo (like `command-aliases.generated.cjs` today), so the install flow is unchanged — no on-install code generation.
 - `npm run build:sdk` continues to do what it does. Generators are invoked via `npm run gen:<module>` per the existing precedent.
 
 ### Risks

@@ -6,7 +6,7 @@
 
 Instead, please report them via a **private GitHub security advisory**:
 
-**https://github.com/open-gsd/get-shit-done-redux/security/advisories/new**
+**https://github.com/open-gsd/gsd-core/security/advisories/new**
 
 Include:
 - Description of the vulnerability

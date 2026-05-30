@@ -219,7 +219,7 @@ The canonical lint infrastructure adopted in ADR 452 (`docs/adr/452-eslint-lint-
 ## Workspace seams (machine-oriented predicates)
 
 `RULESET.GH.AUTH.DEFAULT=source .envrc GITHUB_TOKEN before gh; exception=ambient allowed only when user explicitly says machine-only fallback`
-`RULESET.CODERABBIT.GUARD.OPEN_PRS=gh pr list --repo open-gsd/get-shit-done-redux --author @me --state open; repeat near end because open PR set can change mid-run`
+`RULESET.CODERABBIT.GUARD.OPEN_PRS=gh pr list --repo open-gsd/gsd-core --author @me --state open; repeat near end because open PR set can change mid-run`
 `RULESET.CODERABBIT.GUARD.COMPLETE=required_checks_green && coderabbit_check_pass && graphQL(reviewThreads.unresolved_count)==0`
 `RULESET.CODERABBIT.GUARD.GRAPHQL=reviewThreads(first:100){nodes{id isResolved comments{nodes{author body path line originalLine url}}}}; use unresolved threads as authoritative, not badge text alone`
 `RULESET.CODERABBIT.GUARD.RERUN=after every push wait for CodeRabbit completion, then re-query unresolved threads; CodeRabbit can add new findings after earlier threads were resolved`
@@ -279,9 +279,9 @@ The canonical lint infrastructure adopted in ADR 452 (`docs/adr/452-eslint-lint-
 `RELEASE-NOTES.STANDARD.heading-level=## for category, ### for subgroup (area), - for bullet`
 `RELEASE-NOTES.STANDARD.bullet-shape=**Bold user-visible change** — explanation of what was broken or what's new, leading with symptom not implementation. Trailing (#NNN) PR ref.`
 `RELEASE-NOTES.STANDARD.subgroups=phase-planning-state | workstream | query-dispatch-cli | code-review | install | capture | docs | architecture | security`
-`RELEASE-NOTES.STANDARD.footer.hotfix=Install/upgrade: \`npx @opengsd/get-shit-done-redux@latest\``
-`RELEASE-NOTES.STANDARD.footer.rc=Install for testing: \`npx @opengsd/get-shit-done-redux@next\` (per branch->dist-tag policy)`
-`RELEASE-NOTES.STANDARD.footer.full-changelog=**Full Changelog**: https://github.com/open-gsd/get-shit-done-redux/compare/<prev>...<this>`
+`RELEASE-NOTES.STANDARD.footer.hotfix=Install/upgrade: \`npx @opengsd/gsd-core@latest\``
+`RELEASE-NOTES.STANDARD.footer.rc=Install for testing: \`npx @opengsd/gsd-core@next\` (per branch->dist-tag policy)`
+`RELEASE-NOTES.STANDARD.footer.full-changelog=**Full Changelog**: https://github.com/open-gsd/gsd-core/compare/<prev>...<this>`
 `RELEASE-NOTES.STANDARD.intro=optional one-paragraph framing for RC/feature releases; omit for pure-fix hotfixes`
 
 `RELEASE-NOTES.SOURCE.commits=git log <prev-tag>..<this-tag> --pretty=format:'%s%n%n%b' --no-merges`
@@ -298,12 +298,12 @@ The canonical lint infrastructure adopted in ADR 452 (`docs/adr/452-eslint-lint-
 `RELEASE-NOTES.ANTI-PATTERN.implementation-first=do not lead bullet with file path or function name; lead with symptom/user-visible behavior`
 `RELEASE-NOTES.ANTI-PATTERN.risk-commentary=do not include "may break", "be careful", "test thoroughly" - per global CLAUDE.md no-risk-commentary rule`
 
-`RELEASE-NOTES.EXAMPLE.hotfix=v1.41.1 (https://github.com/open-gsd/get-shit-done-redux/releases/tag/v1.41.1) - 14 fixes grouped by 6 subgroups`
-`RELEASE-NOTES.EXAMPLE.rc=v1.42.0-rc1 (https://github.com/open-gsd/get-shit-done-redux/releases/tag/v1.42.0-rc1) - intro + Added/Changed/Fixed/Documentation taxonomy`
+`RELEASE-NOTES.EXAMPLE.hotfix=v1.41.1 (https://github.com/open-gsd/gsd-core/releases/tag/v1.41.1) - 14 fixes grouped by 6 subgroups`
+`RELEASE-NOTES.EXAMPLE.rc=v1.42.0-rc1 (https://github.com/open-gsd/gsd-core/releases/tag/v1.42.0-rc1) - intro + Added/Changed/Fixed/Documentation taxonomy`
 `RELEASE-NOTES.EXAMPLE.minor-auto-acceptable=v1.41.0 - kept auto-generated body; many small fixes with clean conventional-commit titles`
 
-`RELEASE-NOTES.TEMPLATE.hotfix=## Fixed\n\n### <subgroup>\n- **<bold change>** — <explanation>. (#<PR>)\n\n---\n\nInstall/upgrade: \`npx @opengsd/get-shit-done-redux@latest\`\n\n**Full Changelog**: <compare-url>`
-`RELEASE-NOTES.TEMPLATE.rc=<one-paragraph intro>\n\n## Added\n### <subgroup>\n- **<change>** — <explanation>. (#<PR>)\n\n## Changed\n### Architecture\n- **<refactor>** — <user-visible benefit>. (#<PR>)\n\n## Fixed\n### <subgroup>\n- **<fix>** — <explanation>. (#<PR>)\n\n## Documentation\n- **<docs change>** — <reason>. (#<PR>)\n\n---\n\nThis is a release candidate. Install for testing:\n\`\`\`bash\nnpx @opengsd/get-shit-done-redux@next\n\`\`\`\n\n**Full Changelog**: <compare-url>`
+`RELEASE-NOTES.TEMPLATE.hotfix=## Fixed\n\n### <subgroup>\n- **<bold change>** — <explanation>. (#<PR>)\n\n---\n\nInstall/upgrade: \`npx @opengsd/gsd-core@latest\`\n\n**Full Changelog**: <compare-url>`
+`RELEASE-NOTES.TEMPLATE.rc=<one-paragraph intro>\n\n## Added\n### <subgroup>\n- **<change>** — <explanation>. (#<PR>)\n\n## Changed\n### Architecture\n- **<refactor>** — <user-visible benefit>. (#<PR>)\n\n## Fixed\n### <subgroup>\n- **<fix>** — <explanation>. (#<PR>)\n\n## Documentation\n- **<docs change>** — <reason>. (#<PR>)\n\n---\n\nThis is a release candidate. Install for testing:\n\`\`\`bash\nnpx @opengsd/gsd-core@next\n\`\`\`\n\n**Full Changelog**: <compare-url>`
 
 `RELEASE-NOTES.RELEASE-STREAM.main-branch=next (RCs) + latest (stable); install via @next or @latest`
 `RELEASE-NOTES.RELEASE-STREAM.rule=streams do not mix; do not document @next in hotfix/stable notes`
@@ -610,7 +610,7 @@ Migration plan: Phase 1 (#3465) seam additions complete; Phase 2 (#3466) targets
 `DEFECT.GSD-TEST-CONCURRENT-OUTPUT-COLLISION.root-cause=gsd-test-summary lines 126-127 default LOCAL_OUT/DOCKER_OUT to fixed /tmp/gsd-test-{local,docker}.jsonl; concurrent line-buffered writers interleave bytes mid-multibyte → split UTF-8 sequence → decoder explodes on f.read()`
 `DEFECT.GSD-TEST-CONCURRENT-OUTPUT-COLLISION.detect=two gsd-test-summary --both runs in flight; UnicodeDecodeError in parse_events_from_string traceback; /tmp/gsd-test-*.jsonl size mismatch vs total events emitted`
 `DEFECT.GSD-TEST-CONCURRENT-OUTPUT-COLLISION.fix-forward=set per-invocation LOCAL_OUT=/tmp/gsd-test-<tag>-local.jsonl DOCKER_OUT=/tmp/gsd-test-<tag>-docker.jsonl env vars; or serialize the runs; upstream fix tracked in #3545 (default to tempfile.mkstemp + advisory flock)`
-`DEFECT.GSD-TEST-CONCURRENT-OUTPUT-COLLISION.upstream=open-gsd/get-shit-done-redux#3545`
+`DEFECT.GSD-TEST-CONCURRENT-OUTPUT-COLLISION.upstream=open-gsd/gsd-core#3545`
 `DEFECT.SUBAGENT-LONG-RUNNING-BG-STALL.symptom=spawned sub-agent kicks off gsd-test-summary --both via Bash run_in_background, then stops on the harness "you will be notified" message; never receives the notification because cross-turn task-notifications are only delivered to the top-level orchestrator`
 `DEFECT.SUBAGENT-LONG-RUNNING-BG-STALL.detect=sub-agent returns prematurely with text like "I should wait for the notification per CLAUDE.md" and incomplete work in its worktree (commits absent, push absent, PR absent)`
 `DEFECT.SUBAGENT-LONG-RUNNING-BG-STALL.fix-forward=keep gsd-test-summary --both at the top-level orchestrator; sub-agents either run it foreground with timeout: 1500000 (25min) and block, OR delegate the test step back to the orchestrator (write commits + return); never have a sub-agent fire-and-await a backgrounded long task`
@@ -634,7 +634,7 @@ Migration plan: Phase 1 (#3465) seam additions complete; Phase 2 (#3466) targets
 
 ## PR fix discipline — patterns observed 2026-05-23
 
-Full detail in `~/.claude/skills/gsd-pr-fix-discipline/SKILL.md`. AI agents MUST check this section before pushing to `open-gsd/get-shit-done-redux`.
+Full detail in `~/.claude/skills/gsd-pr-fix-discipline/SKILL.md`. AI agents MUST check this section before pushing to `open-gsd/gsd-core`.
 
 ### INVENTORY / manifest drift
 
@@ -652,7 +652,7 @@ Full detail in `~/.claude/skills/gsd-pr-fix-discipline/SKILL.md`. AI agents MUST
 
 - **Symptom:** `gh pr checks` shows failures but the latest commit SHA's run was cancelled before Tests even started
 - **Affected this session:** #154, #136
-- **Fix:** `gh workflow run Tests --repo open-gsd/get-shit-done-redux --ref <branch>`; verify with `gh run list --branch <branch> --workflow Tests --limit 1 --json status,conclusion,headSha`
+- **Fix:** `gh workflow run Tests --repo open-gsd/gsd-core --ref <branch>`; verify with `gh run list --branch <branch> --workflow Tests --limit 1 --json status,conclusion,headSha`
 
 ### Missing changeset fragment
 
@@ -688,4 +688,4 @@ Full detail in `~/.claude/skills/gsd-pr-fix-discipline/SKILL.md`. AI agents MUST
 
 - **Symptom:** `gh pr merge --auto` returns `GraphQL: Auto merge is not allowed for this repository`
 - **Affected this session:** All stacked PRs
-- **Fix:** Merge manually by hand in dependency order once CI greens; `gh pr merge <N> --squash --repo open-gsd/get-shit-done-redux`
+- **Fix:** Merge manually by hand in dependency order once CI greens; `gh pr merge <N> --squash --repo open-gsd/gsd-core`

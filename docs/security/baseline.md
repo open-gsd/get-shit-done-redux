@@ -12,7 +12,7 @@
 ### Repos in scope
 
 All active, non-archived repositories under the `open-gsd` GitHub organization,
-beginning with the pilot repo `open-gsd/get-shit-done-redux`.
+beginning with the pilot repo `open-gsd/gsd-core`.
 
 ### Out of scope
 
@@ -26,7 +26,7 @@ beginning with the pilot repo `open-gsd/get-shit-done-redux`.
 
 This section defines the mandatory security controls for every in-scope repo.
 Each control links to the PR that implements it in the pilot repo
-(`open-gsd/get-shit-done-redux`). Sibling repos adopt the same controls during
+(`open-gsd/gsd-core`). Sibling repos adopt the same controls during
 Phase 2 rollout (§ 6).
 
 ### 2.1 Dependency integrity
@@ -45,9 +45,9 @@ integrity as a prerequisite.
 ([SLSA](https://slsa.dev/))
 
 **Implementation in pilot:** PR
-[#135](https://github.com/open-gsd/get-shit-done-redux/pull/135)
+[#135](https://github.com/open-gsd/gsd-core/pull/135)
 (linked to issue
-[#114](https://github.com/open-gsd/get-shit-done-redux/issues/114)).
+[#114](https://github.com/open-gsd/gsd-core/issues/114)).
 
 **Verify locally:**
 
@@ -79,9 +79,9 @@ mechanism.
 ([GitGuardian exclusion grammar](https://docs.gitguardian.com/internal-repositories-monitoring/integrations/cli/secrets))
 
 **Implementation in pilot:** PR
-[#134](https://github.com/open-gsd/get-shit-done-redux/pull/134)
+[#134](https://github.com/open-gsd/gsd-core/pull/134)
 (linked to issue
-[#115](https://github.com/open-gsd/get-shit-done-redux/issues/115)).
+[#115](https://github.com/open-gsd/gsd-core/issues/115)).
 Exclusion annotation files: `.secretscanignore` (top-level) and
 `.base64scanignore` (top-level, for base64-encoded values).
 
@@ -114,9 +114,9 @@ risks in automated pipelines.
 ([CNCF Security TAG](https://github.com/cncf/tag-security))
 
 **Implementation in pilot:** PR
-[#133](https://github.com/open-gsd/get-shit-done-redux/pull/133)
+[#133](https://github.com/open-gsd/gsd-core/pull/133)
 (linked to issue
-[#113](https://github.com/open-gsd/get-shit-done-redux/issues/113)).
+[#113](https://github.com/open-gsd/gsd-core/issues/113)).
 
 **Verify locally:**
 
@@ -142,9 +142,9 @@ supply-chain vectors (CVE-2021-42574 — "Trojan Source"). Detecting them at sca
 time prevents invisible payload injection in source and output files.
 
 **Implementation in pilot:** PR
-[#132](https://github.com/open-gsd/get-shit-done-redux/pull/132)
+[#132](https://github.com/open-gsd/gsd-core/pull/132)
 (linked to issue
-[#116](https://github.com/open-gsd/get-shit-done-redux/issues/116)).
+[#116](https://github.com/open-gsd/gsd-core/issues/116)).
 
 **Verify locally:**
 
@@ -174,7 +174,7 @@ OpenSSF Scorecard's "Pinned-Dependencies" check measures this directly.
 ([OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs/checks.md))
 
 **Implementation in pilot:** PR for issue
-[#117](https://github.com/open-gsd/get-shit-done-redux/issues/117)
+[#117](https://github.com/open-gsd/gsd-core/issues/117)
 (see PR #136).
 
 **Verify locally:**
@@ -280,7 +280,7 @@ Post-Incident Activity.
 ### Where to report
 
 Report security vulnerabilities via **private security advisory** on GitHub:
-`https://github.com/open-gsd/get-shit-done-redux/security/advisories/new`
+`https://github.com/open-gsd/gsd-core/security/advisories/new`
 
 Do not open public issues for security vulnerabilities.
 
@@ -294,7 +294,7 @@ If private advisory filing is unavailable, contact the open-gsd maintainers and 
 
 ```text
 Title:         [Short description, e.g., "Secret exposed in CI log for PR #NNN"]
-Affected repo: open-gsd/get-shit-done-redux (or sibling repo name)
+Affected repo: open-gsd/gsd-core (or sibling repo name)
 Affected ver:  [npm version range, e.g., "<=1.42.3" or "all versions"]
 Reporter:      [Your name / handle, or "Anonymous"]
 Date found:    YYYY-MM-DD
@@ -383,7 +383,7 @@ Responsibilities:
 
 | Step | Detail |
 |---|---|
-| 1 | Requester opens a GitHub issue in `open-gsd/get-shit-done-redux` tagged `security-exception` |
+| 1 | Requester opens a GitHub issue in `open-gsd/gsd-core` tagged `security-exception` |
 | 2 | Issue describes: which control, why the exception is needed, proposed compensating control |
 | 3 | One maintainer approves the exception in the issue thread |
 | 4 | Exception is time-limited: maximum 90 days. Requester must file a renewal or close the issue. |
@@ -393,7 +393,7 @@ Responsibilities:
 
 ## 6. Rollout plan
 
-### Phase 1 — Pilot: `open-gsd/get-shit-done-redux` (in progress)
+### Phase 1 — Pilot: `open-gsd/gsd-core` (in progress)
 
 | Item | Status | Owner | Target date | Exit criteria |
 |---|---|---|---|---|

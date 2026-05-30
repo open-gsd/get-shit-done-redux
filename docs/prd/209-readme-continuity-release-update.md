@@ -41,7 +41,7 @@ The top-level README still mixes legacy transition language, personal attributio
 
 ## Acceptance Criteria
 
-1. README contains a continuity notice naming `open-gsd/get-shit-done-redux` as canonical.
+1. README contains a continuity notice naming `open-gsd/gsd-core` as canonical.
 2. README removes personal legacy attribution in origin-story prose.
 3. README strongly recommends migration away from legacy artifacts.
 4. README links to Discussions #109 and #119.

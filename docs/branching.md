@@ -102,7 +102,7 @@ git add -A && git commit -m "fix: harden config parse for trailing comma"
 git push -u origin fix/3187-config-corruption
 
 # 4. Open a PR. Target = next. (Don't change the target.)
-gh pr create --base next --repo open-gsd/get-shit-done-redux
+gh pr create --base next --repo open-gsd/gsd-core
 
 # 5. CI runs. Reviewer approves. PR squash-merges into `next`.
 #    Your branch auto-deletes.

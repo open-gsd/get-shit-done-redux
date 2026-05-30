@@ -1246,7 +1246,7 @@ For the full audit, harness reference, and the composition note with `model_prof
 
 ### Using Non-Claude Runtimes (Codex, OpenCode, Gemini CLI, Kilo)
 
-> **Codex CLI minimum supported version: `0.130.0`** (issue [#3562](https://github.com/open-gsd/get-shit-done-redux/issues/3562)).
+> **Codex CLI minimum supported version: `0.130.0`** (issue [#3562](https://github.com/open-gsd/gsd-core/issues/3562)).
 >
 > Codex CLI [0.130.0](https://github.com/openai/codex/releases/tag/rust-v0.130.0) (released 2026-05-08) removed extra-skills-roots discovery via [openai/codex#21485](https://github.com/openai/codex/pull/21485). From that version onward, Codex only discovers commands from `~/.codex/skills/<name>/SKILL.md` (user root), `<project>/.codex/skills/` (cwd root), and registered plugin roots. The GSD installer writes `~/.codex/skills/gsd-<name>/SKILL.md` directly so `$gsd-help`, `$gsd-new-project`, etc. are discoverable after restart.
 >
@@ -1313,7 +1313,7 @@ All other frontmatter fields (`description:`, `system:`, `model:`) are accepted 
 If you have access to any machine with Node.js — including WSL, a Linux VM, a CI runner, or a Docker container — you can run:
 
 ```bash
-npx @opengsd/get-shit-done-redux@latest --opencode --global
+npx @opengsd/gsd-core@latest --opencode --global
 ```
 
 This produces a correctly converted `~/.config/opencode/agents/` directory. Copy that directory to your Windows machine.
@@ -1328,10 +1328,10 @@ Cline uses a rules-based integration — GSD installs as `.clinerules` rather th
 
 ```bash
 # Global install (applies to all projects)
-npx @opengsd/get-shit-done-redux --cline --global
+npx @opengsd/gsd-core --cline --global
 
 # Local install (this project only)
-npx @opengsd/get-shit-done-redux --cline --local
+npx @opengsd/gsd-core --cline --local
 ```
 
 Global installs write to `~/.cline/`. Local installs write to `./.cline/`. No custom slash commands are registered — GSD rules are loaded automatically by Cline from the rules file.
@@ -1341,7 +1341,7 @@ Global installs write to `~/.cline/`. Local installs write to `./.cline/`. No cu
 CodeBuddy uses a skills-based integration.
 
 ```bash
-npx @opengsd/get-shit-done-redux --codebuddy --global
+npx @opengsd/gsd-core --codebuddy --global
 ```
 
 Skills are installed to `~/.codebuddy/skills/gsd-*/SKILL.md`.
@@ -1351,7 +1351,7 @@ Skills are installed to `~/.codebuddy/skills/gsd-*/SKILL.md`.
 Qwen Code uses the same open skills standard as Claude Code 2.1.88+.
 
 ```bash
-npx @opengsd/get-shit-done-redux --qwen --global
+npx @opengsd/gsd-core --qwen --global
 ```
 
 Skills are installed to `~/.qwen/skills/gsd-*/SKILL.md`. Use the `QWEN_CONFIG_DIR` environment variable to override the default install path.
@@ -1360,12 +1360,12 @@ Skills are installed to `~/.qwen/skills/gsd-*/SKILL.md`. Use the `QWEN_CONFIG_DI
 
 Many supported runtimes ship a prerelease edition alongside their stable release — Windsurf Next, Cursor Nightly, VS Code Insiders, Codex preview channels, JetBrains EAP, and so on. Prerelease editions read from a sibling configuration directory, so the default install path won't reach them.
 
-GSD does not enumerate prerelease editions as separate named runtimes. They are accommodated through the existing `<RUNTIME>_CONFIG_DIR` environment variables and the free-string runtime policy (see [#2517](https://github.com/open-gsd/get-shit-done-redux/issues/2517)) — installs work, paths resolve, GSD operates. Prerelease editions are **best-effort and not separately tested** as part of release CI.
+GSD does not enumerate prerelease editions as separate named runtimes. They are accommodated through the existing `<RUNTIME>_CONFIG_DIR` environment variables and the free-string runtime policy (see [#2517](https://github.com/open-gsd/gsd-core/issues/2517)) — installs work, paths resolve, GSD operates. Prerelease editions are **best-effort and not separately tested** as part of release CI.
 
 **Pattern.** Set the runtime's `*_CONFIG_DIR` env var to the prerelease directory before running the installer:
 
 ```bash
-WINDSURF_CONFIG_DIR=~/.codeium/windsurf-next npx @opengsd/get-shit-done-redux@latest --windsurf --global
+WINDSURF_CONFIG_DIR=~/.codeium/windsurf-next npx @opengsd/gsd-core@latest --windsurf --global
 ```
 
 Select the corresponding stable runtime in the installer prompt. Skills land in the prerelease directory; commands appear in the prerelease editor.
@@ -1405,7 +1405,7 @@ Since v1.17, the installer backs up locally modified files to `gsd-local-patches
 
 ### Cannot Update via npm
 
-If `npx @opengsd/get-shit-done-redux` fails due to npm outages or network restrictions, see [docs/manual-update.md](manual-update.md) for a step-by-step manual update procedure that works without npm access.
+If `npx @opengsd/gsd-core` fails due to npm outages or network restrictions, see [docs/manual-update.md](manual-update.md) for a step-by-step manual update procedure that works without npm access.
 
 ### Surface GSD Update Notifications Without GSD's Statusline
 
@@ -1427,7 +1427,7 @@ GSD update available: 1.39.0 → 1.40.0. Run /gsd-update.
 
 The banner is silent when no update is available. If the cache file is corrupt, GSD emits one diagnostic line (`GSD update check failed.`) and stays silent for 24 hours so a broken cache does not nag every session.
 
-**Opt-out / removal:** delete the SessionStart hook entry that references `gsd-update-banner.js` from your runtime's `settings.json` (Claude Code: `~/.claude/settings.json`; Gemini: `~/.gemini/settings.json`). `npx @opengsd/get-shit-done-redux --uninstall` removes both the script and the registration in one pass.
+**Opt-out / removal:** delete the SessionStart hook entry that references `gsd-update-banner.js` from your runtime's `settings.json` (Claude Code: `~/.claude/settings.json`; Gemini: `~/.gemini/settings.json`). `npx @opengsd/gsd-core --uninstall` removes both the script and the registration in one pass.
 
 The banner is not offered when GSD's statusline is installed — that channel already surfaces update info, so re-prompting would be noise.
 

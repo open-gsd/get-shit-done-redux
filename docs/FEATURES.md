@@ -1050,7 +1050,7 @@ When the user declines (or keeps a non-GSD) statusline, the installer offers a S
 GSD update available: 1.39.0 → 1.40.0. Run /gsd-update.
 ```
 
-The banner is silent when up-to-date and rate-limits "check failed" diagnostics to once per 24 hours. Removed cleanly by `npx @opengsd/get-shit-done-redux --uninstall` or by deleting the SessionStart entry that references `gsd-update-banner.js`.
+The banner is silent when up-to-date and rate-limits "check failed" diagnostics to once per 24 hours. Removed cleanly by `npx @opengsd/gsd-core --uninstall` or by deleting the SessionStart entry that references `gsd-update-banner.js`.
 
 ### 38. Developer Profiling
 
@@ -1432,7 +1432,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 55. Multi-Runtime Installer Selection
 
-**Part of:** `npx @opengsd/get-shit-done-redux`
+**Part of:** `npx @opengsd/gsd-core`
 
 **Purpose:** Select multiple runtimes in a single interactive install session.
 
@@ -1451,7 +1451,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 56. Windsurf Runtime Support
 
-**Part of:** `npx @opengsd/get-shit-done-redux`
+**Part of:** `npx @opengsd/gsd-core`
 
 **Purpose:** Add Windsurf as a supported AI CLI runtime for GSD installation and execution.
 
@@ -1671,7 +1671,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 68. Claude Code Skills Migration
 
-**Part of:** `npx @opengsd/get-shit-done-redux`
+**Part of:** `npx @opengsd/gsd-core`
 
 **Purpose:** Migrate GSD commands to Claude Code 2.1.88+ skills format with backward compatibility.
 
@@ -1935,7 +1935,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 85. New Runtime Support (Trae, Cline, Augment Code)
 
-**Part of:** `npx @opengsd/get-shit-done-redux`
+**Part of:** `npx @opengsd/gsd-core`
 
 **Purpose:** Extend GSD installation to Trae IDE, Cline, and Augment Code runtimes.
 
@@ -2277,7 +2277,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 
 ### 104. New Runtime Support (Cline, CodeBuddy, Qwen Code)
 
-**Part of:** `npx @opengsd/get-shit-done-redux`
+**Part of:** `npx @opengsd/gsd-core`
 
 **Purpose:** Extend GSD installation to Cline, CodeBuddy, and Qwen Code runtimes.
 
@@ -2606,7 +2606,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-CONSOLIDATE-03: Deleted micro-skill slash forms (the bare `gsd-add-todo`, `gsd-add-backlog`, `gsd-plant-seed`, `gsd-check-todos`, `gsd-add-phase`, `gsd-insert-phase`, `gsd-remove-phase`, `gsd-edit-phase`, `gsd-new-workspace`, `gsd-list-workspaces`, `gsd-remove-workspace`, `gsd-settings-advanced`, `gsd-settings-integrations`, `gsd-set-profile`, `gsd-sketch-wrap-up`, `gsd-spike-wrap-up`, `gsd-reapply-patches`, `gsd-code-review-fix`, …) MUST resolve to "Unknown command" — no shadow stubs.
 - REQ-CONSOLIDATE-04: `autonomous.md` invokes `/gsd-code-review --fix` (was previously calling the deleted `gsd-code-review-fix`).
 
-**Reference issue:** [#2790](https://github.com/open-gsd/get-shit-done-redux/issues/2790)
+**Reference issue:** [#2790](https://github.com/open-gsd/gsd-core/issues/2790)
 
 ---
 
@@ -2634,7 +2634,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-NS-02: Existing sub-skills are unchanged and still invocable directly — namespace skills are additive, not a replacement for direct slash forms.
 - REQ-NS-03: The body of each namespace router contains a routing table that maps user intent to the correct concrete sub-skill on the post-#2790 consolidated surface.
 
-**Reference issue:** [#2792](https://github.com/open-gsd/get-shit-done-redux/issues/2792)
+**Reference issue:** [#2792](https://github.com/open-gsd/gsd-core/issues/2792)
 
 ---
 
@@ -2649,7 +2649,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-CTX-GUARD-02: The same triage is exposed as `gsd-tools.cjs validate context --tokens-used <int> --context-window <int>` — a structured envelope for status-line and hook callers (#125). Both flags are required; the handler returns the same `{ percent, state }` envelope as the pure classifier in REQ-CTX-GUARD-03.
 - REQ-CTX-GUARD-03: The classifier (`bin/lib/context-utilization.cjs`) is pure: input `(tokensUsed, contextWindow)`, output `{ percent, state }`. Easy to unit-test, easy to reuse from any caller.
 
-**Reference issue:** [#2792](https://github.com/open-gsd/get-shit-done-redux/issues/2792)
+**Reference issue:** [#2792](https://github.com/open-gsd/gsd-core/issues/2792)
 
 ---
 
@@ -2666,7 +2666,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-LIFECYCLE-02: `formatGsdState()` checks the lifecycle fields in priority order and emits the first matching scene (Phase active → Idle next-recommended → Milestone complete → Default fallback).
 - REQ-LIFECYCLE-03: All four fields default to undefined; existing STATE.md files render byte-for-byte identically.
 
-**Reference issue:** [#2833](https://github.com/open-gsd/get-shit-done-redux/issues/2833) — see [`docs/STATE-MD-LIFECYCLE.md`](STATE-MD-LIFECYCLE.md) for the full field reference and rendering rules.
+**Reference issue:** [#2833](https://github.com/open-gsd/gsd-core/issues/2833) — see [`docs/STATE-MD-LIFECYCLE.md`](STATE-MD-LIFECYCLE.md) for the full field reference and rendering rules.
 
 ---
 
@@ -2706,7 +2706,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-PHASE-MODELS-02: Configs without a `models` block behave byte-for-byte identically to pre-v1.41 behavior.
 - REQ-PHASE-MODELS-03: `discuss` and `completion` are accepted by the schema for forward compatibility; setting them today is a no-op until a subagent maps to each.
 
-**Reference issue:** [#3023](https://github.com/open-gsd/get-shit-done-redux/pull/3030)
+**Reference issue:** [#3023](https://github.com/open-gsd/gsd-core/pull/3030)
 
 ---
 
@@ -2727,7 +2727,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - REQ-DYNROUTE-02: New resolver `resolveModelForTier(cwd, agent, attempt)` in `core.cjs` is the single call-site for orchestrator integration.
 - REQ-DYNROUTE-03: `max_escalations` caps the escalation chain to prevent runaway cost.
 
-**Reference issue:** [#3024](https://github.com/open-gsd/get-shit-done-redux/pull/3031)
+**Reference issue:** [#3024](https://github.com/open-gsd/gsd-core/pull/3031)
 
 ---
 
@@ -2740,14 +2740,14 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 - The hook reads the existing `~/.cache/gsd/gsd-update-check.json` cache — the same cache used by the statusline — and prints a banner only when an update is available.
 - Silent when up-to-date.
 - Failure diagnostics rate-limited to once per 24 h.
-- Cleanly removed by `npx @opengsd/get-shit-done-redux --uninstall`.
+- Cleanly removed by `npx @opengsd/gsd-core --uninstall`.
 
 **Requirements:**
 - REQ-BANNER-01: Banner does not install without explicit opt-in.
 - REQ-BANNER-02: No additional network requests — reuses the existing background update-check cache.
 - REQ-BANNER-03: Uninstall path removes the banner hook.
 
-**Reference issue:** [#2795](https://github.com/open-gsd/get-shit-done-redux/pull/2795)
+**Reference issue:** [#2795](https://github.com/open-gsd/gsd-core/pull/2795)
 
 ---
 
@@ -2766,7 +2766,7 @@ Users who run a memory / knowledge-base MCP server (for example, ExoCortex-style
 
 No new commands or daemon process — purely a documentation artifact that maps existing primitives onto a tracker-driven workflow.
 
-**Reference issue:** [#2840](https://github.com/open-gsd/get-shit-done-redux/pull/2840)
+**Reference issue:** [#2840](https://github.com/open-gsd/gsd-core/pull/2840)
 
 ---
 
@@ -2794,7 +2794,7 @@ Source commit: abc1234 (3 commits behind HEAD)
 
 **Fallback:** pre-v0.7 graphs and non-git checkouts return `commit_stale: null`; callers fall back to the existing mtime-based `stale` flag. No behavior change for existing users.
 
-**Reference issue:** [#3170](https://github.com/open-gsd/get-shit-done-redux/issues/3170)
+**Reference issue:** [#3170](https://github.com/open-gsd/gsd-core/issues/3170)
 
 ---
 

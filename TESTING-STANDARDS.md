@@ -176,7 +176,7 @@ Real multi-process race tests are deleted once the corresponding deterministic c
 | `no-restricted-syntax` (ban 1) | `error` | Top-level `setTimeout` in `ExpressionStatement` |
 | `no-restricted-syntax` (ban 2) | `error` | `.only` member access on `test`/`it`/`describe` (belt-and-suspenders) |
 
-All three `local/*` rules currently ship at `warn`. They become `error` after the cleanup sweep tracked at [#453](https://github.com/open-gsd/get-shit-done-redux/issues/453) merges. New violations added after the acceptance of ADR 456 are out of policy regardless of the current ESLint severity.
+All three `local/*` rules currently ship at `warn`. They become `error` after the cleanup sweep tracked at [#453](https://github.com/open-gsd/gsd-core/issues/453) merges. New violations added after the acceptance of ADR 456 are out of policy regardless of the current ESLint severity.
 
 ESLint harness details: [`docs/adr/452-eslint-lint-harness.md`](docs/adr/452-eslint-lint-harness.md).
 

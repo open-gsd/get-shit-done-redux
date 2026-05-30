@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues for this repo live in **GitHub Issues** at `open-gsd/get-shit-done-redux`.
+Issues for this repo live in **GitHub Issues** at `open-gsd/gsd-core`.
 
 ## Auth
 
@@ -9,19 +9,19 @@ repo-local `.envrc` before running `gh`.
 
 ## Conventions
 
-- **Create**: `gh issue create --repo open-gsd/get-shit-done-redux --title "..." --body "..."`
-- **Read**: `gh issue view <number> --repo open-gsd/get-shit-done-redux --comments`
-- **List**: `gh issue list --repo open-gsd/get-shit-done-redux --state open --json number,title,labels --jq '...'`
-- **Comment**: `gh issue comment <number> --repo open-gsd/get-shit-done-redux --body "..."`
-- **Label**: `gh issue edit <number> --repo open-gsd/get-shit-done-redux --add-label "..." --remove-label "..."`
-- **Close**: `gh issue close <number> --repo open-gsd/get-shit-done-redux --comment "..."`
+- **Create**: `gh issue create --repo open-gsd/gsd-core --title "..." --body "..."`
+- **Read**: `gh issue view <number> --repo open-gsd/gsd-core --comments`
+- **List**: `gh issue list --repo open-gsd/gsd-core --state open --json number,title,labels --jq '...'`
+- **Comment**: `gh issue comment <number> --repo open-gsd/gsd-core --body "..."`
+- **Label**: `gh issue edit <number> --repo open-gsd/gsd-core --add-label "..." --remove-label "..."`
+- **Close**: `gh issue close <number> --repo open-gsd/gsd-core --comment "..."`
 
-Always pass `--repo open-gsd/get-shit-done-redux` explicitly — the local clone has multiple remotes and `gh` may resolve to the wrong one.
+Always pass `--repo open-gsd/gsd-core` explicitly — the local clone has multiple remotes and `gh` may resolve to the wrong one.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue at `open-gsd/get-shit-done-redux`.
+Create a GitHub issue at `open-gsd/gsd-core`.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --repo open-gsd/get-shit-done-redux --comments`.
+Run `gh issue view <number> --repo open-gsd/gsd-core --comments`.

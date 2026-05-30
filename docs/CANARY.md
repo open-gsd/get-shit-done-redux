@@ -20,13 +20,13 @@ A canary build NEVER becomes a `next` build directly, and a `next` build NEVER b
 
 ```bash
 # One-off invocation (npx)
-npx @opengsd/get-shit-done-redux@canary
+npx @opengsd/gsd-core@canary
 
 # Pin to the canary dist-tag globally
-npm install -g @opengsd/get-shit-done-redux@canary
+npm install -g @opengsd/gsd-core@canary
 
 # Pin to an exact canary version
-npm install -g @opengsd/get-shit-done-redux@1.50.0-canary.1
+npm install -g @opengsd/gsd-core@1.50.0-canary.1
 ```
 
 The CC installer's defensive purge rewrites stale config blocks left by older GSD versions, so reinstalling on top of an existing project is safe.
@@ -47,20 +47,20 @@ The CC installer's defensive purge rewrites stale config blocks left by older GS
 
 ```bash
 # Back to the current stable
-npm install -g @opengsd/get-shit-done-redux@latest
+npm install -g @opengsd/gsd-core@latest
 
 # Or to the next/RC train
-npm install -g @opengsd/get-shit-done-redux@next
+npm install -g @opengsd/gsd-core@next
 ```
 
 If you have a local project that interacted with canary-only features (for instance, an MVP-mode phase planned by 1.50.0-canary), the planner artifacts in `.planning/` remain valid — older GSD versions will just ignore the `**Mode:** mvp` field on phases.
 
 ## Reporting issues against canary
 
-File against the [issue tracker](https://github.com/open-gsd/get-shit-done-redux/issues) with the `bug` template. Include the exact canary version (`get-shit-done-redux --version` reports it) so triage can route the report back into the `dev` stream rather than the stable stream.
+File against the [issue tracker](https://github.com/open-gsd/gsd-core/issues) with the `bug` template. Include the exact canary version (`gsd-core --version` reports it) so triage can route the report back into the `dev` stream rather than the stable stream.
 
 ## Where to look next
 
 - Active canary release notes: [`docs/RELEASE-v1.50.0-canary.1.md`](RELEASE-v1.50.0-canary.1.md)
 - Stable release notes: [`CHANGELOG.md`](../CHANGELOG.md)
-- Stream architecture rationale: discussed across [#2727](https://github.com/open-gsd/get-shit-done-redux/issues/2727), [#2773](https://github.com/open-gsd/get-shit-done-redux/issues/2773) (codex schema-break and the resulting promotion bottleneck that motivated explicit stream isolation)
+- Stream architecture rationale: discussed across [#2727](https://github.com/open-gsd/gsd-core/issues/2727), [#2773](https://github.com/open-gsd/gsd-core/issues/2773) (codex schema-break and the resulting promotion bottleneck that motivated explicit stream isolation)
