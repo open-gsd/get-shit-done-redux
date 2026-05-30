@@ -6,6 +6,8 @@ const os = require('os');
 const readline = require('readline');
 const crypto = require('crypto');
 const {
+  buildWindowsShimTriple: buildWindowsShimTripleFromProjection,
+  formatSdkPathDiagnostic: formatSdkPathDiagnosticFromProjection,
   isManagedHookBasename,
   isManagedHookCommand,
   projectLocalHookPrefix,
@@ -10764,6 +10766,20 @@ function formatStaleStandaloneSdkWarning(info) {
   ].join('\n');
 }
 
+// Projection-contract surfaces (drift guards: tests/bug-3441, tests/bug-3442).
+// These have no production caller after the #505 dead-SDK-verification removal,
+// but they are the install.js side of the shell-command projection contract:
+// the drift-guard tests assert install.js delegates to
+// shell-command-projection.cjs rather than hand-rolling the projection. Kept
+// exported so that contract stays verifiable.
+function buildWindowsShimTriple(shimSrc) {
+  return buildWindowsShimTripleFromProjection(shimSrc);
+}
+
+function formatSdkPathDiagnostic({ shimDir, platform, runDir }) {
+  return formatSdkPathDiagnosticFromProjection({ shimDir, platform, runDir });
+}
+
 /**
  * Install GSD for all selected runtimes
  */
@@ -10917,6 +10933,8 @@ module.exports = {
     uninstall,
     detectStaleStandaloneSdk,
     formatStaleStandaloneSdkWarning,
+    buildWindowsShimTriple,
+    formatSdkPathDiagnostic,
     convertClaudeCommandToCodexSkill,
     convertClaudeToOpencodeFrontmatter,
     convertClaudeToKiloFrontmatter,

@@ -38,8 +38,6 @@ describe('bug #505: dead SDK verification subsystem removed from bin/install.js'
     'isLegacyGsdSdkShim',
     'trySelfLinkGsdSdk',
     'trySelfLinkGsdSdkWindows',
-    'buildWindowsShimTriple',
-    'formatSdkPathDiagnostic',
     'filterNpxFromPath',
     'getUserShellPath',
     'getUserShellWindowsPersistentPath',
@@ -72,5 +70,17 @@ describe('bug #505: dead SDK verification subsystem removed from bin/install.js'
       'function',
       'formatStaleStandaloneSdkWarning handles real stale-SDK condition (#3406) and must not be removed',
     );
+  });
+
+  // buildWindowsShimTriple / formatSdkPathDiagnostic have no production caller
+  // after this removal, but they are the install.js side of a projection-contract
+  // drift guard (tests/bug-3441, tests/bug-3442) that assert install.js delegates
+  // to shell-command-projection.cjs. They are deliberately kept exported.
+  test('contract surface buildWindowsShimTriple is still exported', () => {
+    assert.equal(typeof inst.buildWindowsShimTriple, 'function');
+  });
+
+  test('contract surface formatSdkPathDiagnostic is still exported', () => {
+    assert.equal(typeof inst.formatSdkPathDiagnostic, 'function');
   });
 });
