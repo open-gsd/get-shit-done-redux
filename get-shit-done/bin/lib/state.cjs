@@ -1392,45 +1392,48 @@ function cmdStatePlannedPhase(cwd, phaseNumber, planCount, raw) {
     return;
   }
 
-  let content = fs.readFileSync(statePath, 'utf-8');
   const today = realClock.today();
   const updated = [];
 
   const statusDefaults = KNOWN_TEMPLATE_DEFAULTS['Status'];
   const lastActivityDefaults = KNOWN_TEMPLATE_DEFAULTS['Last Activity'];
 
-  // Update Status — only when the existing value is a known template default
-  // (Knuth invariant: preserve executor-authored values).
-  const newContent = stateReplaceFieldIfTemplate(content, 'Status', statusDefaults, 'Ready to execute');
-  if (newContent !== content) { content = newContent; updated.push('Status'); }
+  // plan-phase updates per-phase body fields only. It must NOT resync the
+  // milestone-wide progress.* frontmatter from a half-planned disk snapshot —
+  // doing so tramples curated/known-good counters. Route through the body-only
+  // write contract (resync:false), the same guard state.update uses. (#500 RC1)
+  readModifyWriteStateMd(statePath, (content) => {
+    // Update Status — only when the existing value is a known template default
+    // (Knuth invariant: preserve executor-authored values).
+    const newContent = stateReplaceFieldIfTemplate(content, 'Status', statusDefaults, 'Ready to execute');
+    if (newContent !== content) { content = newContent; updated.push('Status'); }
 
-  // Update Total Plans in Phase
-  if (planCount !== null && planCount !== undefined) {
-    const result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
-    if (result) { content = result; updated.push('Total Plans in Phase'); }
-  }
+    // Update Total Plans in Phase
+    if (planCount !== null && planCount !== undefined) {
+      const result = stateReplaceField(content, 'Total Plans in Phase', String(planCount));
+      if (result) { content = result; updated.push('Total Plans in Phase'); }
+    }
 
-  // Update Last Activity — only when the existing value is a known template default
-  {
-    const after = stateReplaceFieldIfTemplate(content, 'Last Activity', lastActivityDefaults, today);
-    if (after !== content) { content = after; updated.push('Last Activity'); }
-  }
+    // Update Last Activity — only when the existing value is a known template default
+    {
+      const after = stateReplaceFieldIfTemplate(content, 'Last Activity', lastActivityDefaults, today);
+      if (after !== content) { content = after; updated.push('Last Activity'); }
+    }
 
-  // Update Last Activity Description
-  {
-    const result = stateReplaceField(content, 'Last Activity Description', `Phase ${phaseNumber} planning complete — ${planCount || '?'} plans ready`);
-    if (result) { content = result; updated.push('Last Activity Description'); }
-  }
+    // Update Last Activity Description
+    {
+      const result = stateReplaceField(content, 'Last Activity Description', `Phase ${phaseNumber} planning complete — ${planCount || '?'} plans ready`);
+      if (result) { content = result; updated.push('Last Activity Description'); }
+    }
 
-  // Update Current Position section
-  content = updateCurrentPositionFields(content, {
-    status: 'Ready to execute',
-    lastActivity: `${today} -- Phase ${phaseNumber} planning complete`,
-  });
+    // Update Current Position section
+    content = updateCurrentPositionFields(content, {
+      status: 'Ready to execute',
+      lastActivity: `${today} -- Phase ${phaseNumber} planning complete`,
+    });
 
-  if (updated.length > 0) {
-    writeStateMd(statePath, content, cwd);
-  }
+    return content;
+  }, cwd, { resync: false });
 
   output({ updated, phase: phaseNumber, plan_count: planCount }, raw, updated.length > 0 ? 'true' : 'false');
 }

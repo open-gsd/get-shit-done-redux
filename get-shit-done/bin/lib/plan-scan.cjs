@@ -24,6 +24,11 @@ function isRootPlanFile(fileName) {
         return false;
     if (fileName.endsWith('-PLAN.md') || fileName === 'PLAN.md')
         return true;
+    // A summary is never a plan. Reject summaries before the loose /PLAN/i
+    // fallback so legacy `<N>-PLAN-<NN>-SUMMARY.md` names (which contain the
+    // substring "PLAN") are not double-counted as plans. (#500 RC2)
+    if (isRootSummaryFile(fileName))
+        return false;
     return /\.md$/i.test(fileName) && /PLAN/i.test(fileName);
 }
 
