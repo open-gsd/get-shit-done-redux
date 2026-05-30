@@ -67,6 +67,7 @@
     "sync:launcher": "node scripts/sync-runtime-launcher.cjs",
     "check:env": "node scripts/check-env.cjs",
     "check:alias-drift": "node scripts/check-alias-drift.cjs",
+    "check:identity-drift": "node scripts/lint-package-identity-drift.cjs",
     "check:integrity": "node scripts/check-npm-integrity.cjs",
     "build": "npm run generate:identity && npm run build:hooks",
     "build:hooks": "node scripts/build-hooks.js",
