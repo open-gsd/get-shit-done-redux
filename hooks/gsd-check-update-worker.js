@@ -11,11 +11,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { isSemverNewer } = require('../get-shit-done/bin/lib/semver-compare.cjs');
-// Derive the published package name from package.json so this survives
-// future renames and always matches the actual registry entry (#378).
-const PACKAGE_NAME = require('../package.json').name;
+// Latest-version lookup is delegated to the single deterministic adapter
+// (#498). checkLatestVersion() owns the npm-view call, the timeout/semver
+// policy, and the package name — sourced from the baked Package Identity seam.
+// The previous `require('../package.json').name` (#378) resolved to undefined
+// in the installed tree (only a {"type":"commonjs"} marker ships), so the
+// background check never reported updates.
+const { checkLatestVersion } = require('../get-shit-done/bin/check-latest-version.cjs');
 // Authoritative list of managed hooks — shared with tests to retire source-grep
 // assertions (pending-migration-to-typed-ir [#455]).
 const { MANAGED_HOOKS } = require('./managed-hooks-registry.cjs');
@@ -69,20 +72,14 @@ if (configDir) {
   } catch (e) {}
 }
 
+// Single adapter for the registry lookup (#498). checkLatestVersion() routes
+// through the shell-projection seam, which already owns the Windows shell-flag
+// policy, the timeout, and semver validation. A non-ok result leaves latest
+// null, exactly as the previous inline try/catch did.
 let latest = null;
 try {
-  latest = execFileSync('npm', ['view', PACKAGE_NAME, 'version'], {
-    encoding: 'utf8',
-    timeout: 10000,
-    windowsHide: true,
-    // On Windows, 'npm' is distributed as npm.cmd. Node's execFileSync does
-    // not apply PATHEXT resolution and looks for a literal 'npm' binary,
-    // failing with ENOENT. Setting shell:true on Windows routes through
-    // cmd.exe which resolves npm.cmd via PATHEXT.
-    // POSIX (Linux/macOS) is left untouched — no shell spawn, no extra
-    // signal/exit-code semantics, no overhead.
-    shell: process.platform === 'win32',
-  }).trim();
+  const lv = checkLatestVersion();
+  if (lv && lv.ok) latest = lv.version;
 } catch (e) {}
 
 const result = {
