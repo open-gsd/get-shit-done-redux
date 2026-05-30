@@ -20,15 +20,25 @@ const { resolveUpdateContext } = require(
   path.join(ROOT, 'get-shit-done', 'bin', 'lib', 'update-context.cjs'),
 );
 
+// Normalize a path to a platform-agnostic key: resolve to absolute, then
+// lowercase forward-slash form. This makes the fake fs match the resolver's
+// path.join/path.resolve lookups on Windows (backslash + drive letter) as well
+// as POSIX, so these unit tests are not OS-coupled.
+function normKey(p) { return path.resolve(p).replace(/\\/g, '/').toLowerCase(); }
+
 // Build an injected fs from a map of absolute path -> contents. Marker files
 // (VERSION, workflows/update.md) just need to "exist".
 function fakeFs(files) {
-  const set = new Map(Object.entries(files));
+  const set = new Map();
+  for (const [k, v] of Object.entries(files)) set.set(normKey(k), v);
   return {
-    exists: (p) => set.has(p),
-    readFile: (p) => (set.has(p) ? set.get(p) : null),
+    exists: (p) => set.has(normKey(p)),
+    readFile: (p) => { const k = normKey(p); return set.has(k) ? set.get(k) : null; },
   };
 }
+
+// Compare resolved-dir results without coupling to OS path style.
+function sameDir(a, b) { return normKey(a) === normKey(b); }
 
 const HOME = '/home/u';
 const CWD = '/work/proj';
@@ -40,12 +50,10 @@ describe('resolveUpdateContext: scope cascade', () => {
   test('GLOBAL claude install under $HOME/.claude', () => {
     const fs = fakeFs({ [ver(`${HOME}/.claude`)]: '1.40.0\n', [marker(`${HOME}/.claude`)]: 'x' });
     const r = resolveUpdateContext({ home: HOME, cwd: CWD, env: {}, fs });
-    assert.deepEqual(r, {
-      installedVersion: '1.40.0',
-      scope: 'GLOBAL',
-      runtime: 'claude',
-      gsdDir: `${HOME}/.claude`,
-    });
+    assert.equal(r.installedVersion, '1.40.0');
+    assert.equal(r.scope, 'GLOBAL');
+    assert.equal(r.runtime, 'claude');
+    assert.ok(sameDir(r.gsdDir, `${HOME}/.claude`), `gsdDir was ${r.gsdDir}`);
   });
 
   test('LOCAL install under ./.claude takes priority over global', () => {
@@ -56,7 +64,7 @@ describe('resolveUpdateContext: scope cascade', () => {
     const r = resolveUpdateContext({ home: HOME, cwd: CWD, env: {}, fs });
     assert.equal(r.scope, 'LOCAL');
     assert.equal(r.installedVersion, '1.39.0');
-    assert.equal(r.gsdDir, `${CWD}/.claude`);
+    assert.ok(sameDir(r.gsdDir, `${CWD}/.claude`), `gsdDir was ${r.gsdDir}`);
   });
 
   test('cwd === home does NOT misdetect as LOCAL (dedup)', () => {
@@ -85,7 +93,7 @@ describe('resolveUpdateContext: runtime probing + env overrides', () => {
     const fs = fakeFs({ [ver(dir)]: '1.40.0\n', [marker(dir)]: 'x' });
     const r = resolveUpdateContext({ home: HOME, cwd: CWD, env: {}, fs });
     assert.equal(r.runtime, 'opencode');
-    assert.equal(r.gsdDir, dir);
+    assert.ok(sameDir(r.gsdDir, dir), `gsdDir was ${r.gsdDir}`);
   });
 
   test('CLAUDE_CONFIG_DIR env override locates a custom global dir', () => {
@@ -94,7 +102,7 @@ describe('resolveUpdateContext: runtime probing + env overrides', () => {
     const r = resolveUpdateContext({ home: HOME, cwd: CWD, env: { CLAUDE_CONFIG_DIR: custom }, fs });
     assert.equal(r.scope, 'GLOBAL');
     assert.equal(r.runtime, 'claude');
-    assert.equal(r.gsdDir, custom);
+    assert.ok(sameDir(r.gsdDir, custom), `gsdDir was ${r.gsdDir}`);
   });
 
   test('preferredConfigDir fast-path: trusts a validated custom dir as GLOBAL', () => {
@@ -106,7 +114,7 @@ describe('resolveUpdateContext: runtime probing + env overrides', () => {
     });
     assert.equal(r.scope, 'GLOBAL');
     assert.equal(r.runtime, 'kilo');
-    assert.equal(r.gsdDir, custom);
+    assert.ok(sameDir(r.gsdDir, custom), `gsdDir was ${r.gsdDir}`);
     assert.equal(r.installedVersion, '1.41.0');
   });
 });

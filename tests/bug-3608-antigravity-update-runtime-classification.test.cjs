@@ -84,15 +84,20 @@ describe('bug #3608 / #498: update-context models Antigravity as a first-class r
   });
 
   test('behavioral: an Antigravity install resolves to runtime "antigravity", not "gemini"', () => {
+    // Normalize paths so the fake fs matches the resolver's path.join/resolve
+    // lookups on Windows (backslash + drive) as well as POSIX.
+    const normKey = (p) => path.resolve(p).replace(/\\/g, '/').toLowerCase();
     const HOME = '/home/u';
-    const agDir = `${HOME}/.gemini/antigravity`;
+    const agDir = path.join(HOME, '.gemini', 'antigravity');
+    const verFile = normKey(path.join(agDir, 'get-shit-done', 'VERSION'));
+    const markerFile = normKey(path.join(agDir, 'get-shit-done', 'workflows', 'update.md'));
     const fakeFs = {
-      exists: (p) => p === `${agDir}/get-shit-done/VERSION` || p === `${agDir}/get-shit-done/workflows/update.md`,
-      readFile: (p) => (p === `${agDir}/get-shit-done/VERSION` ? '1.40.0\n' : null),
+      exists: (p) => normKey(p) === verFile || normKey(p) === markerFile,
+      readFile: (p) => (normKey(p) === verFile ? '1.40.0\n' : null),
     };
-    const r = resolveUpdateContext({ home: HOME, cwd: '/work', env: {}, fs: fakeFs });
+    const r = resolveUpdateContext({ home: HOME, cwd: path.resolve('/work'), env: {}, fs: fakeFs });
     assert.equal(r.runtime, 'antigravity');
-    assert.equal(r.gsdDir, agDir);
+    assert.equal(normKey(r.gsdDir), normKey(agDir));
   });
 
   test('update.md execution_context classification still lists antigravity paths before /.gemini/', () => {

@@ -85,9 +85,14 @@ describe('Issue #498: formatManualInstall (the npx fallback command)', () => {
 
 describe('Issue #498: generated runtime module (baked, drift-checked)', () => {
   test('the committed generated file is in sync with package.json (no drift)', () => {
+    // Normalize line endings: on Windows the file is checked out with CRLF
+    // (no .gitattributes eol rule), while render() emits LF. The repo's
+    // convention is to compare normalized content (see autonomous-decomposition,
+    // bug-3707). The sync check is about content, not the checkout's eol.
+    const norm = (s) => s.replace(/\r\n/g, '\n');
     const expected = render(deriveIdentity(require(path.join(ROOT, 'package.json'))));
     const actual = fs.readFileSync(GENERATED, 'utf8');
-    assert.equal(actual, expected,
+    assert.equal(norm(actual), norm(expected),
       'package-identity.cjs is stale — run `node scripts/generate-package-identity.cjs`');
   });
 
