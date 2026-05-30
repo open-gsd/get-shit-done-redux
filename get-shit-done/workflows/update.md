@@ -28,12 +28,18 @@ for cand in \
   "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs"; do
   if [ -n "$cand" ] && [ -f "$cand" ]; then GSD_TOOLS="$cand"; break; fi
 done
+# Last resort: the gsd-tools shim on PATH — resolved to its absolute path and
+# invoked via the variable (never a bare `gsd-tools` command; see #2851).
+if [ -z "$GSD_TOOLS" ] && command -v gsd-tools >/dev/null 2>&1; then
+  GSD_TOOLS="$(command -v gsd-tools)"
+fi
 
 UC=""
 if [ -n "$GSD_TOOLS" ]; then
-  UC="$(node "$GSD_TOOLS" update-context --config-dir "$PREFERRED_CONFIG_DIR" --runtime "$PREFERRED_RUNTIME" --json 2>/dev/null)"
-elif command -v gsd-tools >/dev/null 2>&1; then
-  UC="$(gsd-tools update-context --config-dir "$PREFERRED_CONFIG_DIR" --runtime "$PREFERRED_RUNTIME" --json 2>/dev/null)"
+  case "$GSD_TOOLS" in
+    *.cjs) UC="$(node "$GSD_TOOLS" update-context --config-dir "$PREFERRED_CONFIG_DIR" --runtime "$PREFERRED_RUNTIME" --json 2>/dev/null)" ;;
+    *)     UC="$("$GSD_TOOLS" update-context --config-dir "$PREFERRED_CONFIG_DIR" --runtime "$PREFERRED_RUNTIME" --json 2>/dev/null)" ;;
+  esac
 fi
 
 if [ -n "$UC" ]; then

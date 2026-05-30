@@ -328,6 +328,7 @@
       "task-command-router.cjs",
       "template.cjs",
       "uat.cjs",
+      "update-context.cjs",
       "validate-command-router.cjs",
       "validate.cjs",
       "verify-command-router.cjs",
