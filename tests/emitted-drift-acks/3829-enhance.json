@@ -2,7 +2,7 @@
   "version": 1,
   "paths": {
     "execute-phase.md": {
-      "reason": "#3829: code_review_gate gains the two behaviours approved on the issue — it reports the per-severity counts it already parsed from REVIEW.md (previously extracted into the same sed range and discarded), and it writes a per-finding disposition record so a triaged finding is distinguishable from a forgotten one. The growth is the added frontmatter reads, the fallback for a REVIEW.md with no findings: block, and the embedded record-builder. The builder is inline rather than a shared module because gsd_run's query surface is compiled from src/*.cts and adding a subcommand there would pull in contract-drift, registry and docs surfaces well outside the approved scope; an embedded node -e parser mirrored by a pure-JS function in tests is this repo's established pattern for workflow-embedded parsers (see tests/code-review-pipeline-regression.test.cjs on compute_file_scope)."
+      "reason": "#3829: code_review_gate gains the two behaviours approved on the issue — it reports the per-severity counts REVIEW.md already carries (previously parsed into the same range and discarded), and it records a per-finding disposition so a triaged finding is distinguishable from a forgotten one. Almost all of that lands in a new lazily-read step file, gsd-core/workflows/execute-phase/steps/code-review-disposition.md; this file grows only by the paragraph that reads and executes it. Extraction rather than inline growth is deliberate: execute-phase.md sits against two independent ceilings — the XL hard cap in tests/workflow-size-budget.test.cjs and the frozen ADR-857 pre-phase-6 ceiling in tests/claude-orchestration.test.cjs — and both are red lines to stay under, not budgets to spend."
     }
   }
 }

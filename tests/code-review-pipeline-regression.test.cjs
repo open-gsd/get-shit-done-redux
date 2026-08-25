@@ -1531,7 +1531,7 @@ describe('#3829 — code_review_gate severity surfacing', () => {
   });
 
   test('docs-parity: execute-phase.md parses critical|blocker, warning, info and total', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('grep -E -m1 "^[[:space:]]*(critical|blocker):"'),
       'code_review_gate must parse critical: and its blocker: tier-equivalent'
@@ -1545,7 +1545,7 @@ describe('#3829 — code_review_gate severity surfacing', () => {
   });
 
   test('docs-parity: the gate states the counts rather than the countless message alone', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('Code review: ${REVIEW_TOTAL} findings — ${REVIEW_CRITICAL} critical, ${REVIEW_WARNING} warning, ${REVIEW_INFO} info.'),
       'code_review_gate must display the per-severity breakdown it parsed'
@@ -1553,7 +1553,7 @@ describe('#3829 — code_review_gate severity surfacing', () => {
   });
 
   test('docs-parity: every frontmatter scalar read carries a first-match guard', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('grep -m1 "^status:"'),
       'the status: read must keep its single-match guard (DEFECT.FRONTMATTER-SCALAR-BROAD-GREP)'
@@ -1644,7 +1644,7 @@ describe('#3829 — code_review_gate per-finding disposition record', () => {
   });
 
   test('docs-parity: the gate writes a REVIEW-DISPOSITION sibling, not into REVIEW.md', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"'),
       'code_review_gate must write the disposition record to a REVIEW-DISPOSITION sibling'
@@ -1653,6 +1653,20 @@ describe('#3829 — code_review_gate per-finding disposition record', () => {
     assert.ok(
       step.includes("if (h.id && order.indexOf(h.id) === -1) { order.push(h.id); title.set(h.id, h.title); }"),
       'code_review_gate must enumerate every finding ID from REVIEW.md'
+    );
+  });
+
+  test('docs-parity: code_review_gate actually reaches the extracted step', () => {
+    // The step is only reachable because the parent says to read and execute it. Without this,
+    // every other docs-parity assertion here could pass against a file nothing loads.
+    const parent = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      /Read and execute\s+`gsd-core\/workflows\/execute-phase\/steps\/code-review-disposition\.md`/.test(parent),
+      'code_review_gate must read and execute the disposition step'
+    );
+    assert.ok(
+      parent.indexOf('code-review-disposition.md') < parent.indexOf('**TDD review escalation'),
+      'and must do so before the TDD escalation can stop the phase'
     );
   });
 
@@ -1697,7 +1711,7 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
   });
 
   test('docs-parity: the gate stops at the closing delimiter and strips CR before parsing', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes(`awk 'NR==1{if($0!="---") exit; next} /^---$/{closed=1; exit}`),
       'the gate must extract only the FIRST frontmatter block, not a re-opening sed range'
@@ -1823,7 +1837,7 @@ describe('#3829 review round 2 — a review that reports nothing still reconcile
   });
 
   test('docs-parity: the countless fallback requires all four counts, not just the total', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('REVIEW_COUNTS_OK') && src.includes('`REVIEW_COUNTS_OK` is `1`'),
       'a numeric total with missing severities must not emit a half-filled breakdown'
@@ -1954,7 +1968,7 @@ describe('#3829 review round 3 — hostile frontmatter and hand-edited ledgers',
   });
 
   test('docs-parity: the frontmatter scan emits only when the closing delimiter was seen', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('END{if (closed) printf "%s", buf}'),
       'an unterminated frontmatter block must yield nothing'
@@ -1962,7 +1976,7 @@ describe('#3829 review round 3 — hostile frontmatter and hand-edited ledgers',
   });
 
   test('docs-parity: all four counts are validated numerically before the breakdown is shown', () => {
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('REVIEW_COUNTS_OK=1') && src.includes("case \"$_c\" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac"),
       'the breakdown must be gated on all four counts being numeric, not on the total alone'
@@ -2024,7 +2038,7 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
   test('docs-parity: the frontmatter reads survive an unreadable REVIEW.md and a failing grep', () => {
     // An advisory gate must not abort under `set -e`/`pipefail`: a non-matching grep exits 1, and
     // an assignment whose command substitution fails would take the whole step down with it.
-    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.ok(
       src.includes('if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then'),
       'a missing / non-regular REVIEW.md must not abort the step'
