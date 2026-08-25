@@ -17,6 +17,8 @@ group: v1.34.0 Features
 - REQ-REVIEW-06: `--auto` flag MUST enable fix + re-review iteration loop, capped at 3 iterations
 - REQ-REVIEW-07: Feature MUST be gated by `workflow.code_review` config flag
 - REQ-REVIEW-08: `workflow.code_review_point` MUST select which loop point the automatic review step registers at (`execute:post` default, or `execute:wave:post`), independent of the `workflow.code_review` on/off gate and of manual `/gsd-code-review` invocation (#3661)
+- REQ-REVIEW-09: The in-phase `code_review_gate` MUST report the per-severity counts it parses from REVIEW.md, so a review with one `info` finding is distinguishable from a review with a Critical
+- REQ-REVIEW-10: Each finding MUST carry a recorded disposition, so a triaged finding is distinguishable from a forgotten one
 
 **Config:**
 | Setting | Type | Default | Description |
@@ -50,3 +52,43 @@ Escalation is **whole-review, not per-file**: depth is a single scalar handed to
 v1 supports **directory-prefix matching only, not glob syntax**: no glob engine (`minimatch`, `picomatch`, `fast-glob`) exists in this project and none was added for this feature. A path containing `*` or `?` (e.g. `src/auth/**`) is a configuration error rather than a silent near-miss, because accepting it as sugar for a prefix would make unsupported patterns look armed when they match nothing. Every use case in the issue is expressible as a directory prefix. See [Scope code review depth by path](how-to/scope-code-review-depth-by-path.md) for the resolution order, error table, and a worked example.
 
 **Optional external reviewer lanes (#4209):** `/gsd-code-review` accepts the same reviewer-lane flags as `/gsd-review` — any flag the roster declares (run `gsd_run review-lane flags` to list them for your installation, e.g. `--codex`, `--agy`). No reviewer-lane flag is the default and is byte-for-byte unchanged from before #4209: zero lane selection, plan, or invoke calls, and only the internal `gsd-code-reviewer` agent runs. Passing one or more flags asks those lanes to independently review the same already-resolved file scope alongside the internal agent, through the same shared capability-trait interpreter and `review-lane plan`/`invoke` machinery `/gsd-review` uses — no second implementation. Each lane's prompt carries only the repository root, canonical file paths, review depth, and base SHA, never source file contents, under four fixed prohibitions (no source mutation, no test execution, no background processes, no polling). External findings are unverified corroborating evidence: `gsd-code-reviewer` independently re-verifies every claim against the actual source before writing it to `REVIEW.md`, so there remains exactly one `REVIEW.md` schema regardless of how many lanes ran. An explicitly requested lane that is unavailable or fails is reported as a warning, never silently dropped and never a raw-CLI fallback. This is separate from `/gsd-review`, which reviews `PLAN.md` files before execution, not source code.
+**In-phase review reporting and disposition**
+
+`/gsd-execute-phase`'s `code_review_gate` runs code review, then reports what it found:
+
+```
+Code review: 23 findings — 1 critical, 9 warning, 8 info.
+Consider running: /gsd-code-review 1 --fix
+```
+
+Both `critical:` and its documented tier-equivalent `blocker:` are accepted. A REVIEW.md written
+without a `findings:` block has no counts to report, and the gate falls back to the countless form
+rather than printing a half-filled line.
+
+The gate then writes `<NN>-REVIEW-DISPOSITION.md` beside the review — one row per finding ID,
+defaulting to `open`:
+
+| Finding | Severity | Disposition | Source |
+|---------|----------|-------------|--------|
+| CR-01 | critical | open | - |
+| WR-01 | warning | fixed | 01-REVIEW-FIX.md |
+
+`open` means recorded but not yet triaged. `/gsd-code-review <N> --fix` records `fixed` and
+`skipped`, which the gate reconciles from REVIEW-FIX.md — but only when the fix report names the
+**same** finding, because finding IDs are reused across re-reviews and a stale report would
+otherwise declare a brand-new `CR-01` already fixed. Set `deferred` by hand and put the reason in
+the Source cell, which is preserved verbatim across re-runs (escape any `|`).
+
+Re-running the gate preserves every disposition except `open`, so a decision recorded here is never
+overwritten by a later pass. A finding that has been decided but that the current review no longer
+reports — `--auto` re-reviews and rewrites REVIEW.md, so this happens routinely — is **carried**
+rather than dropped, marked *(not in the current review)*, because losing the row would erase the
+record that the finding was seen and triaged. An untriaged `open` row for a finding that has
+vanished is not carried; nothing was decided about it. A run that changes no disposition rewrites
+nothing, so a re-executed phase does not produce a docs commit with no content.
+
+The record is a sibling artifact rather than a section inside REVIEW.md because `--auto`'s
+re-review loop rewrites REVIEW.md on every iteration — a ledger kept inside it would not survive
+the next pass — and because REVIEW.md has a single writer (`gsd-code-reviewer`) that the gate is
+not. The gate remains advisory throughout: it reports and records, and never blocks phase
+completion.

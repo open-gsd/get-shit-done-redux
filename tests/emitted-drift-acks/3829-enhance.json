@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "paths": {
+    "execute-phase.md": {
+      "reason": "#3829: code_review_gate gains the two behaviours approved on the issue — it reports the per-severity counts it already parsed from REVIEW.md (previously extracted into the same sed range and discarded), and it writes a per-finding disposition record so a triaged finding is distinguishable from a forgotten one. The growth is the added frontmatter reads, the fallback for a REVIEW.md with no findings: block, and the embedded record-builder. The builder is inline rather than a shared module because gsd_run's query surface is compiled from src/*.cts and adding a subcommand there would pull in contract-drift, registry and docs surfaces well outside the approved scope; an embedded node -e parser mirrored by a pure-JS function in tests is this repo's established pattern for workflow-embedded parsers (see tests/code-review-pipeline-regression.test.cjs on compute_file_scope)."
+    }
+  }
+}

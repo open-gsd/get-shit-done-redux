@@ -1138,14 +1138,64 @@ Skill(skill="gsd-${ref.skill}", args="${PHASE_NUMBER}")
 ```bash
 PADDED=$(printf "%02d" "${PHASE_NUMBER}")
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
-REVIEW_STATUS=$(sed -n '/^---$/,/^---$/p' "$REVIEW_FILE" | grep "^status:" | head -1 | cut -d: -f2 | tr -d ' ')
+DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
+# Extract ONLY the leading frontmatter block: `sed -n '/^---$/,/^---$/p'` re-opens its range
+# on a body `---` and runs to EOF, which leaks body lines into the scan. That leak is benign
+# for a key the frontmatter always carries (the first match still wins) but NOT for an
+# optional one — a review with no `findings:` block and a body `total:` line would otherwise
+# report the body's number as the count. Stop at the closing delimiter instead, and strip CR
+# first so a CRLF-authored review neither breaks the delimiter match nor injects a carriage
+# return into the message below (DEFECT.FRONTMATTER-SCALAR-BROAD-GREP).
+# Buffered, and emitted only if the CLOSING delimiter was actually seen: an unterminated
+# frontmatter block would otherwise run to EOF and hand the whole review body to the reads below,
+# defeating the scoping entirely.
+# Guarded and `|| true`: this step is advisory, so a REVIEW.md that is missing, a directory, or
+# otherwise unreadable must leave the counts empty and let execution continue — never abort the
+# step under `set -e`/`pipefail`.
+REVIEW_FM=""
+if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
+  REVIEW_FM=$(tr -d '\r' < "$REVIEW_FILE" 2>/dev/null | awk 'NR==1{if($0!="---") exit; next} /^---$/{closed=1; exit} {buf = buf $0 "\n"} END{if (closed) printf "%s", buf}' || true)
+fi
+# `|| true` on every read: under `pipefail` a non-matching `grep` exits 1, and an assignment
+# whose command substitution fails aborts the step under `set -e`. An advisory gate must survive
+# a REVIEW.md with no frontmatter at all.
+REVIEW_STATUS=$(echo "$REVIEW_FM" | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
+# The counts sit in the block just parsed. `blocker:` is the documented tier-equivalent of
+# `critical:` (gsd-code-reviewer.md § "Label equivalence") — accept either, exactly as
+# code-review.md's present_results already does.
+REVIEW_CRITICAL=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*(critical|blocker):" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_WARNING=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*warning:" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_INFO=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*info:" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_TOTAL=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
+# The breakdown is reportable only when ALL FOUR counts are numbers. Deciding on REVIEW_TOTAL
+# alone would still emit `6 findings —  critical` for a review carrying a total and nothing else.
+REVIEW_COUNTS_OK=1
+for _c in "$REVIEW_TOTAL" "$REVIEW_CRITICAL" "$REVIEW_WARNING" "$REVIEW_INFO"; do
+  case "$_c" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac
+done
 ```
 
-If REVIEW_STATUS is not "clean" and not "skipped" and not empty, display:
+If REVIEW_STATUS is not "clean" and not "skipped" and not empty, and `REVIEW_COUNTS_OK` is `1`,
+display the severity breakdown. The counts were parsed above at no extra cost, and stating them is
+what makes a review with one `info` finding distinguishable from a review with a Critical:
+```
+Code review: ${REVIEW_TOTAL} findings — ${REVIEW_CRITICAL} critical, ${REVIEW_WARNING} warning, ${REVIEW_INFO} info.
+Consider running: /gsd:code-review ${PHASE_NUMBER} --fix
+```
+
+That form requires `REVIEW_COUNTS_OK` to be `1`. A REVIEW.md written without a `findings:` block
+has no counts to report, and any count that is empty or non-numeric makes the whole breakdown
+unavailable rather than half-filled. When `REVIEW_COUNTS_OK` is `0`, display the countless form
+instead:
 ```
 Code review found issues. Consider running:
 /gsd:code-review ${PHASE_NUMBER} --fix
 ```
+
+**Record a per-finding disposition.** On that same condition — REVIEW_STATUS not "clean", not
+"skipped" and not empty — read and execute `gsd-core/workflows/execute-phase/steps/code-review-disposition.md`,
+which records one row per finding so a triaged finding is distinguishable downstream from a
+forgotten one. Advisory like the rest of the step; it never blocks.
 
 **Error handling:** If the Skill invocation fails or throws, catch the error, display "Code review encountered an error (non-blocking): {error}" and proceed to gate dispatch. Review failures must never block execution.
 

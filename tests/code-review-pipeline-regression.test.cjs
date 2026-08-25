@@ -26,16 +26,19 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runHook } = require('./helpers/process-seam.cjs');
+const { runHook, runNode, OUTCOME } = require('./helpers/process-seam.cjs');
 const { toLegacyResult, gitOrThrow } = require('./helpers/git-fixture.cjs');
 const { PROBE_TIMEOUT_MS, GIT_TIMEOUT_MS, HOOK_FANOUT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const { createTempDir, createTempGitProject, cleanup, readFileNormalized } = require('./helpers.cjs');
+const os = require('node:os');
 
 const ROOT = path.resolve(__dirname, '..');
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
 const PRE_PASS_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review', 'steps', 'structural-pre-pass.md');
 const FIXER_PATH = path.join(ROOT, 'agents', 'gsd-code-fixer.md');
 const REVIEWER_PATH = path.join(ROOT, 'agents', 'gsd-code-reviewer.md');
+const EXECUTE_PHASE_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'execute-phase.md');
+const DISPOSITION_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'execute-phase', 'steps', 'code-review-disposition.md');
 
 // ---------------------------------------------------------------------------
 // Pure-function implementation of the compute_file_scope Node script body.
@@ -1333,6 +1336,702 @@ describe('CONS-01..03 — external reviewer evidence consolidation (#4209)', () 
     for (const prohibition of ['no source mutation', 'no test execution', 'no background processes', 'no active polling']) {
       assert.ok(blockText.includes(prohibition),
         `EXTERNAL_EVIDENCE_BLOCK must restate "${prohibition}" (SAFE-03..06)`);
+// #3829 — execute-phase `code_review_gate`: surface the severity counts it
+// already parses, and record a per-finding disposition.
+//
+// Before this change the gate extracted `status:` from REVIEW.md's frontmatter,
+// discarded the `critical`/`warning`/`info`/`total` values sitting in the same
+// `sed` range, and printed a message that was byte-identical for a review with
+// one `info` finding and a review with a Critical. Nothing recorded what
+// happened to any finding, so a phase reached `phase.complete` with Criticals
+// standing and no trace they had been seen.
+//
+// Tested the way this file tests every other embedded parser: a pure-JS mirror
+// of the shipped `node -e` script (validated against the shipped block during
+// implementation), plus docs-parity assertions on the workflow .md text, which
+// is itself the deployed contract.
+// ---------------------------------------------------------------------------
+
+// Mirror of the gate's frontmatter scalar reads. The shipped block strips CR, then takes ONLY
+// the first `---` ... `---` block — it does NOT use a sed range, because a sed range re-opens on
+// a body `---` and runs to EOF, which leaks body lines into an OPTIONAL key's read. This mirror
+// must model that extraction, not a whole-document scan: a mirror that scans the document passes
+// on a fixture the shipped code fails, which is the drift this comment exists to prevent.
+function parseGateCounts(reviewText) {
+  const lines = String(reviewText).replace(/\r/g, '').split('\n');
+  // Only a CLOSED frontmatter block counts: an unterminated one must yield nothing rather than
+  // hand the whole review body to the reads below.
+  let fm = [];
+  if (lines[0] === '---') {
+    const buf = [];
+    let closed = false;
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i] === '---') { closed = true; break; }
+      buf.push(lines[i]);
+    }
+    if (closed) fm = buf;
+  }
+  const first = (re) => {
+    for (const line of fm) {
+      const m = line.match(re);
+      if (m) return m[1].trim();
+    }
+    return '';
+  };
+  return {
+    status: first(/^status:(.*)$/),
+    critical: first(/^[ \t]*(?:critical|blocker):(.*)$/),
+    warning: first(/^[ \t]*warning:(.*)$/),
+    info: first(/^[ \t]*info:(.*)$/),
+    total: first(/^[ \t]*total:(.*)$/),
+  };
+}
+
+// ── The SHIPPED disposition builder, executed — not modelled ──────────────────
+//
+// Rounds 1 and 2 of the pre-filing review both refuted "the mirrors are faithful": a
+// hand-written model of a shell-embedded script drifts, and when it drifts the behavioural
+// tests pass while the shipped block is broken. Mutation-testing confirmed it — deleting the
+// carried-row logic from the shipped file turned nothing red.
+//
+// So the disposition tests below run the ACTUAL script. It is pure Node (every input arrives
+// through process.env), so extracting it and executing it needs no shell and works on Windows.
+// The only transformation is undoing the two shell escapes the surrounding double-quoted
+// `node -e "…"` string requires: \` -> ` and \$ -> $.
+function shippedDispositionScript() {
+  const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8').replace(/\r\n/g, '\n');
+  const open = src.indexOf('node -e "');
+  assert.ok(open !== -1, 'the disposition step must still embed a node -e script');
+  const body = src.slice(open + 'node -e "'.length);
+  const end = body.indexOf('\n" || echo ');
+  assert.ok(end !== -1, 'the node -e script must still be closed by its || echo fallback');
+  // Undo exactly what the surrounding double-quoted shell string does, in ONE left-to-right
+  // pass: inside "..." a backslash is special only before $ ` " or \\, and everything else is
+  // literal. Doing these as separate passes (or missing \\\\ -> \\) silently hands the test a
+  // DIFFERENT regex from the one that ships — which is how an escaped-pipe case passed here
+  // while failing in the shell.
+  return body.slice(0, end).replace(/\\([\\$`"])/g, '$1');
+}
+
+// Run the shipped script against a temp phase dir and return the ledger it wrote (or null).
+function runShippedDisposition({ reviewText, priorText, fixText, padded = '01' }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3829-'));
+  try {
+    const reviewPath = path.join(dir, padded + '-REVIEW.md');
+    const dispPath = path.join(dir, padded + '-REVIEW-DISPOSITION.md');
+    const fixPath = path.join(dir, padded + '-REVIEW-FIX.md');
+    fs.writeFileSync(reviewPath, reviewText);
+    if (priorText !== undefined) fs.writeFileSync(dispPath, priorText);
+    if (fixText !== undefined) fs.writeFileSync(fixPath, fixText);
+    // Bounded by construction via the process seam — an unbounded spawn is an indefinite hang.
+    const res = runNode(['-e', shippedDispositionScript()], {
+      timeoutMs: PROBE_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        REVIEW_FILE: reviewPath,
+        DISPOSITION_FILE: dispPath,
+        FIX_REPORT_FILE: fixPath,
+        PADDED: padded,
+      },
+    });
+    assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the shipped script must run to completion');
+    assert.strictEqual(res.exitCode, 0, 'the shipped script must exit 0: ' + res.stderr);
+    const ledger = fs.existsSync(dispPath) ? fs.readFileSync(dispPath, 'utf8') : null;
+    return { ledger, stdout: res.stdout, wroteNothing: /disposition unchanged/.test(res.stdout) };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+// Parse the rows out of a rendered ledger, so assertions read against real output.
+function ledgerRows(ledger) {
+  if (ledger === null) return null;
+  const rows = [];
+  for (const line of ledger.split('\n')) {
+    const m = line.match(/^\|\s*((?:CR|BL|WR|IN)-\d+)\s*\|\s*([a-z]+)\s*\|\s*([a-z]+)\s*\|\s*(.*?)\s*\|$/);
+    if (m) rows.push({ id: m[1], severity: m[2], disposition: m[3], source: m[4] });
+  }
+  return rows;
+}
+
+// buildDisposition is NOT a mirror any more — it drives the SHIPPED script.
+//
+// Three pre-filing review rounds each refuted "the mirror is faithful", and mutation testing
+// confirmed the cost: a hand-written model of a shell-embedded script drifts, and when it drifts
+// the tests pass while the shipped block is broken. The model is gone; this adapter runs the real
+// thing and returns the same shape the assertions below already expect.
+function buildDisposition({ reviewText, priorText, fixText, padded = '01' }) {
+  const rows = ledgerRows(runShippedDisposition({ reviewText, priorText, fixText, padded }).ledger);
+  if (rows === null) return null;
+  return {
+    rows: rows.map((r) => ({
+      ...r,
+      carried: / \(not in the current review\)$/.test(r.source) || undefined,
+      source: r.source.replace(/ \(not in the current review\)$/, ''),
+    })),
+    open: rows.filter((r) => r.disposition === 'open').length,
+    total: rows.length,
+  };
+}
+
+const REVIEW_WITH_FINDINGS = [
+  '---',
+  'phase: 01',
+  'findings:',
+  '  critical: 1',
+  '  warning: 2',
+  '  info: 1',
+  '  total: 4',
+  'status: issues_found',
+  '---',
+  '',
+  '## Critical Issues',
+  '',
+  '### CR-01: SQL injection in auth',
+  '',
+  '## Warnings',
+  '',
+  '### WR-01: missing null check',
+  '',
+  '### WR-02: unused import',
+  '',
+  '## Info',
+  '',
+  '### IN-01: stale TODO',
+].join('\n');
+
+describe('#3829 — code_review_gate severity surfacing', () => {
+  test('the gate reads the counts that sit beside the status it already parsed', () => {
+    const parsed = parseGateCounts(REVIEW_WITH_FINDINGS);
+    assert.deepStrictEqual(parsed, {
+      status: 'issues_found', critical: '1', warning: '2', info: '1', total: '4',
+    });
+  });
+
+  test('blocker: is accepted as the Critical tier-equivalent of critical:', () => {
+    const parsed = parseGateCounts(REVIEW_WITH_FINDINGS.replace('  critical: 1', '  blocker: 1'));
+    assert.strictEqual(parsed.critical, '1');
+  });
+
+  test('a status:/total: line in the review BODY never displaces the frontmatter value', () => {
+    // The `sed -n '/^---$/,/^---$/p'` range re-opens on a body `---` and runs to
+    // EOF, so first-match (`grep -m1`) is what makes this correct — not the range.
+    const poisoned = REVIEW_WITH_FINDINGS + '\n\n---\n\nstatus: clean\ntotal: 999\n';
+    const parsed = parseGateCounts(poisoned);
+    assert.strictEqual(parsed.status, 'issues_found');
+    assert.strictEqual(parsed.total, '4');
+  });
+
+  test('a REVIEW.md with no findings: block yields no counts, so the gate can fall back', () => {
+    const legacy = ['---', 'phase: 02', 'status: issues_found', '---', '', '# Phase 02'].join('\n');
+    const parsed = parseGateCounts(legacy);
+    assert.strictEqual(parsed.status, 'issues_found');
+    assert.strictEqual(parsed.total, '');
+    assert.strictEqual(parsed.critical, '');
+  });
+
+  test('docs-parity: execute-phase.md parses critical|blocker, warning, info and total', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('grep -E -m1 "^[[:space:]]*(critical|blocker):"'),
+      'code_review_gate must parse critical: and its blocker: tier-equivalent'
+    );
+    for (const key of ['warning', 'info', 'total']) {
+      assert.ok(
+        src.includes('grep -E -m1 "^[[:space:]]*' + key + ':"'),
+        'code_review_gate must parse ' + key + ': from the review frontmatter'
+      );
+    }
+  });
+
+  test('docs-parity: the gate states the counts rather than the countless message alone', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('Code review: ${REVIEW_TOTAL} findings — ${REVIEW_CRITICAL} critical, ${REVIEW_WARNING} warning, ${REVIEW_INFO} info.'),
+      'code_review_gate must display the per-severity breakdown it parsed'
+    );
+  });
+
+  test('docs-parity: every frontmatter scalar read carries a first-match guard', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('grep -m1 "^status:"'),
+      'the status: read must keep its single-match guard (DEFECT.FRONTMATTER-SCALAR-BROAD-GREP)'
+    );
+  });
+});
+
+describe('#3829 — code_review_gate per-finding disposition record', () => {
+  test('every finding is recorded, defaulting to open', () => {
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, padded: '01' });
+    assert.strictEqual(d.total, 4);
+    assert.strictEqual(d.open, 4);
+    assert.deepStrictEqual(d.rows.map((r) => r.id), ['CR-01', 'WR-01', 'WR-02', 'IN-01']);
+    assert.deepStrictEqual(d.rows.map((r) => r.severity), ['critical', 'warning', 'warning', 'info']);
+  });
+
+  test('BL- findings are recorded at the Critical tier alongside CR-', () => {
+    const d = buildDisposition({
+      reviewText: REVIEW_WITH_FINDINGS.replace('### CR-01:', '### BL-01:'),
+      padded: '01',
+    });
+    assert.strictEqual(d.rows[0].id, 'BL-01');
+    assert.strictEqual(d.rows[0].severity, 'critical');
+  });
+
+  test('--fix outcomes are reconciled from REVIEW-FIX.md with provenance', () => {
+    const fixText = [
+      '# Phase 01: Code Review Fix Report',
+      '',
+      '## Fixed Issues',
+      '',
+      '### WR-01: missing null check',
+      '',
+      '## Skipped Issues',
+      '',
+      '### WR-02: unused import',
+    ].join('\n');
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, fixText, padded: '01' });
+    const byId = Object.fromEntries(d.rows.map((r) => [r.id, r]));
+    assert.strictEqual(byId['WR-01'].disposition, 'fixed');
+    assert.strictEqual(byId['WR-01'].source, '01-REVIEW-FIX.md');
+    assert.strictEqual(byId['WR-02'].disposition, 'skipped');
+    assert.strictEqual(byId['CR-01'].disposition, 'open');
+    assert.strictEqual(d.open, 2);
+  });
+
+  test('a finding heading outside the Fixed/Skipped sections is not a disposition', () => {
+    const fixText = [
+      '## Fixed Issues',
+      '',
+      '### WR-01: missing null check',
+      '',
+      '## Verification',
+      '',
+      '### IN-01: mentioned while describing how the fix was verified',
+    ].join('\n');
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, fixText, padded: '01' });
+    const byId = Object.fromEntries(d.rows.map((r) => [r.id, r]));
+    assert.strictEqual(byId['WR-01'].disposition, 'fixed');
+    assert.strictEqual(byId['IN-01'].disposition, 'open');
+  });
+
+  test('a recorded decision survives a re-run — open never overwrites deferred', () => {
+    const priorText = [
+      '| Finding | Severity | Disposition | Source |',
+      '|---------|----------|-------------|--------|',
+      '| CR-01 | critical | deferred | ships next phase |',
+      '| WR-01 | warning | open | - |',
+    ].join('\n');
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, priorText, padded: '01' });
+    const byId = Object.fromEntries(d.rows.map((r) => [r.id, r]));
+    assert.strictEqual(byId['CR-01'].disposition, 'deferred');
+    // The source cell carries the human's stated reason and is preserved, not replaced.
+    assert.strictEqual(byId['CR-01'].source, 'ships next phase');
+    assert.strictEqual(d.open, 3);
+  });
+
+  test('an applied --fix outcome wins over an earlier deferral', () => {
+    const priorText = '| CR-01 | critical | deferred | later |';
+    const fixText = ['## Fixed Issues', '', '### CR-01: SQL injection in auth'].join('\n');
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, priorText, fixText, padded: '01' });
+    assert.strictEqual(d.rows[0].disposition, 'fixed');
+  });
+
+  test('a review with no finding headings produces no record at all', () => {
+    const legacy = ['---', 'phase: 02', 'status: issues_found', '---', '', 'prose only'].join('\n');
+    assert.strictEqual(buildDisposition({ reviewText: legacy, padded: '02' }), null);
+  });
+
+  test('docs-parity: the gate writes a REVIEW-DISPOSITION sibling, not into REVIEW.md', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"'),
+      'code_review_gate must write the disposition record to a REVIEW-DISPOSITION sibling'
+    );
+    const step = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.ok(
+      step.includes("if (h.id && order.indexOf(h.id) === -1) { order.push(h.id); title.set(h.id, h.title); }"),
+      'code_review_gate must enumerate every finding ID from REVIEW.md'
+    );
+  });
+
+  test('docs-parity: the disposition write is non-blocking', () => {
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.ok(
+      src.includes('Code review disposition record skipped (non-blocking).'),
+      'the disposition write must never block execution flow'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3829 review round — the seven defects a cross-AI adversarial pass on the fix
+// diff refuted before filing. Each is pinned here so the round's work survives.
+// ---------------------------------------------------------------------------
+describe('#3829 review round — frontmatter scoping, section anchoring, ledger durability', () => {
+  test('an OPTIONAL count absent from frontmatter is not supplied by a leaked body value', () => {
+    // A sed range re-opens on a body `---` and runs to EOF. First-match protects a key the
+    // frontmatter DOES carry; it cannot protect one it does not. Extraction must stop at the
+    // closing delimiter, or a body `total:` becomes the reported finding count.
+    const leaky = [
+      '---', 'phase: 01', 'status: issues_found', '---',
+      '', '# Report', '', '---', '', 'total: 7', 'critical: 9',
+    ].join('\n');
+    const parsed = parseGateCounts(leaky);
+    assert.strictEqual(parsed.status, 'issues_found');
+    assert.strictEqual(parsed.total, '', 'a body total: must not become the finding count');
+    assert.strictEqual(parsed.critical, '', 'a body critical: must not become the critical count');
+  });
+
+  test('a CRLF-authored review parses to bare values, with no carriage return riding along', () => {
+    const crlf = [
+      '---', 'phase: 01', 'findings:', '  critical: 1', '  warning: 0', '  info: 2',
+      '  total: 3', 'status: issues_found', '---', '', '### CR-01: a',
+    ].join('\r\n');
+    const parsed = parseGateCounts(crlf);
+    assert.deepStrictEqual(parsed, {
+      status: 'issues_found', critical: '1', warning: '0', info: '2', total: '3',
+    });
+    for (const v of Object.values(parsed)) assert.ok(!/\r/.test(v), 'no value may carry a CR');
+  });
+
+  test('docs-parity: the gate stops at the closing delimiter and strips CR before parsing', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes(`awk 'NR==1{if($0!="---") exit; next} /^---$/{closed=1; exit}`),
+      'the gate must extract only the FIRST frontmatter block, not a re-opening sed range'
+    );
+    assert.ok(
+      src.includes(`tr -d '\\r' < "$REVIEW_FILE"`),
+      'the gate must strip CR so a CRLF review cannot inject one into the message'
+    );
+  });
+
+  test('a section heading that merely STARTS with "Fixed Issues" does not classify findings', () => {
+    const fixText = [
+      '# Fix report', '', '## Fixed Issues Verification', '', '### IN-01: named while verifying',
+    ].join('\n');
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, fixText, padded: '01' });
+    const byId = Object.fromEntries(d.rows.map((r) => [r.id, r]));
+    assert.strictEqual(byId['IN-01'].disposition, 'open');
+  });
+
+  test('a deferral reason written into the Source cell survives a re-run verbatim', () => {
+    const priorText = '| CR-01 | critical | deferred | ships next phase, see ADR-99 |';
+    const d = buildDisposition({ reviewText: REVIEW_WITH_FINDINGS, priorText, padded: '01' });
+    const cr = d.rows.find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'deferred');
+    assert.strictEqual(cr.source, 'ships next phase, see ADR-99');
+  });
+
+  test('a decided finding the current review no longer reports is carried, not dropped', () => {
+    // --auto re-reviews and rewrites REVIEW.md; a fixed or deferred finding can vanish from it.
+    // Dropping the row would erase the record that it was seen — the exact failure #3829 is about.
+    const priorText = [
+      '| CR-01 | critical | deferred | ships next phase |',
+      '| IN-01 | info | open | - |',
+    ].join('\n');
+    const shrunk = ['---', 'status: issues_found', '---', '', '### WR-01: still here'].join('\n');
+    const d = buildDisposition({ reviewText: shrunk, priorText, padded: '01' });
+    const byId = Object.fromEntries(d.rows.map((r) => [r.id, r]));
+    assert.ok(byId['CR-01'], 'a deferred finding absent from the review must still be recorded');
+    assert.strictEqual(byId['CR-01'].disposition, 'deferred');
+    assert.strictEqual(byId['CR-01'].carried, true);
+    assert.strictEqual(byId['CR-01'].source, 'ships next phase');
+    assert.ok(!byId['IN-01'], 'an untriaged open row for a vanished finding is not carried');
+  });
+
+  test('the carried marker is rendered, never stored — it cannot accumulate across runs', () => {
+    // The marker lives in the Source cell, which is re-parsed on the next run. Storing it would
+    // re-append it every time: the cell grows without bound AND the file changes on every run,
+    // which silently defeats the unchanged-run check and restores the empty-docs-commit churn.
+    const shrunk = ['---', 'status: issues_found', '---', '', '### WR-01: b'].join('\n');
+    let priorText = '| CR-01 | critical | deferred | ships next phase |';
+    let cr;
+    for (let i = 0; i < 3; i++) {
+      const d = buildDisposition({ reviewText: shrunk, priorText, padded: '01' });
+      cr = d.rows.find((r) => r.id === 'CR-01');
+      // Re-render the row the way the shipped builder does, and feed it back in.
+      priorText = '| ' + cr.id + ' | ' + cr.severity + ' | ' + cr.disposition + ' | ' +
+        cr.source + (cr.carried ? ' (not in the current review)' : '') + ' |';
+    }
+    assert.strictEqual(cr.source, 'ships next phase', 'the stored source must stay canonical');
+    assert.strictEqual(
+      (priorText.match(/\(not in the current review\)/g) || []).length, 1,
+      'the marker must appear exactly once no matter how many times the gate re-runs'
+    );
+  });
+
+  test('docs-parity: the ledger is rewritten only on a real change, timestamp excluded', () => {
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.ok(
+      src.includes("const stripTs = (t) => t.replace(/^recorded:.*\\$/m, 'recorded:');"),
+      'the gate must compare ignoring the timestamp so an unchanged run writes nothing'
+    );
+    assert.ok(
+      src.includes('Code review disposition unchanged: '),
+      'an unchanged run must say so rather than producing an empty docs commit'
+    );
+  });
+
+  test('docs-parity: section headings are anchored whole and the prior source cell is captured', () => {
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.ok(
+      src.includes('/^##\\s+Fixed Issues\\s*\\$/') && src.includes('/^##\\s+Skipped Issues\\s*\\$/'),
+      'fix-report section headings must be matched whole, never by prefix'
+    );
+    assert.ok(
+      src.includes('((?:[^|\\\\\\\\]|\\\\\\\\.)*?)'),
+      'the prior-row regex must capture the source cell, escaped pipes included'
+    );
+    assert.ok(
+      src.includes('title.get(h.id) === h.title'),
+      'a fix report must name the SAME finding before its outcome is applied'
+    );
+  });
+});
+
+describe('#3829 review round 2 — a review that reports nothing still reconciles the ledger', () => {
+  const EMPTY_REVIEW = ['---', 'phase: 01', 'status: issues_found', '---', '', 'no findings'].join('\n');
+
+  test('a decided row is carried when the review reports no findings at all', () => {
+    // Exiting early on an empty review would freeze a stale ledger showing findings as open that
+    // the review no longer reports — the opposite of what this record exists to do.
+    const priorText = [
+      '| CR-01 | critical | deferred | ships next phase |',
+      '| WR-01 | warning | open | - |',
+    ].join('\n');
+    const d = buildDisposition({ reviewText: EMPTY_REVIEW, priorText, padded: '01' });
+    assert.strictEqual(d.total, 1, 'only the decided row survives');
+    assert.strictEqual(d.rows[0].id, 'CR-01');
+    assert.strictEqual(d.rows[0].disposition, 'deferred');
+    assert.strictEqual(d.rows[0].carried, true);
+    assert.strictEqual(d.open, 0);
+  });
+
+  test('a review with no findings and no prior ledger produces nothing at all', () => {
+    assert.strictEqual(buildDisposition({ reviewText: EMPTY_REVIEW, padded: '01' }), null);
+  });
+
+  test('docs-parity: the empty-review guard checks for an existing ledger before exiting', () => {
+    const step = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.ok(
+      step.includes('if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);'),
+      'an empty review must still reconcile an existing ledger'
+    );
+  });
+
+  test('docs-parity: the countless fallback requires all four counts, not just the total', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('REVIEW_COUNTS_OK') && src.includes('`REVIEW_COUNTS_OK` is `1`'),
+      'a numeric total with missing severities must not emit a half-filled breakdown'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3829 — the SHIPPED disposition script, driven. These tests execute the real
+// embedded script (see shippedDispositionScript), so a regression in the
+// workflow file turns them red. The mirror-based tests above are kept for the
+// pure parsing shapes; these are the ones that hold the contract.
+// ---------------------------------------------------------------------------
+describe('#3829 — shipped disposition script (executed, not mirrored)', () => {
+  const REVIEW = ['---', 'phase: 01', 'status: issues_found', '---', '',
+    '### CR-01: a', '', '### WR-01: b', '', '### IN-01: c'].join('\n');
+
+  test('every finding is recorded, defaulting to open, at the right severity', () => {
+    const rows = ledgerRows(runShippedDisposition({ reviewText: REVIEW }).ledger);
+    assert.deepStrictEqual(rows.map((r) => [r.id, r.severity, r.disposition]), [
+      ['CR-01', 'critical', 'open'], ['WR-01', 'warning', 'open'], ['IN-01', 'info', 'open'],
+    ]);
+  });
+
+  test('--fix outcomes are reconciled, and a lookalike section heading is not one', () => {
+    const fixText = ['## Fixed Issues', '', '### WR-01: b', '',
+      '## Fixed Issues Verification', '', '### IN-01: c'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: REVIEW, fixText }).ledger);
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    assert.strictEqual(by['WR-01'].disposition, 'fixed');
+    assert.strictEqual(by['WR-01'].source, '01-REVIEW-FIX.md');
+    assert.strictEqual(by['IN-01'].disposition, 'open', 'a lookalike heading must classify nothing');
+  });
+
+  test("a human's deferral reason survives, and the carried marker never accumulates", () => {
+    // Render -> re-parse -> render, four times, exactly as consecutive phase runs would.
+    const shrunk = ['---', 'status: issues_found', '---', '', '### WR-01: b'].join('\n');
+    let prior = ['| Finding | Severity | Disposition | Source |',
+      '|---------|----------|-------------|--------|',
+      '| CR-01 | critical | deferred | ships next phase, see ADR-99 |'].join('\n');
+    let ledger;
+    for (let i = 0; i < 4; i++) {
+      ledger = runShippedDisposition({ reviewText: shrunk, priorText: prior }).ledger;
+      prior = ledger;
+    }
+    const cr = ledgerRows(ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'deferred');
+    assert.strictEqual(cr.source, 'ships next phase, see ADR-99 (not in the current review)');
+    assert.strictEqual(
+      (ledger.match(/\(not in the current review\)/g) || []).length, 1,
+      'the carried marker must appear exactly once however many times the gate runs'
+    );
+  });
+
+  test('the ledger is a fixed point: a run that changes nothing rewrites nothing', () => {
+    const first = runShippedDisposition({ reviewText: REVIEW }).ledger;
+    const again = runShippedDisposition({ reviewText: REVIEW, priorText: first });
+    assert.strictEqual(again.wroteNothing, true, 'an unchanged run must report unchanged');
+    assert.strictEqual(again.ledger, first, 'and must leave the bytes alone');
+  });
+
+  test('a decided finding the review no longer reports is carried; an untriaged one is dropped', () => {
+    const prior = ['| CR-01 | critical | deferred | later |', '| IN-01 | info | open | - |'].join('\n');
+    const shrunk = ['---', 'status: issues_found', '---', '', '### WR-01: b'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: shrunk, priorText: prior }).ledger);
+    const ids = rows.map((r) => r.id);
+    assert.ok(ids.includes('CR-01'), 'a deferred finding must survive leaving the review');
+    assert.ok(!ids.includes('IN-01'), 'an untriaged finding that vanished is not carried');
+  });
+
+  test('a review reporting nothing still reconciles an existing ledger', () => {
+    const empty = ['---', 'status: issues_found', '---', '', 'no findings'].join('\n');
+    const prior = ['| CR-01 | critical | deferred | later |', '| WR-01 | warning | open | - |'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: empty, priorText: prior }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+  });
+
+  test('a review reporting nothing with no prior ledger writes no ledger at all', () => {
+    const empty = ['---', 'status: issues_found', '---', '', 'no findings'].join('\n');
+    assert.strictEqual(runShippedDisposition({ reviewText: empty }).ledger, null);
+  });
+
+  test('an applied outcome outranks an earlier deferral', () => {
+    const prior = '| CR-01 | critical | deferred | later |';
+    const fixText = ['## Fixed Issues', '', '### CR-01: a'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: REVIEW, priorText: prior, fixText }).ledger);
+    assert.strictEqual(rows.find((r) => r.id === 'CR-01').disposition, 'fixed');
+  });
+
+  test('a deferral on a finding STILL in the review is not reset to open', () => {
+    // Distinct from the carried case: this finding is present in the current review, so it takes
+    // the ordinary path. 'open' must never overwrite a recorded decision on that path either.
+    const prior = '| CR-01 | critical | deferred | ships next phase |';
+    const rows = ledgerRows(runShippedDisposition({ reviewText: REVIEW, priorText: prior }).ledger);
+    const cr = rows.find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'deferred');
+    assert.strictEqual(cr.source, 'ships next phase');
+    assert.ok(!/not in the current review/.test(cr.source), 'it is present, so it is not carried');
+  });
+
+  test('BL- is recorded at the Critical tier, as the documented CR- equivalent', () => {
+    const withBlocker = ['---', 'status: issues_found', '---', '',
+      '### BL-01: a', '', '### WR-01: b'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: withBlocker }).ledger);
+    assert.deepStrictEqual(rows.map((r) => [r.id, r.severity]), [
+      ['BL-01', 'critical'], ['WR-01', 'warning'],
+    ]);
+  });
+
+  test('a finding id whose prefix is a JS object property name produces no row', () => {
+    const hostile = ['---', 'status: issues_found', '---', '',
+      '### constructor-01: x', '', '### __proto__-02: y', '', '### CR-01: real'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: hostile }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+  });
+});
+
+describe('#3829 review round 3 — hostile frontmatter and hand-edited ledgers', () => {
+  test('an UNTERMINATED frontmatter block yields no values, not the whole review body', () => {
+    // Stopping at "the next ---" is not enough: with no closing delimiter the scan would run to
+    // EOF and hand body text to every read, undoing the scoping fix entirely.
+    const unterminated = [
+      '---', 'phase: 01', 'status: issues_found', '',
+      '# body', '', 'total: 777', 'critical: 66',
+    ].join('\n');
+    const parsed = parseGateCounts(unterminated);
+    assert.deepStrictEqual(parsed, { status: '', critical: '', warning: '', info: '', total: '' });
+  });
+
+  test('docs-parity: the frontmatter scan emits only when the closing delimiter was seen', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('END{if (closed) printf "%s", buf}'),
+      'an unterminated frontmatter block must yield nothing'
+    );
+  });
+
+  test('docs-parity: all four counts are validated numerically before the breakdown is shown', () => {
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('REVIEW_COUNTS_OK=1') && src.includes("case \"$_c\" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac"),
+      'the breakdown must be gated on all four counts being numeric, not on the total alone'
+    );
+  });
+
+  test('a hand-edited row missing its trailing pipe still preserves the decision', () => {
+    // A mangled table is already broken; silently dropping the row would lose a deferral, which
+    // is the exact class of loss this record exists to prevent.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a'].join('\n');
+    const prior = '| CR-01 | critical | deferred | see issue 42';
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, priorText: prior }).ledger);
+    const cr = rows.find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'deferred');
+    assert.strictEqual(cr.source, 'see issue 42');
+  });
+});
+
+describe('#3829 review round 3 — stale fix reports, fenced examples, hostile REVIEW.md', () => {
+  test('a STALE fix report does not mark a new finding of the same id as fixed', () => {
+    // Finding ids are reused across re-reviews. Matching on the id alone would let a fix report
+    // from an earlier review declare a brand-new CR-01 already fixed — the worst possible lie
+    // for a record whose whole job is saying what happened to a finding.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: NEW authentication bypass'].join('\n');
+    const fixText = ['## Fixed Issues', '', '### CR-01: OLD null dereference'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, fixText }).ledger);
+    assert.strictEqual(rows[0].disposition, 'open');
+  });
+
+  test('a fix report naming the same finding still applies', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: same title'].join('\n');
+    const fixText = ['## Fixed Issues', '', '### CR-01: same title'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, fixText }).ledger);
+    assert.strictEqual(rows[0].disposition, 'fixed');
+  });
+
+  test('a finding heading inside a fenced block is an example, not a finding', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: real',
+      '', '```', '### CR-77: an illustration', '```'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+  });
+
+  test('an id listed under BOTH Fixed and Skipped is not decided by row order', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### WR-01: dup'].join('\n');
+    const fixText = ['## Fixed Issues', '', '### WR-01: dup', '',
+      '## Skipped Issues', '', '### WR-01: dup'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, fixText }).ledger);
+    assert.strictEqual(rows[0].disposition, 'fixed', 'first occurrence wins, deterministically');
+  });
+
+  test('an escaped pipe in a deferral reason survives whole', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a'].join('\n');
+    const prior = '| CR-01 | critical | deferred | wait \\| see ADR-9 |';
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, priorText: prior }).ledger);
+    assert.strictEqual(rows[0].source, 'wait \\| see ADR-9');
+  });
+
+  test('docs-parity: the frontmatter reads survive an unreadable REVIEW.md and a failing grep', () => {
+    // An advisory gate must not abort under `set -e`/`pipefail`: a non-matching grep exits 1, and
+    // an assignment whose command substitution fails would take the whole step down with it.
+    const src = fs.readFileSync(EXECUTE_PHASE_PATH, 'utf8');
+    assert.ok(
+      src.includes('if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then'),
+      'a missing / non-regular REVIEW.md must not abort the step'
+    );
+    for (const v of ['REVIEW_STATUS', 'REVIEW_CRITICAL', 'REVIEW_WARNING', 'REVIEW_INFO', 'REVIEW_TOTAL']) {
+      const line = src.split(/\r?\n/).find((l) => l.startsWith(v + '=$('));
+      assert.ok(line && line.includes('|| true'), v + ' must not abort the step when its grep finds nothing');
     }
   });
 });
