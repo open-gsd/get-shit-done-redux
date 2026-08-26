@@ -2091,4 +2091,25 @@ describe('#3861 round 1 — step-file structural contract', () => {
     assert.strictEqual(n, 1, 'exactly one disposition instruction, not a pointer plus a body');
   });
 
+  test('every shell block derives the variables it reads — blocks do not share a shell', () => {
+    // Each fenced block is dispatched as its own Bash call, so a variable derived in
+    // block 1 is EMPTY in block 2 — and empty is silent: the write lands on a bare
+    // `-REVIEW-DISPOSITION.md` and the step still reports success. The step's own
+    // inputs (PHASE_DIR, PHASE_NUMBER) are the only values a block may inherit.
+    const INPUTS = new Set(['PHASE_DIR', 'PHASE_NUMBER']);
+    const DERIVED = ['PADDED', 'REVIEW_FILE', 'DISPOSITION_FILE'];
+    const fences = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'));
+    assert.ok(fences.length >= 2, 'the step must still carry more than one shell block');
+    for (const [i, fence] of fences.entries()) {
+      for (const v of DERIVED) {
+        if (INPUTS.has(v)) continue;
+        const reads = new RegExp('\\$\\{?' + v + '\\b').test(fence.replace(new RegExp('^' + v + '=', 'gm'), ''));
+        if (!reads) continue;
+        assert.ok(
+          new RegExp('^' + v + '=', 'm').test(fence),
+          'block ' + (i + 1) + ' reads ' + v + ' without deriving it — it is empty in a fresh shell'
+        );
+      }
+    }
+  });
 });
