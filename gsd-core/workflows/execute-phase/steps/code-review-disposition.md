@@ -76,12 +76,6 @@ Code review found issues. Consider running:
 /gsd:code-review ${PHASE_NUMBER} --fix
 ```
 
-**Record a per-finding disposition.** On that same condition — REVIEW_STATUS not "clean", not
-"skipped" and not empty — read and execute `gsd-core/workflows/execute-phase/steps/code-review-disposition.md`,
-which records one row per finding so a triaged finding is distinguishable downstream from a
-forgotten one. Advisory like the rest of the step; it never blocks.
-
-
 **Record a per-finding disposition.** The counts say how many findings there were, not what
 happened to any of them. On the same condition as the message above — REVIEW_STATUS not "clean",
 not "skipped" and not empty — write `${DISPOSITION_FILE}`: one row per finding ID, defaulting to

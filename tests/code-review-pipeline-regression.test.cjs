@@ -2049,3 +2049,46 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// #3861 round 1 — the two blockers, and the structural properties that catch them
+//
+// Both were invisible to every behavioural test above, for the same reason: those
+// tests execute the node script through the process seam with the environment
+// handed to it, so they never see the SHELL that is supposed to build that
+// environment, nor the prose that tells the agent what to read.
+// ---------------------------------------------------------------------------
+
+// Every ```bash fence in a step file, in order.
+function bashFences(src) {
+  const out = [];
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (start === -1 && /^```bash\s*$/.test(lines[i])) { start = i + 1; continue; }
+    if (start !== -1 && /^```\s*$/.test(lines[i])) { out.push(lines.slice(start, i).join('\n')); start = -1; }
+  }
+  return out;
+}
+
+describe('#3861 round 1 — step-file structural contract', () => {
+  test('the step file never instructs the agent to read and execute ITSELF', () => {
+    // A step file that names its own path as something to "read and execute" is
+    // unbounded self-recursion at runtime, and nothing downstream bounds it.
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    const self = 'execute-phase/steps/' + path.basename(DISPOSITION_STEP_PATH);
+    assert.ok(
+      !src.includes(self),
+      'code-review-disposition.md must not reference its own path — execute-phase.md is what points here'
+    );
+  });
+
+  test('the disposition instruction appears exactly once', () => {
+    // The self-reference above arrived as a duplicated paragraph; the duplicate is
+    // the tell, and no linter scores markdown prose.
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    const n = src.split(/\r?\n/).filter((l) => l.startsWith('**Record a per-finding disposition.**')).length;
+    assert.strictEqual(n, 1, 'exactly one disposition instruction, not a pointer plus a body');
+  });
+
+});
