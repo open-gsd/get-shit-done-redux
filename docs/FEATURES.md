@@ -2310,8 +2310,11 @@ defaulting to `open`:
 `open` means recorded but not yet triaged. `/gsd-code-review <N> --fix` records `fixed` and
 `skipped`, which the gate reconciles from REVIEW-FIX.md — but only when the fix report names the
 **same** finding, because finding IDs are reused across re-reviews and a stale report would
-otherwise declare a brand-new `CR-01` already fixed. Set `deferred` by hand and put the reason in
-the Source cell, which is preserved verbatim across re-runs (escape any `|`).
+otherwise declare a brand-new `CR-01` already fixed. A fix report that names a different finding
+under a reused id leaves the row `open` and is reported as unreconciled, rather than passing
+silently. `deferred` is the one disposition the gate never writes: it is recorded by hand, and the
+reason recorded beside it in the Source cell is preserved verbatim across re-runs, a literal `|`
+included once escaped.
 
 Re-running the gate preserves every disposition except `open`, so a decision recorded here is never
 overwritten by a later pass. A finding that has been decided but that the current review no longer
