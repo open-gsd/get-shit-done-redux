@@ -2198,3 +2198,66 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     assert.strictEqual(shipped.countsOk, '0');
   });
 });
+
+// ---------------------------------------------------------------------------
+// #3861 round 1 — Minor 5, and the finding-id census the review did not ask for
+// ---------------------------------------------------------------------------
+
+const REVIEWER_AGENT_PATH = path.join(ROOT, 'agents', 'gsd-code-reviewer.md');
+
+// The alternations the shipped script uses to recognise a finding id. There are
+// three copies of one set, and adding a prefix to only two of them is silent.
+function idAlternations() {
+  const script = shippedDispositionScript();
+  return [...script.matchAll(/\(\?:((?:[A-Z]{2}\|)+[A-Z]{2})\)-/g)].map((m) => m[1].split('|').sort().join('|'));
+}
+
+describe('#3861 round 1 — stale fix reports are stated, not silently ignored', () => {
+  test('a fix report naming a different finding under a reused id says so', () => {
+    // Exact-title coupling is deliberate — ids are reused across re-reviews, so a
+    // stale REVIEW-FIX.md must not mark a brand-new CR-01 fixed. But failing it
+    // silently leaves 'open' indistinguishable from 'the report never named it',
+    // which is the one thing the ledger exists to tell apart.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a genuinely new finding'].join('\n');
+    const fixText = ['## Fixed Issues', '', '### CR-01: the finding this id used to mean'].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText });
+    const rows = ledgerRows(out.ledger);
+    assert.strictEqual(rows[0].disposition, 'open', 'a stale report must not decide the row');
+    assert.match(out.stdout, /reused id/, 'and the mismatch must be reported, not swallowed');
+    assert.match(out.stdout, /CR-01/, 'naming the finding it could not reconcile');
+  });
+
+  test('a matching fix report reports no mismatch', () => {
+    // Negative control for the note itself: it must not fire on the ordinary path.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: same title'].join('\n');
+    const fixText = ['## Fixed Issues', '', '### CR-01: same title'].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText });
+    assert.strictEqual(ledgerRows(out.ledger)[0].disposition, 'fixed');
+    assert.doesNotMatch(out.stdout, /reused id/);
+  });
+});
+
+describe('#3861 round 1 — finding-id prefix census', () => {
+  test('every copy of the prefix set agrees with every other', () => {
+    // The set is written out three times in one script — the heading matcher, the
+    // ledger re-parser, and (by its keys) the severity map. Adding a prefix to two
+    // of the three does not error; it drops carried rows on the next run.
+    const alts = idAlternations();
+    assert.ok(alts.length >= 2, 'the script must still enumerate finding-id prefixes');
+    assert.strictEqual(new Set(alts).size, 1, 'the prefix enumerations have drifted apart: ' + alts.join(' vs '));
+  });
+
+  test('the prefix set covers every id shape the reviewer agent emits', () => {
+    // The DOMAIN is owned elsewhere — gsd-code-reviewer.md's body template and its
+    // Label-equivalence paragraph — so it can acquire a member without this script
+    // changing. An unlisted prefix is not mis-tiered, it is INVISIBLE: the finding
+    // never enters the order list and gets no row at all.
+    const agent = fs.readFileSync(REVIEWER_AGENT_PATH, 'utf8');
+    const emitted = new Set([...agent.matchAll(/^###\s+([A-Z]{2,})-\d+:/gm)].map((m) => m[1]));
+    assert.ok(emitted.size > 0, 'the reviewer agent must still declare its finding-id shapes');
+    const known = new Set(idAlternations()[0].split('|'));
+    for (const prefix of emitted) {
+      assert.ok(known.has(prefix), prefix + '- findings would get no disposition row at all');
+    }
+  });
+});

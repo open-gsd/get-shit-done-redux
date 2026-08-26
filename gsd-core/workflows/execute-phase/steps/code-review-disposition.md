@@ -142,7 +142,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   }
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'
   // classify every finding under it as fixed.
-  const applied = new Map();
+  const applied = new Map(), staleFix = [];
   if (fs.existsSync(process.env.FIX_REPORT_FILE)) {
     let sect = null;
     for (const h of headings(fs.readFileSync(process.env.FIX_REPORT_FILE, 'utf-8'))) {
@@ -153,7 +153,13 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       // First occurrence wins, so an id listed under BOTH sections is not decided by row order.
       // And the fix report must name the SAME finding: ids are reused across re-reviews, so a
       // stale REVIEW-FIX.md would otherwise mark a brand-new CR-01 as already fixed.
-      if (h.id && sect && !applied.has(h.id) && title.get(h.id) === h.title) applied.set(h.id, sect);
+      // A title mismatch is the STALE-report case and must not pass silently: the id is
+      // reused, the finding is not, and a reader who sees the row stay 'open' has no way to
+      // tell that from 'the fix report never mentioned it'. Record it and say so below.
+      if (h.id && sect && !applied.has(h.id)) {
+        if (title.get(h.id) === h.title) applied.set(h.id, sect);
+        else if (title.has(h.id) && staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
+      }
     }
   }
   // Precedence: an applied outcome is evidence of an action on code and wins; a recorded
@@ -171,6 +177,9 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     if (order.indexOf(id) === -1 && was.d !== 'open') rows.push({ id, sev: sev(id), d: was.d, src: was.src || 'recorded', carried: true });
   }
   const open = rows.filter((r) => r.d === 'open').length;
+  // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
+  // no longer matches is the one case where 'open' understates what is known, so it is stated.
+  const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y names a' : 'ies name') + ' different finding under a reused id: ' + staleFix.join(', ') + ')' : '';
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + (r.src || '-') + (r.carried ? ' (not in the current review)' : '') + ' |'))
@@ -185,11 +194,11 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const stripTs = (t) => t.replace(/^recorded:.*\$/m, 'recorded:');
   const prev = fs.existsSync(process.env.DISPOSITION_FILE) ? norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')) : '';
   if (prev && stripTs(prev) === stripTs(render(''))) {
-    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open');
+    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote);
     process.exit(0);
   }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
-  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open — ' + process.env.DISPOSITION_FILE);
+  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + ' — ' + process.env.DISPOSITION_FILE);
 " || echo "Code review disposition record skipped (non-blocking)."
 
 COMMIT_DOCS=$(gsd_run query config-get commit_docs 2>/dev/null || echo "true")
