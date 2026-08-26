@@ -1530,19 +1530,6 @@ describe('#3829 — code_review_gate severity surfacing', () => {
     assert.strictEqual(parsed.critical, '');
   });
 
-  test('docs-parity: execute-phase.md parses critical|blocker, warning, info and total', () => {
-    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      src.includes('grep -E -m1 "^[[:space:]]*(critical|blocker):"'),
-      'code_review_gate must parse critical: and its blocker: tier-equivalent'
-    );
-    for (const key of ['warning', 'info', 'total']) {
-      assert.ok(
-        src.includes('grep -E -m1 "^[[:space:]]*' + key + ':"'),
-        'code_review_gate must parse ' + key + ': from the review frontmatter'
-      );
-    }
-  });
 
   test('docs-parity: the gate states the counts rather than the countless message alone', () => {
     const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
@@ -2035,19 +2022,6 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
     assert.strictEqual(rows[0].source, 'wait \\| see ADR-9');
   });
 
-  test('docs-parity: the frontmatter reads survive an unreadable REVIEW.md and a failing grep', () => {
-    // An advisory gate must not abort under `set -e`/`pipefail`: a non-matching grep exits 1, and
-    // an assignment whose command substitution fails would take the whole step down with it.
-    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      src.includes('if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then'),
-      'a missing / non-regular REVIEW.md must not abort the step'
-    );
-    for (const v of ['REVIEW_STATUS', 'REVIEW_CRITICAL', 'REVIEW_WARNING', 'REVIEW_INFO', 'REVIEW_TOTAL']) {
-      const line = src.split(/\r?\n/).find((l) => l.startsWith(v + '=$('));
-      assert.ok(line && line.includes('|| true'), v + ' must not abort the step when its grep finds nothing');
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2111,5 +2085,116 @@ describe('#3861 round 1 — step-file structural contract', () => {
         );
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3861 round 1, Major 4 + Minor 9 — the frontmatter reads, EXECUTED
+//
+// The disposition builder stopped being a mirror three rounds ago, for a reason
+// this file already states: a hand model of a shell-embedded script drifts, and
+// when it drifts the tests pass while the shipped block is broken. The counts
+// parser kept its mirror anyway, and the argument against mirrors does not stop
+// applying at the boundary between the two blocks.
+//
+// So the mirror loses its authority: it is now asserted AGAINST the shipped awk
+// and greps, run under `set -euo pipefail` in a real shell, over every fixture
+// the mirror is tested on. Divergence in either direction fails.
+//
+// Running the block also makes its advisory guards behavioural rather than
+// textual, which retires the two `src.includes()` docs-parity assertions that
+// stood in for them — Minor 9's anti-pattern, reduced by executing the thing
+// the assertions were describing.
+// ---------------------------------------------------------------------------
+
+const HAS_BASH = process.platform !== 'win32';
+
+// Run the step's FIRST shell block — the frontmatter reads — and report what it set.
+function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-'));
+  try {
+    const reviewPath = path.join(dir, padded + '-REVIEW.md');
+    if (writeReview) fs.writeFileSync(reviewPath, reviewText);
+    if (mode !== undefined) fs.chmodSync(reviewPath, mode);
+    const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[0];
+    assert.ok(fence && fence.includes('REVIEW_COUNTS_OK'), 'the counts block must still be the first fence');
+    // `set -euo pipefail` is the point, not decoration: the step is advisory, so a
+    // non-matching grep or an unreadable review must not take the block down.
+    const script = 'set -euo pipefail\n' + fence
+      + '\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n" "$REVIEW_STATUS" "$REVIEW_CRITICAL"'
+      + ' "$REVIEW_WARNING" "$REVIEW_INFO" "$REVIEW_TOTAL" "$REVIEW_COUNTS_OK"\n';
+    const res = runHook('-c', [script], {
+      interpreter: 'bash',
+      timeoutMs: PROBE_TIMEOUT_MS,
+      env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: String(Number(padded)) },
+    });
+    assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the counts block must run to completion');
+    const [status, critical, warning, info, total, countsOk] = res.stdout.split('\n');
+    return { exitCode: res.exitCode, status, critical, warning, info, total, countsOk, stderr: res.stderr };
+  } finally {
+    cleanup(dir);
+  }
+}
+
+describe('#3861 round 1 — the counts mirror is asserted against the shipped shell', () => {
+  // Every fixture the mirror is exercised on above, plus the count edges.
+  const FIXTURES = {
+    'the documented review': REVIEW_WITH_FINDINGS,
+    'blocker: as the critical tier-equivalent': REVIEW_WITH_FINDINGS.replace('  critical: 1', '  blocker: 1'),
+    'a body ---, status: and total: after the frontmatter':
+      REVIEW_WITH_FINDINGS + '\n\n---\n\nstatus: clean\ntotal: 999\n',
+    'a legacy review with no findings: block':
+      ['---', 'phase: 02', 'status: issues_found', '---', '', '# Phase 02'].join('\n'),
+    'CRLF line endings': REVIEW_WITH_FINDINGS.replace(/\n/g, '\r\n'),
+    'unterminated frontmatter': ['---', 'status: issues_found', 'total: 4', '', '## Body'].join('\n'),
+    'no frontmatter at all': '# Phase 01\n\nnothing here\n',
+    'a zero-finding review': ['---', 'phase: 01', 'findings:', '  critical: 0', '  warning: 0',
+      '  info: 0', '  total: 0', 'status: issues_found', '---'].join('\n'),
+  };
+
+  for (const [name, reviewText] of Object.entries(FIXTURES)) {
+    test('shipped shell and mirror agree on ' + name, { skip: !HAS_BASH }, () => {
+      const shipped = runShippedGateCounts({ reviewText });
+      const mirrored = parseGateCounts(reviewText);
+      assert.deepStrictEqual(
+        { status: shipped.status, critical: shipped.critical, warning: shipped.warning,
+          info: shipped.info, total: shipped.total },
+        mirrored,
+        'the mirror has drifted from the shipped awk/grep block'
+      );
+    });
+  }
+
+  test('a zero-finding review reports a real breakdown, not the countless fallback', { skip: !HAS_BASH }, () => {
+    // Minor 6. `0` is a number, so the gate must state `0 findings — 0 critical, …`
+    // rather than fall back. The `case` guard rejects the empty string and non-digits;
+    // a guard written against truthiness would reject this and say nothing at all.
+    const shipped = runShippedGateCounts({ reviewText: FIXTURES['a zero-finding review'] });
+    assert.strictEqual(shipped.countsOk, '1', 'all four counts are numeric, so the breakdown is reportable');
+    assert.deepStrictEqual(
+      [shipped.total, shipped.critical, shipped.warning, shipped.info], ['0', '0', '0', '0']
+    );
+  });
+
+  test('a partial findings: block makes the whole breakdown unavailable', { skip: !HAS_BASH }, () => {
+    const shipped = runShippedGateCounts({
+      reviewText: ['---', 'findings:', '  total: 4', 'status: issues_found', '---'].join('\n'),
+    });
+    assert.strictEqual(shipped.countsOk, '0', 'a total without the three severities is not a breakdown');
+  });
+
+  test('a missing REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
+    // Behavioural replacement for the `src.includes('if [ -f "$REVIEW_FILE" ] …')`
+    // assertion: under `set -e` an aborting block is what actually breaks the phase.
+    const shipped = runShippedGateCounts({ reviewText: '', writeReview: false });
+    assert.strictEqual(shipped.exitCode, 0, 'advisory: a missing review must not abort the step');
+    assert.strictEqual(shipped.status, '');
+    assert.strictEqual(shipped.countsOk, '0');
+  });
+
+  test('an unreadable REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
+    const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS, mode: 0o000 });
+    assert.strictEqual(shipped.exitCode, 0, 'advisory: an unreadable review must not abort the step');
+    assert.strictEqual(shipped.countsOk, '0');
   });
 });
