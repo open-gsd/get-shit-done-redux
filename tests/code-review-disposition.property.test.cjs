@@ -85,9 +85,14 @@ const DECIDED = fc.constantFrom('fixed', 'skipped', 'deferred');
 
 // A hand-written Source cell: the one place a human writes prose into the
 // ledger, so it carries the escaped pipe the rendered instruction asks for.
+// The reserved suffix is generated DELIBERATELY. The gate strips a carried marker before storing
+// it, so a hand-written reason that merely ENDS in that phrase is the input most likely to be
+// eaten — and a generator drawn only from innocuous characters can never produce it. Found by
+// adversarial review of this file's first cut, which is the argument for putting it in.
 const SOURCE_CELL = fc.stringMatching(/^[A-Za-z0-9 .,()-]{0,24}$/)
   .map((s) => s.trim() || 'recorded')
-  .chain((s) => fc.boolean().map((withPipe) => (withPipe ? s + ' \\| see ADR-9' : s)));
+  .chain((s) => fc.boolean().map((withPipe) => (withPipe ? s + ' \\| see ADR-9' : s)))
+  .chain((s) => fc.boolean().map((reserved) => (reserved ? s + ' (not in the current review)' : s)));
 
 const FINDINGS = fc.uniqueArray(
   fc.tuple(PREFIX, fc.integer({ min: 1, max: 99 })).map(([p, n]) => p + '-' + String(n).padStart(2, '0')),

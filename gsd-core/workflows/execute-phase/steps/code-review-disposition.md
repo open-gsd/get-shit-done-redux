@@ -57,6 +57,14 @@ REVIEW_COUNTS_OK=1
 for _c in "$REVIEW_TOTAL" "$REVIEW_CRITICAL" "$REVIEW_WARNING" "$REVIEW_INFO"; do
   case "$_c" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac
 done
+# Numeric is necessary and not sufficient. `total: 0` beside `critical: 1` is four valid numbers
+# that render the self-contradicting line `0 findings — 1 critical, 0 warning, 0 info`. An
+# inconsistent breakdown is unavailable for the same reason a partial one is: half-true is worse
+# than withheld, and the countless form is already the documented fallback.
+if [ "$REVIEW_COUNTS_OK" = "1" ] \
+   && [ "$((REVIEW_CRITICAL + REVIEW_WARNING + REVIEW_INFO))" -ne "$REVIEW_TOTAL" ]; then
+  REVIEW_COUNTS_OK=0
+fi
 ```
 
 If REVIEW_STATUS is not "clean" and not "skipped" and not empty, and `REVIEW_COUNTS_OK` is `1`,
@@ -87,13 +95,24 @@ the step — never blocks:
 ```bash
 # Each fenced block runs in a FRESH shell, so block 1's PADDED/REVIEW_FILE/DISPOSITION_FILE are NOT
 # live here — re-derive them from the two inputs this step consumes (`PHASE_DIR`, `PHASE_NUMBER`).
-# Inheriting them is not merely stale, it is EMPTY: the ledger below would be written to a bare
-# `-REVIEW-DISPOSITION.md` path and the read of `$REVIEW_FILE` would find nothing, so the step would
-# report success while producing no artifact at all. The shim preamble below is re-emitted for the
-# same reason, and these three belong beside it.
+# Inheriting them is not merely stale, it is EMPTY, and the failure is silent rather than loud:
+# the embedded script throws on reading the empty review path, the trailing `|| echo` swallows it
+# as a non-blocking skip, and no ledger is written at all. The shim preamble below is re-emitted
+# for the same reason, and these three belong beside it.
 PADDED=$(printf "%02d" "${PHASE_NUMBER}")
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
+# The condition stated above this block is re-derived HERE rather than left to the reader. Block 1
+# computes REVIEW_STATUS and emits nothing, and its shell is gone, so nothing downstream can act on
+# it: a prose-only gate on a value no later block can see is not a gate. Without this, a clean
+# re-review rewrites an existing ledger it was never meant to touch.
+REVIEW_STATUS=""
+if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
+  REVIEW_STATUS=$(tr -d '\r' < "$REVIEW_FILE" 2>/dev/null | awk 'NR==1{if($0!="---") exit; next} /^---$/{exit} {print}' | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
+fi
+case "$REVIEW_STATUS" in
+  ''|clean|skipped) echo "Code review disposition skipped (status: ${REVIEW_STATUS:-none})"; return 0 2>/dev/null || exit 0 ;;
+esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
 FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
@@ -108,10 +127,22 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     // Fenced blocks are skipped: review and fix bodies quote example findings, and a heading
     // inside a fence is an illustration, not a finding.
     const out = [];
-    let fenced = false;
+    // The OPEN fence's marker is remembered, not just the fact of being fenced. A bare toggle
+    // treats every fence marker as interchangeable, so a ~~~ line inside a \` \` \` block CLOSES it
+    // and the block's real close REOPENS one — which silently swaps a fenced example for the
+    // real findings around it. Driven: a review quoting ~~~ inside a fenced example recorded
+    // the EXAMPLE's id and dropped the real finding entirely. Per CommonMark, a fence closes
+    // only on the same character, at least as long as the one that opened it.
+    let fence = null;
     for (const l of norm(text).split('\n')) {
-      if (/^\s*(\`{3,}|~{3,})/.test(l)) { fenced = !fenced; out.push({ fence: true }); continue; }
-      if (fenced) { out.push({ skip: true, line: l }); continue; }
+      const f = l.match(/^\s*(\`{3,}|~{3,})/);
+      if (f) {
+        const ch = f[1][0], len = f[1].length;
+        if (!fence) { fence = { ch: ch, len: len }; out.push({ fence: true }); continue; }
+        if (ch === fence.ch && len >= fence.len) { fence = null; out.push({ fence: true }); continue; }
+        out.push({ skip: true, line: l }); continue;   // a foreign marker inside a fence is content
+      }
+      if (fence) { out.push({ skip: true, line: l }); continue; }
       const m = l.match(ID_RE);
       out.push(m ? { id: m[1], title: m[2].trim(), line: l } : { line: l });
     }
@@ -137,7 +168,12 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       // Strip the carried marker before storing: it is rendered from the carried flag, so
       // leaving it on the stored value would re-append it every run — the cell grows without
       // bound AND the file changes on every run, defeating the unchanged-run check below.
-      if (m) prior.set(m[1], { d: m[2], src: m[3].replace(/(\s*\(not in the current review\))+\s*\$/, '') });
+      // Strip AT MOST ONE trailing marker, and only for an id the current review does not
+      // report — the only rows the marker is ever rendered onto. The unbounded `+` form
+      // also ate a human-written reason that merely ENDED in that phrase; bounding it keeps
+      // the no-growth property (a carried row loses exactly the one copy it was given)
+      // while leaving a current finding's reason untouched.
+      if (m) prior.set(m[1], { d: m[2], src: order.indexOf(m[1]) === -1 ? m[3].replace(/\s*\(not in the current review\)\s*\$/, '') : m[3] });
     }
   }
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'

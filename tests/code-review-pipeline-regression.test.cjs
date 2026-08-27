@@ -1371,10 +1371,15 @@ function parseGateCounts(reviewText) {
     }
     if (closed) fm = buf;
   }
+  // The shipped reads are `grep -m1 <key> | cut -d: -f2 | tr -d ' '`, and BOTH stages matter.
+  // `.trim()` was wrong twice over: `tr -d ' '` removes INTERNAL spaces (`1 0` -> `10`), and
+  // `cut -d: -f2` takes only the second colon-field, so a value containing a colon is truncated
+  // where a `(.*)$` capture keeps the tail. Modelling the pipeline is the only way the parity
+  // assertion below can mean anything.
   const first = (re) => {
     for (const line of fm) {
       const m = line.match(re);
-      if (m) return m[1].trim();
+      if (m) return line.split(':')[1].replace(/ /g, '');
     }
     return '';
   };
@@ -2150,6 +2155,11 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     'no frontmatter at all': '# Phase 01\n\nnothing here\n',
     'a zero-finding review': ['---', 'phase: 01', 'findings:', '  critical: 0', '  warning: 0',
       '  info: 0', '  total: 0', 'status: issues_found', '---'].join('\n'),
+    // Both from the round-1 adversarial pass: the shipped pipeline collapses `1 0` to `10` where
+    // a trim keeps `1 0`, and truncates at a second colon where a tail capture keeps it. Neither
+    // is reachable from the well-formed fixtures above, which is exactly why they are here.
+    'a count with an internal space': REVIEW_WITH_FINDINGS.replace('  critical: 1', '  critical: 1 0'),
+    'a value containing a second colon': REVIEW_WITH_FINDINGS.replace('status: issues_found', 'status: issues:found'),
   };
 
   for (const [name, reviewText] of Object.entries(FIXTURES)) {
@@ -2212,6 +2222,16 @@ function idAlternations() {
   return [...script.matchAll(/\(\?:((?:[A-Z]{2}\|)+[A-Z]{2})\)-/g)].map((m) => m[1].split('|').sort().join('|'));
 }
 
+// The THIRD copy: the severity map's keys. It is not an alternation, so the extractor above cannot
+// see it — and a set that agrees in the two regexes while mis-tiering in the map is the drift the
+// guard would otherwise miss entirely.
+function severityMapKeys() {
+  const script = shippedDispositionScript();
+  const m = script.match(/\{([^}]*?)\}\[id\.split/);
+  assert.ok(m, 'the severity map must still be an inline object literal indexed by the id prefix');
+  return [...m[1].matchAll(/([A-Z]{2}):/g)].map((x) => x[1]);
+}
+
 describe('#3861 round 1 — stale fix reports are stated, not silently ignored', () => {
   test('a fix report naming a different finding under a reused id says so', () => {
     // Exact-title coupling is deliberate — ids are reused across re-reviews, so a
@@ -2245,6 +2265,16 @@ describe('#3861 round 1 — finding-id prefix census', () => {
     const alts = idAlternations();
     assert.ok(alts.length >= 2, 'the script must still enumerate finding-id prefixes');
     assert.strictEqual(new Set(alts).size, 1, 'the prefix enumerations have drifted apart: ' + alts.join(' vs '));
+    // And the third copy, which is not an alternation: every prefix the regexes admit must either
+    // carry an explicit tier in the severity map or fall to `info` by the documented default.
+    // Without this, both regexes can gain a prefix while the map silently mis-tiers it.
+    const mapped = new Set(severityMapKeys());
+    const admitted = alts[0].split('|');
+    const unmapped = admitted.filter((p) => !mapped.has(p));
+    assert.deepStrictEqual(
+      unmapped, ['IN'],
+      'only IN may rely on the info default; every other admitted prefix needs an explicit tier'
+    );
   });
 
   test('the prefix set covers every id shape the reviewer agent emits', () => {
@@ -2253,11 +2283,99 @@ describe('#3861 round 1 — finding-id prefix census', () => {
     // changing. An unlisted prefix is not mis-tiered, it is INVISIBLE: the finding
     // never enters the order list and gets no row at all.
     const agent = fs.readFileSync(REVIEWER_AGENT_PATH, 'utf8');
-    const emitted = new Set([...agent.matchAll(/^###\s+([A-Z]{2,})-\d+:/gm)].map((m) => m[1]));
+    // BOTH surfaces. The body template writes `### CR-01:` headings; the Label-equivalence
+    // paragraph defines BL in PROSE and appears in no heading at all (`### BL-` occurs zero
+    // times). A heading-only scan therefore passes today purely because BL happens to be
+    // hard-coded, and would miss the next prose-defined prefix exactly as it would miss BL.
+    const emitted = new Set([
+      ...[...agent.matchAll(/^###\s+([A-Z]{2,})-\d+:/gm)].map((m) => m[1]),
+      ...[...agent.matchAll(/\b([A-Z]{2,})-\s*(?:IDs?|prefix)/g)].map((m) => m[1]),
+      ...[...agent.matchAll(/IDs? beginning with\s+`?([A-Z]{2,})-/g)].map((m) => m[1]),
+    ]);
     assert.ok(emitted.size > 0, 'the reviewer agent must still declare its finding-id shapes');
     const known = new Set(idAlternations()[0].split('|'));
     for (const prefix of emitted) {
       assert.ok(known.has(prefix), prefix + '- findings would get no disposition row at all');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3861 round 1, second pass — defects found by adversarially reviewing the
+// round's OWN fixes before pushing them. Every one of these was invisible to
+// the maintainer's review and to the first pass above.
+// ---------------------------------------------------------------------------
+
+describe('#3861 round 1 — fence tracking, status gating, count consistency', () => {
+  test('a foreign fence marker inside a fenced example does not swap example for finding', () => {
+    // The worst shape this file has carried: a bare fenced/not-fenced toggle treats ``` and ~~~
+    // as interchangeable, so a ~~~ line inside a ``` example CLOSES the fence and the example's
+    // real close REOPENS one. The ledger then records the ILLUSTRATION and drops the finding —
+    // a confidently-written artifact that is wrong in both directions at once.
+    const review = ['---', 'status: issues_found', '---', '', '```', '~~~',
+      '### CR-77: an example inside a fence', '```', '', '### CR-01: a real finding'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'the real finding, and only it');
+  });
+
+  test('a longer close does not require an exact-length match, per CommonMark', () => {
+    const review = ['---', 'status: issues_found', '---', '', '```',
+      '### CR-77: fenced', '````', '', '### CR-01: real'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+  });
+
+  test('the disposition block gates on review status in shell, not in prose', { skip: !HAS_BASH }, () => {
+    // Block 1 computes REVIEW_STATUS and emits nothing, and its shell is discarded — so a
+    // condition stated only in the prose between the blocks is not available to anything. A
+    // clean re-review would otherwise rewrite a ledger it was never meant to touch.
+    const fences = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'));
+    assert.ok(fences.length >= 2, 'the step must still carry more than one shell block');
+    assert.match(fences[1], /REVIEW_STATUS/, 'block 2 must re-derive the status it is gated on');
+    assert.match(fences[1], /clean\|skipped/, 'and gate on the documented clean/skipped/empty set');
+  });
+
+  test('an internally inconsistent breakdown is withheld, not half-rendered', { skip: !HAS_BASH }, () => {
+    // `total: 0` beside `critical: 1` is four valid numbers producing a self-contradicting
+    // line. Numeric is necessary, not sufficient.
+    const shipped = runShippedGateCounts({
+      reviewText: ['---', 'findings:', '  critical: 1', '  warning: 0', '  info: 0',
+        '  total: 0', 'status: issues_found', '---'].join('\n'),
+    });
+    assert.strictEqual(shipped.countsOk, '0', 'the counts do not sum to the total, so no breakdown');
+  });
+
+  test('a consistent breakdown is still reported', { skip: !HAS_BASH }, () => {
+    // Negative control for the sum check — it must not withhold a correct breakdown.
+    const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS });
+    assert.strictEqual(shipped.countsOk, '1');
+  });
+
+  test('a human reason ending in the carried phrase is not eaten', () => {
+    // The carried marker is stripped before storing so the cell cannot grow without bound. The
+    // unbounded form also ate a hand-written reason that merely ENDED in that phrase; the strip
+    // is now bounded to one occurrence and to rows the marker can legitimately be on.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n');
+    const prior = '| CR-01 | critical | deferred | defer until phrase (not in the current review) |';
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, priorText: prior }).ledger);
+    assert.strictEqual(
+      rows[0].source, 'defer until phrase (not in the current review)',
+      'the reason belongs to a finding the review still reports, so nothing is stripped'
+    );
+  });
+
+  test('a carried row still does not grow its marker across runs', () => {
+    // The property the strip exists for, re-pinned now that it is bounded.
+    const review = ['---', 'status: issues_found', '---', '', '### WR-01: unrelated'].join('\n');
+    const prior = '| CR-01 | critical | deferred | waiting on ADR-9 (not in the current review) |';
+    const first = runShippedDisposition({ reviewText: review, priorText: prior });
+    const carried = ledgerRows(first.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(carried.source, 'waiting on ADR-9 (not in the current review)');
+    const second = runShippedDisposition({ reviewText: review, priorText: first.ledger });
+    assert.strictEqual(
+      ledgerRows(second.ledger).find((r) => r.id === 'CR-01').source,
+      'waiting on ADR-9 (not in the current review)',
+      'exactly one marker, however many times the gate runs'
+    );
   });
 });
