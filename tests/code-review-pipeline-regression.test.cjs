@@ -1385,10 +1385,10 @@ function parseGateCounts(reviewText) {
   };
   return {
     status: first(/^status:(.*)$/),
-    critical: first(/^[ \t]*(?:critical|blocker):(.*)$/),
-    warning: first(/^[ \t]*warning:(.*)$/),
-    info: first(/^[ \t]*info:(.*)$/),
-    total: first(/^[ \t]*total:(.*)$/),
+    critical: first(/^[ \t\n\v\f\r]*(?:critical|blocker):(.*)$/),
+    warning: first(/^[ \t\n\v\f\r]*warning:(.*)$/),
+    info: first(/^[ \t\n\v\f\r]*info:(.*)$/),
+    total: first(/^[ \t\n\v\f\r]*total:(.*)$/),
   };
 }
 
@@ -2160,6 +2160,9 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     // is reachable from the well-formed fixtures above, which is exactly why they are here.
     'a count with an internal space': REVIEW_WITH_FINDINGS.replace('  critical: 1', '  critical: 1 0'),
     'a value containing a second colon': REVIEW_WITH_FINDINGS.replace('status: issues_found', 'status: issues:found'),
+    // POSIX [[:space:]] covers form feed and vertical tab; a [ \t] mirror does not, so the
+    // shipped grep matches a line the mirror rejects outright. Third counterexample, same class.
+    'a key indented with a form feed': REVIEW_WITH_FINDINGS.replace('  critical: 1', '\fcritical: 1'),
   };
 
   for (const [name, reviewText] of Object.entries(FIXTURES)) {
@@ -2275,6 +2278,13 @@ describe('#3861 round 1 — finding-id prefix census', () => {
       unmapped, ['IN'],
       'only IN may rely on the info default; every other admitted prefix needs an explicit tier'
     );
+    // And the other direction, which a one-way check leaves open: a tier for a prefix the
+    // regexes never admit is dead code that reads as coverage.
+    const unadmitted = [...mapped].filter((p) => admitted.indexOf(p) === -1);
+    assert.deepStrictEqual(
+      unadmitted, [],
+      'the severity map tiers prefixes the id regexes do not admit: ' + unadmitted.join(',')
+    );
   });
 
   test('the prefix set covers every id shape the reviewer agent emits', () => {
@@ -2377,5 +2387,133 @@ describe('#3861 round 1 — fence tracking, status gating, count consistency', (
       'waiting on ADR-9 (not in the current review)',
       'exactly one marker, however many times the gate runs'
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3861 round 1, third pass — the fidelity gap that let the second pass ship a
+// regression the whole suite was green over.
+//
+// Every test above extracts the embedded script as TEXT and runs it. Bash does
+// not: it expands the double-quoted `node -e "..."` argument first, so an
+// unescaped backtick is COMMAND SUBSTITUTION and the script Node receives is
+// not the script the tests read. That is not a hypothetical — the previous
+// commit shipped exactly that, in a code comment, and 122 green tests said
+// nothing because none of them ever asked bash what it would actually pass.
+// ---------------------------------------------------------------------------
+
+describe('#3861 round 1 — the tests must run what BASH would run', () => {
+  test('bash expansion of the node -e argument matches what the tests extract', { skip: !HAS_BASH }, () => {
+    // Ask bash for the literal argument it would hand node, and compare. This is the general
+    // guard: it catches an unescaped backtick, an unescaped $, and any other expansion the
+    // extractor's two-escape undo cannot model — none of which the behavioural tests can see.
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8').replace(/\r\n/g, '\n');
+    const open = src.indexOf('node -e "');
+    const body = src.slice(open + 'node -e "'.length);
+    const end = body.indexOf('\n" || echo ');
+    assert.ok(end !== -1, 'the node -e script must still be closed by its || echo fallback');
+    const quoted = body.slice(0, end);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-fid-'));
+    try {
+      const out = path.join(dir, 'arg.txt');
+      // `printf %s` with the SAME double-quoted string the step uses: whatever bash does to it
+      // on the way to node, it does here too.
+      const probe = 'printf %s "' + quoted + '" > ' + JSON.stringify(out) + '\n';
+      const res = runHook('-c', [probe], { interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS });
+      assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the probe must run to completion');
+      assert.strictEqual(
+        res.stderr.trim(), '',
+        'bash emitted diagnostics expanding the node -e argument — an unescaped backtick or $: ' + res.stderr
+      );
+      assert.strictEqual(
+        fs.readFileSync(out, 'utf8'), shippedDispositionScript(),
+        'bash hands node a DIFFERENT script than the tests exercise'
+      );
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  // Run ONLY the status guard at the head of the disposition block — everything up to the shim
+  // preamble. runShippedDisposition drives the node script directly and never sees this shell at
+  // all, so a test written against it says nothing about the guard: it passed unchanged with the
+  // guard made unconditional, which is exactly the vacuity this helper exists to remove.
+  function runDispositionGuard({ reviewText, withLedger }) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-grd-'));
+    try {
+      fs.writeFileSync(path.join(dir, '01-REVIEW.md'), reviewText);
+      if (withLedger) fs.writeFileSync(path.join(dir, '01-REVIEW-DISPOSITION.md'), '| CR-01 | critical | deferred | x |\n');
+      const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[1];
+      const cut = fence.indexOf('_GSD_SHIM_NAME=');
+      assert.ok(cut > 0, 'the disposition block must still open with its guard, then the shim');
+      const script = 'set -euo pipefail\n' + fence.slice(0, cut) + '\nprintf "PROCEEDED\\n"\n';
+      const res = runHook('-c', [script], {
+        interpreter: 'bash',
+        timeoutMs: PROBE_TIMEOUT_MS,
+        env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: '1' },
+      });
+      assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the guard must run to completion');
+      return { proceeded: /PROCEEDED/.test(res.stdout), stdout: res.stdout, exitCode: res.exitCode };
+    } finally {
+      cleanup(dir);
+    }
+  }
+
+  test('a clean review with no ledger is skipped', { skip: !HAS_BASH }, () => {
+    const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n') });
+    assert.strictEqual(out.proceeded, false, 'nothing to record and nothing to reconcile');
+    assert.match(out.stdout, /skipped \(status: clean\)/);
+  });
+
+  test('a clean review with an EXISTING ledger still proceeds, to reconcile it', { skip: !HAS_BASH }, () => {
+    // Freezing the ledger here would leave findings showing as open that the review no longer
+    // reports — the case the embedded script's own reconciliation path is written for. A guard
+    // that skipped unconditionally would make that path unreachable on exactly the run needing it.
+    const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n'), withLedger: true });
+    assert.strictEqual(out.proceeded, true, 'an existing ledger must still be reconciled');
+    assert.match(out.stdout, /reconciling the existing disposition ledger/);
+  });
+
+  test('a review reporting issues always proceeds', { skip: !HAS_BASH }, () => {
+    const out = runDispositionGuard({ reviewText: ['---', 'status: issues_found', '---'].join('\n') });
+    assert.strictEqual(out.proceeded, true);
+  });
+
+  test('a carried human reason ending in the marker is preserved, and not doubled', () => {
+    // Neither stripped (the previous fix's residue) nor appended twice.
+    const review = ['---', 'status: issues_found', '---', '', '### WR-01: unrelated'].join('\n');
+    const prior = '| CR-01 | critical | deferred | defer because (not in the current review) |';
+    const first = runShippedDisposition({ reviewText: review, priorText: prior });
+    const carried = ledgerRows(first.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(carried.source, 'defer because (not in the current review)');
+    const second = runShippedDisposition({ reviewText: review, priorText: first.ledger });
+    assert.strictEqual(
+      ledgerRows(second.ledger).find((r) => r.id === 'CR-01').source,
+      'defer because (not in the current review)',
+      'stable across runs — the render appends nothing it can already see'
+    );
+  });
+
+  test('a leading-zero count is evaluated, not silently skipped', { skip: !HAS_BASH }, () => {
+    // Bash infers the base from a leading zero, so `critical: 08` made $(( )) fail. It does NOT
+    // abort — the expansion sits in an `if` condition, where set -e does not fire — which is
+    // worse: the sum check silently does not run, an inconsistent breakdown passes, and the
+    // only trace is a stray diagnostic on stderr. Asserting exit 0 alone is vacuous here; it
+    // was true before the fix too. Assert the check's OUTCOME and the absent diagnostic.
+    const padded = (total) => ['---', 'findings:', '  critical: 08', '  warning: 0',
+      '  info: 0', '  total: ' + total, 'status: issues_found', '---'].join('\n');
+    const inconsistent = runShippedGateCounts({ reviewText: padded('9') });
+    assert.strictEqual(inconsistent.countsOk, '0', '08 + 0 + 0 is 8, not 9 — the check must FIRE');
+    assert.doesNotMatch(inconsistent.stderr, /value too great for base/,
+      'the padded count must be read as decimal, not left to base inference');
+    const consistent = runShippedGateCounts({ reviewText: padded('8') });
+    assert.strictEqual(consistent.exitCode, 0, 'an advisory gate must not abort on a padded count');
+    assert.strictEqual(consistent.countsOk, '1', '08 + 0 + 0 is 8, so the breakdown is consistent');
+  });
+
+  test('a fence indented past three spaces is not a fence', { skip: !HAS_BASH }, () => {
+    // CommonMark: at most three leading spaces open a fence; four is an indented code block.
+    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
+    assert.match(src, /\^ \{0,3\}\(/, 'the fence matcher must bound its leading whitespace');
   });
 });

@@ -61,8 +61,12 @@ done
 # that render the self-contradicting line `0 findings — 1 critical, 0 warning, 0 info`. An
 # inconsistent breakdown is unavailable for the same reason a partial one is: half-true is worse
 # than withheld, and the countless form is already the documented fallback.
+# `10#` on every operand: bash infers the base from a leading zero, so a review reporting
+# `critical: 08` makes $(( )) fail with "value too great for base" and, under `set -e`, takes
+# the whole advisory step down — strictly worse than the half-rendered line this check exists
+# to prevent. The values are already digit-only by the loop above.
 if [ "$REVIEW_COUNTS_OK" = "1" ] \
-   && [ "$((REVIEW_CRITICAL + REVIEW_WARNING + REVIEW_INFO))" -ne "$REVIEW_TOTAL" ]; then
+   && [ "$((10#$REVIEW_CRITICAL + 10#$REVIEW_WARNING + 10#$REVIEW_INFO))" -ne "$((10#$REVIEW_TOTAL))" ]; then
   REVIEW_COUNTS_OK=0
 fi
 ```
@@ -110,8 +114,19 @@ REVIEW_STATUS=""
 if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
   REVIEW_STATUS=$(tr -d '\r' < "$REVIEW_FILE" 2>/dev/null | awk 'NR==1{if($0!="---") exit; next} /^---$/{exit} {print}' | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
 fi
+# Skip a clean/skipped/absent review ONLY when there is no ledger to reconcile. An EXISTING
+# ledger still has to be brought up to date — its decided rows are carried and its untriaged
+# `open` rows dropped — because freezing it would leave findings showing as open that the
+# review no longer reports. A guard that skipped unconditionally would make the script's own
+# reconciliation path unreachable on exactly the run that needs it.
 case "$REVIEW_STATUS" in
-  ''|clean|skipped) echo "Code review disposition skipped (status: ${REVIEW_STATUS:-none})"; return 0 2>/dev/null || exit 0 ;;
+  ''|clean|skipped)
+    if [ ! -f "$DISPOSITION_FILE" ]; then
+      echo "Code review disposition skipped (status: ${REVIEW_STATUS:-none})"
+      return 0 2>/dev/null || exit 0
+    fi
+    echo "Code review ${REVIEW_STATUS:-unreported}; reconciling the existing disposition ledger."
+    ;;
 esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
@@ -135,7 +150,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     // only on the same character, at least as long as the one that opened it.
     let fence = null;
     for (const l of norm(text).split('\n')) {
-      const f = l.match(/^\s*(\`{3,}|~{3,})/);
+      const f = l.match(/^ {0,3}(\`{3,}|~{3,})/);   // >3 spaces is an indented block, not a fence
       if (f) {
         const ch = f[1][0], len = f[1].length;
         if (!fence) { fence = { ch: ch, len: len }; out.push({ fence: true }); continue; }
@@ -168,12 +183,12 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       // Strip the carried marker before storing: it is rendered from the carried flag, so
       // leaving it on the stored value would re-append it every run — the cell grows without
       // bound AND the file changes on every run, defeating the unchanged-run check below.
-      // Strip AT MOST ONE trailing marker, and only for an id the current review does not
-      // report — the only rows the marker is ever rendered onto. The unbounded `+` form
-      // also ate a human-written reason that merely ENDED in that phrase; bounding it keeps
-      // the no-growth property (a carried row loses exactly the one copy it was given)
-      // while leaving a current finding's reason untouched.
-      if (m) prior.set(m[1], { d: m[2], src: order.indexOf(m[1]) === -1 ? m[3].replace(/\s*\(not in the current review\)\s*\$/, '') : m[3] });
+      // STORE THE CELL VERBATIM. Every earlier form stripped the carried marker here so the
+      // cell could not grow, and every one of them also ate a human-written reason that merely
+      // ENDED in that phrase -- the one field a person writes into this artifact. Stripping is
+      // the wrong half of the pair to fix: no-growth is a property of the RENDER, so it is
+      // enforced there, where a marker that is already present is simply not appended again.
+      if (m) prior.set(m[1], { d: m[2], src: m[3] });
     }
   }
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'
@@ -218,7 +233,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y names a' : 'ies name') + ' different finding under a reused id: ' + staleFix.join(', ') + ')' : '';
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
-    .concat(rows.map((r) => '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + (r.src || '-') + (r.carried ? ' (not in the current review)' : '') + ' |'))
+    .concat(rows.map((r) => { const src = r.src || '-'; const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
     .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. Escape any \`|\`.', 'Re-running the gate preserves every disposition except \`open\`.', '']).join('\n');
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))
