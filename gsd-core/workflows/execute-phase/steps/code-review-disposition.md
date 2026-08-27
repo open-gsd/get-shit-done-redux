@@ -55,7 +55,10 @@ REVIEW_TOTAL=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*total:" | cut -d: -
 # alone would still emit `6 findings —  critical` for a review carrying a total and nothing else.
 REVIEW_COUNTS_OK=1
 for _c in "$REVIEW_TOTAL" "$REVIEW_CRITICAL" "$REVIEW_WARNING" "$REVIEW_INFO"; do
-  case "$_c" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac
+  # Length-bounded as well as digit-only: bash integers wrap at 2^64, so a 20-digit count
+  # arrives at the sum below as 0 and an inconsistent breakdown passes. No real review
+  # reports nine digits of findings.
+  case "$_c" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; ?????????*) REVIEW_COUNTS_OK=0 ;; esac
 done
 # Numeric is necessary and not sufficient. `total: 0` beside `critical: 1` is four valid numbers
 # that render the self-contradicting line `0 findings — 1 critical, 0 warning, 0 info`. An
@@ -154,7 +157,11 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       if (f) {
         const ch = f[1][0], len = f[1].length;
         if (!fence) { fence = { ch: ch, len: len }; out.push({ fence: true }); continue; }
-        if (ch === fence.ch && len >= fence.len) { fence = null; out.push({ fence: true }); continue; }
+        // A CLOSER carries nothing but whitespace after the marker; an info string makes it
+        // an opener's shape, never a close.
+        if (ch === fence.ch && len >= fence.len && /^\s*\$/.test(l.slice(l.indexOf(f[1]) + f[1].length))) {
+          fence = null; out.push({ fence: true }); continue;
+        }
         out.push({ skip: true, line: l }); continue;   // a foreign marker inside a fence is content
       }
       if (fence) { out.push({ skip: true, line: l }); continue; }
@@ -164,7 +171,12 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     return out;
   };
   const order = [], title = new Map();
-  for (const h of headings(fs.readFileSync(process.env.REVIEW_FILE, 'utf-8'))) {
+  // An ABSENT review still has a ledger to reconcile: the step's own guard proceeds when
+  // one exists, and throwing here would send that run to the trailing non-blocking fallback
+  // with the
+  // ledger untouched -- the freeze the reconciliation path exists to prevent.
+  const reviewText = fs.existsSync(process.env.REVIEW_FILE) ? fs.readFileSync(process.env.REVIEW_FILE, 'utf-8') : '';
+  for (const h of headings(reviewText)) {
     if (h.id && order.indexOf(h.id) === -1) { order.push(h.id); title.set(h.id, h.title); }
   }
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
@@ -183,12 +195,16 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       // Strip the carried marker before storing: it is rendered from the carried flag, so
       // leaving it on the stored value would re-append it every run — the cell grows without
       // bound AND the file changes on every run, defeating the unchanged-run check below.
-      // STORE THE CELL VERBATIM. Every earlier form stripped the carried marker here so the
-      // cell could not grow, and every one of them also ate a human-written reason that merely
-      // ENDED in that phrase -- the one field a person writes into this artifact. Stripping is
-      // the wrong half of the pair to fix: no-growth is a property of the RENDER, so it is
-      // enforced there, where a marker that is already present is simply not appended again.
-      if (m) prior.set(m[1], { d: m[2], src: m[3] });
+      // Strip AT MOST ONE trailing marker, unconditionally. Storing the cell verbatim looked
+      // like the way to stop the strip eating human text, and it introduced a worse defect:
+      // once the generated marker is stored it can never leave, so a carried finding that
+      // REAPPEARS in a later review still renders 'not in the current review' -- a ledger that
+      // is now factually wrong about its own contents. The residual ambiguity is irreducible
+      // (a reason ending in exactly that phrase is indistinguishable from the marker) and it
+      // costs nothing real: on a carried row the render puts the phrase straight back, and on a
+      // current row the phrase was self-contradictory to begin with. The unbounded quantifier is
+      // what had to go, not the strip itself.
+      if (m) prior.set(m[1], { d: m[2], src: m[3].replace(/\s*\(not in the current review\)\s*\$/, '') });
     }
   }
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'

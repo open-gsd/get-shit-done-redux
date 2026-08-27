@@ -143,7 +143,18 @@ describe('#3829 — the disposition ledger is a render/re-parse fixed point', ()
         // Round-trip: render -> re-parse -> render is the identity on the
         // decision AND on the reason. `open` never overwrites either.
         assert.strictEqual(cells[2], decision, 'the recorded disposition must survive');
-        assert.strictEqual(cells[3], source, 'the reason written beside it must survive verbatim');
+        // The reason survives verbatim EXCEPT for one trailing carried marker, which the parse
+        // removes because it is indistinguishable from the one the render appends. That is the
+        // contract, not a weakened assertion: leaving a stored marker in place makes the ledger
+        // claim a finding is 'not in the current review' on the very run that reports it, and
+        // stripping unboundedly ate the cell. One occurrence, one direction, stated here so the
+        // trade is visible rather than discovered.
+        const MARK = /\s*\(not in the current review\)\s*$/;
+        assert.strictEqual(
+          cells[3], source.replace(MARK, ''),
+          'the reason survives, less at most one trailing carried marker'
+        );
+        assert.doesNotMatch(cells[3], MARK, 'and a current finding is never marked as carried');
       } finally {
         cleanup(dir);
       }

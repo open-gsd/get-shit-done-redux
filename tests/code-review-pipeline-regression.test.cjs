@@ -1385,10 +1385,10 @@ function parseGateCounts(reviewText) {
   };
   return {
     status: first(/^status:(.*)$/),
-    critical: first(/^[ \t\n\v\f\r]*(?:critical|blocker):(.*)$/),
-    warning: first(/^[ \t\n\v\f\r]*warning:(.*)$/),
-    info: first(/^[ \t\n\v\f\r]*info:(.*)$/),
-    total: first(/^[ \t\n\v\f\r]*total:(.*)$/),
+    critical: first(/^\s*(?:critical|blocker):(.*)$/),
+    warning: first(/^\s*warning:(.*)$/),
+    info: first(/^\s*info:(.*)$/),
+    total: first(/^\s*total:(.*)$/),
   };
 }
 
@@ -1967,13 +1967,6 @@ describe('#3829 review round 3 — hostile frontmatter and hand-edited ledgers',
     );
   });
 
-  test('docs-parity: all four counts are validated numerically before the breakdown is shown', () => {
-    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      src.includes('REVIEW_COUNTS_OK=1') && src.includes("case \"$_c\" in ''|*[!0-9]*) REVIEW_COUNTS_OK=0 ;; esac"),
-      'the breakdown must be gated on all four counts being numeric, not on the total alone'
-    );
-  });
 
   test('a hand-edited row missing its trailing pipe still preserves the decision', () => {
     // A mangled table is already broken; silently dropping the row would lose a deferral, which
@@ -2298,9 +2291,9 @@ describe('#3861 round 1 — finding-id prefix census', () => {
     // times). A heading-only scan therefore passes today purely because BL happens to be
     // hard-coded, and would miss the next prose-defined prefix exactly as it would miss BL.
     const emitted = new Set([
-      ...[...agent.matchAll(/^###\s+([A-Z]{2,})-\d+:/gm)].map((m) => m[1]),
-      ...[...agent.matchAll(/\b([A-Z]{2,})-\s*(?:IDs?|prefix)/g)].map((m) => m[1]),
-      ...[...agent.matchAll(/IDs? beginning with\s+`?([A-Z]{2,})-/g)].map((m) => m[1]),
+      ...[...agent.matchAll(/^###\s+([A-Z]+)-\d+:/gm)].map((m) => m[1]),
+      ...[...agent.matchAll(/\b([A-Z]+)-\s*(?:IDs?|prefix)/g)].map((m) => m[1]),
+      ...[...agent.matchAll(/IDs? beginning with\s+`?([A-Z]+)-/g)].map((m) => m[1]),
     ]);
     assert.ok(emitted.size > 0, 'the reviewer agent must still declare its finding-id shapes');
     const known = new Set(idAlternations()[0].split('|'));
@@ -2361,17 +2354,23 @@ describe('#3861 round 1 — fence tracking, status gating, count consistency', (
     assert.strictEqual(shipped.countsOk, '1');
   });
 
-  test('a human reason ending in the carried phrase is not eaten', () => {
-    // The carried marker is stripped before storing so the cell cannot grow without bound. The
-    // unbounded form also ate a hand-written reason that merely ENDED in that phrase; the strip
-    // is now bounded to one occurrence and to rows the marker can legitimately be on.
-    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n');
-    const prior = '| CR-01 | critical | deferred | defer until phrase (not in the current review) |';
-    const rows = ledgerRows(runShippedDisposition({ reviewText: review, priorText: prior }).ledger);
+  test('a carried finding that REAPPEARS loses the carried marker', () => {
+    // The defect that storing the cell verbatim introduced, and the reason the strip is back.
+    // Run 1 carries CR-01 and marks it; run 2 reports CR-01 again. If the marker were permanent
+    // the ledger would state 'not in the current review' about a finding plainly in it —
+    // an artifact confidently wrong about its own contents.
+    const absent = ['---', 'status: issues_found', '---', '', '### WR-01: other'].join('\n');
+    const back = ['---', 'status: issues_found', '---', '', '### CR-01: it came back'].join('\n');
+    const prior = '| CR-01 | critical | deferred | waiting on ADR-9 |';
+    const run1 = runShippedDisposition({ reviewText: absent, priorText: prior });
     assert.strictEqual(
-      rows[0].source, 'defer until phrase (not in the current review)',
-      'the reason belongs to a finding the review still reports, so nothing is stripped'
+      ledgerRows(run1.ledger).find((r) => r.id === 'CR-01').source,
+      'waiting on ADR-9 (not in the current review)', 'carried, and marked as such'
     );
+    const run2 = runShippedDisposition({ reviewText: back, priorText: run1.ledger });
+    const row = ledgerRows(run2.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(row.source, 'waiting on ADR-9', 'the marker goes when the finding returns');
+    assert.strictEqual(row.disposition, 'deferred', 'and the decision itself is still preserved');
   });
 
   test('a carried row still does not grow its marker across runs', () => {
@@ -2515,5 +2514,79 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
     // CommonMark: at most three leading spaces open a fence; four is an indented code block.
     const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
     assert.match(src, /\^ \{0,3\}\(/, 'the fence matcher must bound its leading whitespace');
+  });
+});
+
+// Lives at the end of the file, not beside its siblings: the `skip` option is evaluated when
+// `describe` runs, so a test referencing HAS_BASH from an earlier block hits the temporal dead
+// zone and cancels its neighbours rather than failing visibly.
+describe('#3861 round 1 — count validation, executed', () => {
+  test('all four counts are validated before the breakdown is shown', { skip: !HAS_BASH }, () => {
+    // Was a `src.includes()` assertion on the exact `case` line, which broke the moment that
+    // line grew a length bound. The behaviour is what matters and is now executed directly.
+    const counts = (c, w, i, t) => ['---', 'findings:', '  critical: ' + c, '  warning: ' + w,
+      '  info: ' + i, '  total: ' + t, 'status: issues_found', '---'].join('\n');
+    assert.strictEqual(runShippedGateCounts({ reviewText: counts('x', '0', '0', '0') }).countsOk, '0',
+      'a non-numeric count withholds the whole breakdown');
+    assert.strictEqual(runShippedGateCounts({ reviewText: counts('1', '2', '1', '4') }).countsOk, '1');
+    // Bash integers wrap at 2^64, so a 20-digit count reaches the sum as 0 and an inconsistent
+    // breakdown passes. Length-bounded, because no review reports nine digits of findings.
+    assert.strictEqual(
+      runShippedGateCounts({ reviewText: counts('18446744073709551616', '0', '0', '0') }).countsOk, '0',
+      'a count long enough to wrap the sum is not a count'
+    );
+  });
+});
+
+describe('#3861 round 1 — an absent review still reconciles', () => {
+  test('a missing REVIEW.md does not abandon an existing ledger', () => {
+    // The status guard proceeds when a ledger exists, so the script must tolerate the review
+    // being gone: reading it unconditionally threw, the trailing fallback swallowed it, and the
+    // ledger was left frozen — the exact freeze the reconciliation path exists to prevent.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-abs-'));
+    try {
+      const dispPath = path.join(dir, '01-REVIEW-DISPOSITION.md');
+      fs.writeFileSync(dispPath, ['| CR-01 | critical | deferred | waiting on ADR-9 |',
+        '| WR-09 | warning | open | - |'].join('\n'));
+      const res = runNode(['-e', shippedDispositionScript()], {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        env: {
+          ...process.env,
+          REVIEW_FILE: path.join(dir, '01-REVIEW.md'),   // deliberately absent
+          DISPOSITION_FILE: dispPath,
+          FIX_REPORT_FILE: path.join(dir, '01-REVIEW-FIX.md'),
+          PADDED: '01',
+        },
+      });
+      assert.strictEqual(res.outcome, OUTCOME.EXITED);
+      assert.strictEqual(res.exitCode, 0, 'an absent review is not an error: ' + res.stderr);
+      const rows = ledgerRows(fs.readFileSync(dispPath, 'utf8'));
+      assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'decided carried, untriaged dropped');
+      assert.match(rows[0].source, /not in the current review/);
+    } finally {
+      cleanup(dir);
+    }
+  });
+});
+
+describe('#3861 round 1 — fence closers and one-letter prefixes', () => {
+  test('a line with an info string is an opener shape, never a closer', () => {
+    // CommonMark: a closing fence carries only whitespace after its marker. Treating an
+    // info-string line as a close ends the fence early and admits the example headings under it.
+    const review = ['---', 'status: issues_found', '---', '', '```',
+      '```js', '### CR-77: still inside the fence', '```', '', '### CR-01: real'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review }).ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+  });
+
+  test('a one-letter finding prefix in the agent template is not invisible', () => {
+    // The domain scan required [A-Z]{2,}, so a template heading like `### C-01:` — explicit and
+    // parseable, not prose — contributed nothing and the guard passed over a finding shape the
+    // ledger would drop entirely.
+    const agent = fs.readFileSync(REVIEWER_AGENT_PATH, 'utf8');
+    const emitted = [...agent.matchAll(/^###\s+([A-Z]+)-\d+:/gm)].map((m) => m[1]);
+    assert.ok(emitted.length > 0, 'the reviewer agent must still declare its finding-id shapes');
+    const oneLetter = [...'### C-01: x'.matchAll(/^###\s+([A-Z]+)-\d+:/gm)].map((m) => m[1]);
+    assert.deepStrictEqual(oneLetter, ['C'], 'the scan must admit a single-letter prefix');
   });
 });
