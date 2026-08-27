@@ -2313,8 +2313,11 @@ defaulting to `open`:
 otherwise declare a brand-new `CR-01` already fixed. A fix report that names a different finding
 under a reused id leaves the row `open` and is reported as unreconciled, rather than passing
 silently. `deferred` is the one disposition the gate never writes: it is recorded by hand, and the
-reason recorded beside it in the Source cell is preserved verbatim across re-runs, a literal `|`
-included once escaped.
+reason recorded beside it in the Source cell is preserved across re-runs, a literal `|` included
+once escaped. One exception, because it cannot be resolved: a reason ending in the literal phrase
+*(not in the current review)* loses that trailing phrase, since it is indistinguishable from the
+carried marker the gate appends. The alternative is worse — a stored marker never leaves, so a
+carried finding that later reappears would keep claiming it is absent from the review reporting it.
 
 Re-running the gate preserves every disposition except `open`, so a decision recorded here is never
 overwritten by a later pass. A finding that has been decided but that the current review no longer
