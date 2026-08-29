@@ -1827,10 +1827,15 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
       src.includes('((?:[^|\\\\\\\\]|\\\\\\\\.)*?)'),
       'the prior-row regex must capture the source cell, escaped pipes included'
     );
-    assert.ok(
-      src.includes('title.get(h.id) === h.title'),
-      'a fix report must name the SAME finding before its outcome is applied'
-    );
+    // Seventh src.includes() converted -- it pinned the exact comparison EXPRESSION, so it went
+    // red when the comparison gained whitespace normalization while the property it names was
+    // unchanged. Assert the property instead: a fix report naming a different finding under a
+    // reused id does not decide the row.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a new finding'].join('\n');
+    const stale = ['## Fixed Issues', '', '### CR-01: what this id used to mean'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review, fixText: stale }).ledger);
+    assert.strictEqual(rows[0].disposition, 'open',
+      'a fix report must name the SAME finding before its outcome is applied');
   });
 });
 
@@ -2534,8 +2539,37 @@ describe('#3861 round 1 — stale fix reports are stated, not silently ignored',
     const out = runShippedDisposition({ reviewText: review, fixText });
     const rows = ledgerRows(out.ledger);
     assert.strictEqual(rows[0].disposition, 'open', 'a stale report must not decide the row');
-    assert.match(out.stdout, /reused id/, 'and the mismatch must be reported, not swallowed');
+    assert.match(out.stdout, /titles its finding differently from the review/,
+      'and the mismatch must be reported, not swallowed');
+    assert.match(out.stdout, /a stale report, or a re-titled one/,
+      'stated as the observation it is -- the step cannot tell the two causes apart');
     assert.match(out.stdout, /CR-01/, 'naming the finding it could not reconcile');
+  });
+
+  test('a REFLOWED title still reconciles, and produces no spurious mismatch (m2)', () => {
+    // gsd-code-fixer.md writes '### {finding_id}: {title}' under no contract that the title is
+    // copied byte-for-byte. A fixer that wraps a long title used to produce a spurious note, leave
+    // a genuinely-fixed row 'open', and tell the reader the report named a different finding.
+    // Whitespace is the one divergence carrying no information: a wrapped title is the same title.
+    const title = 'a long finding title that a fixer might wrap across lines';
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: ' + title].join('\n');
+    const reflowed = ['## Fixed Issues', '', '### CR-01: ' + title.replace(/ /g, '   ')].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText: reflowed });
+    assert.strictEqual(ledgerRows(out.ledger)[0].disposition, 'fixed',
+      'a reflowed title is the same title, and the fix outcome must reach the ledger');
+    assert.doesNotMatch(out.stdout, /titles its finding differently/,
+      'and no spurious mismatch is reported');
+  });
+
+  test('a RE-CASED or truncated title still reports a mismatch — the strict half is kept', () => {
+    // The deliberate residual. Case changes and truncation are the shapes a genuinely different
+    // finding takes, so widening to them would trade a visible false positive for a silent false
+    // negative -- a stale report marking a brand-new CR-01 fixed, which is the worse direction.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: The Finding'].join('\n');
+    const recased = ['## Fixed Issues', '', '### CR-01: the finding'].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText: recased });
+    assert.strictEqual(ledgerRows(out.ledger)[0].disposition, 'open');
+    assert.match(out.stdout, /titles its finding differently/);
   });
 
   test('a matching fix report reports no mismatch', () => {

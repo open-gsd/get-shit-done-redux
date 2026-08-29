@@ -274,6 +274,21 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       if (m) prior.set(m[1], { d: m[2], src: m[3].replace(/\s*\(not in the current review\)\s*\$/, '') });
     }
   }
+  // TITLE COMPARISON, and its FALSE-POSITIVE mode, which was previously unacknowledged.
+  // The strict instinct is right -- ids are reused across re-reviews, so a stale REVIEW-FIX.md
+  // must not mark a brand-new CR-01 as already fixed -- but gsd-code-fixer.md writes
+  // '### {finding_id}: {title}' under no contract that the title is copied byte-for-byte from
+  // REVIEW.md. A fixer that REFLOWS a long title produced a spurious stale note, left a
+  // genuinely-fixed row 'open', and told the reader the fix report named a different finding.
+  // Whitespace is normalized because reflowing is the one divergence that carries no information:
+  // a wrapped title is the same title. Case changes and truncation stay strict, deliberately --
+  // they are the shapes a genuinely different finding actually takes, and widening to them would
+  // trade this false positive for the silent false NEGATIVE the strict match exists to prevent.
+  // Residual, stated: a fixer that re-cases or truncates still produces a spurious note. That is
+  // the safe direction (a visible note, not a silent wrong 'fixed'), and the note's wording below
+  // no longer asserts which of the two it is.
+  const sameTitle = (a, b) => String(a === undefined ? '' : a).replace(/\s+/g, ' ').trim()
+                           === String(b === undefined ? '' : b).replace(/\s+/g, ' ').trim();
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'
   // classify every finding under it as fixed.
   const applied = new Map(), staleFix = [];
@@ -291,7 +306,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
       // reused, the finding is not, and a reader who sees the row stay 'open' has no way to
       // tell that from 'the fix report never mentioned it'. Record it and say so below.
       if (h.id && sect && !applied.has(h.id)) {
-        if (title.get(h.id) === h.title) applied.set(h.id, sect);
+        if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, sect);
         else if (title.has(h.id) && staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
       }
     }
@@ -327,7 +342,10 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const open = rows.filter((r) => r.d === 'open').length;
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
   // no longer matches is the one case where 'open' understates what is known, so it is stated.
-  const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y names a' : 'ies name') + ' different finding under a reused id: ' + staleFix.join(', ') + ')' : '';
+  // The wording no longer ASSERTS a stale report. Both causes reach here -- a genuinely different
+  // finding under a reused id, and a fixer that re-titled the same one -- and the step cannot tell
+  // them apart, so it reports the observation rather than a conclusion it has not earned.
+  const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y titles its' : 'ies title their') + ' finding differently from the review, so ' + (staleFix.length === 1 ? 'it was' : 'they were') + ' not reconciled -- a stale report, or a re-titled one: ' + staleFix.join(', ') + ')' : '';
   // RECONCILE THE TWO PARSERS. The counts come from REVIEW.md's frontmatter; the rows come from
   // heading matches against a CLOSED CR|BL|WR|IN alternation. A finding the heading parser cannot
   // match -- a fifth prefix, a missing ': ' separator, a '#### ' heading -- contributed no row, no
