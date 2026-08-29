@@ -2547,7 +2547,13 @@ describe('#3861 round 2 — the ledger write refuses a non-regular file', () => 
     },
   });
 
-  test('a symlink at the ledger path is refused, and its target is untouched', () => {
+  // Skipped on win32 per the repo's existing convention for symlink-planting tests:
+  // tests/settings-jsonc.test.cjs:389 skips the same class, and
+  // tests/unreachable-guard-drift.test.cjs:726 records why -- symlink creation requires elevated
+  // privileges on Windows CI. It happened to be available on the lane this round; the convention
+  // exists because it is not guaranteed.
+  test('a symlink at the ledger path is refused, and its target is untouched',
+    { skip: process.platform === 'win32' }, () => {
     const dir = mkPhase();
     try {
       const outside = path.join(dir, 'outside.txt');
@@ -2563,7 +2569,8 @@ describe('#3861 round 2 — the ledger write refuses a non-regular file', () => 
     } finally { cleanup(dir); }
   });
 
-  test('a symlink whose target ALREADY matches is refused too — the fast path does not bypass it', () => {
+  test('a symlink whose target ALREADY matches is refused too — the fast path does not bypass it',
+    { skip: process.platform === 'win32' }, () => {
     // The unchanged-run fast path read the ledger before the check, so a link whose target
     // happened to match slipped through reporting `unchanged`. The check is first now.
     const dir = mkPhase();
@@ -2583,10 +2590,16 @@ describe('#3861 round 2 — the ledger write refuses a non-regular file', () => 
     const dir = mkPhase();
     try {
       // Through the process seam, like every other spawn in this file.
-      const mk = runHook('-c', ['mkfifo "$1"', '_', path.join(dir, '03-REVIEW-DISPOSITION.md')], {
-        interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS,
-      });
-      if (mk.outcome !== OUTCOME.EXITED || mk.exitCode !== 0) return;   // no mkfifo here
+      const fifoPath = path.join(dir, '03-REVIEW-DISPOSITION.md');
+      runHook('-c', ['mkfifo "$1"', '_', fifoPath], { interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS });
+      // GATE ON WHAT WAS CREATED, never on mkfifo's exit code. On the Windows lane mkfifo EXISTS
+      // and exits 0 while producing something that is not a FIFO, so an exit-code guard let this
+      // test run against an ordinary path: the ledger wrote normally and the assertion below
+      // failed for a reason that had nothing to do with the behaviour under test. Caught by CI,
+      // not by the local suite or five review passes -- every one of which ran on Linux.
+      let isFifo = false;
+      try { isFifo = fs.lstatSync(fifoPath).isFIFO(); } catch { isFifo = false; }
+      if (!isFifo) return;   // no real FIFO on this platform; nothing to assert
       const res = runAt(dir);
       assert.strictEqual(res.outcome, OUTCOME.EXITED,
         'a FIFO must not hang the step — readFileSync blocks on one forever');
