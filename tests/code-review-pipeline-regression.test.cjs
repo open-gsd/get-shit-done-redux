@@ -1666,11 +1666,33 @@ describe('#3829 — code_review_gate per-finding disposition record', () => {
   });
 
   test('docs-parity: the gate writes a REVIEW-DISPOSITION sibling, not into REVIEW.md', () => {
-    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      src.includes('DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"'),
-      'code_review_gate must write the disposition record to a REVIEW-DISPOSITION sibling'
-    );
+    // Eighth src.includes() converted. It pinned the literal `${PHASE_DIR}` interpolation, so it
+    // went red when path construction moved to a VALIDATED local -- while the property it names,
+    // "a REVIEW-DISPOSITION sibling", was untouched. Assert the property: the ledger lands beside
+    // the review, under the derived name, and REVIEW.md itself is not written.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-sib-'));
+    try {
+      const reviewPath = path.join(dir, '02-REVIEW.md');
+      const reviewText = ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n');
+      fs.writeFileSync(reviewPath, reviewText);
+      const res = runNode(['-e', shippedDispositionScript()], {
+        timeoutMs: PROBE_TIMEOUT_MS,
+        env: {
+          ...process.env,
+          REVIEW_FILE: reviewPath,
+          DISPOSITION_FILE: path.join(dir, '02-REVIEW-DISPOSITION.md'),
+          FIX_REPORT_FILE: path.join(dir, '02-REVIEW-FIX.md'),
+          PADDED: '02',
+        },
+      });
+      assert.strictEqual(res.exitCode, 0, res.stderr);
+      assert.ok(fs.existsSync(path.join(dir, '02-REVIEW-DISPOSITION.md')),
+        'code_review_gate must write the disposition record to a REVIEW-DISPOSITION sibling');
+      assert.strictEqual(fs.readFileSync(reviewPath, 'utf8'), reviewText,
+        'and must not write into REVIEW.md — gsd-code-reviewer is its single writer');
+    } finally {
+      cleanup(dir);
+    }
     // Sixth src.includes() converted. It pinned the exact SOURCE LINE of the enumeration loop, so
     // it went red when M3 reformatted that loop to track the enclosing section -- while the
     // property it names, "enumerate every finding ID", was strictly widened rather than broken.
@@ -2345,16 +2367,29 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
   // run the real second fence in a FRESH shell with nothing but the step's two declared inputs,
   // and require it to write the ledger at the correct derived path. Every derivation in that
   // fence is load-bearing for that outcome, so no textual dodge survives it.
-  // TWO DISTINCT PHASES, and that is the whole point. A single-phase probe proves the fence
-  // WORKS FOR ONE VALUE, never that it DERIVES: an adversarial pass defeated the one-phase
-  // version by replacing the derivation with `case ... in 1) PADDED=01 ;; 7) PADDED=07 ;;
-  // *) PADDED=07 ;; esac`, which breaks every real phase and passed the whole suite. A
-  // hardcode cannot satisfy two values at once, and the dotted one additionally pins the
-  // integer-part split that a naive `%02d` cannot express.
-  for (const [phaseNumber, padded] of [['7', '07'], ['3.1', '03.1']]) {
+  // RANDOM PHASES, and the randomness is the mechanism rather than decoration. Fixed fixtures
+  // cannot establish derivation: an adversarial pass defeated the one-phase version with
+  // `case ... in 7) PADDED=07 ;; *) PADDED=07 ;; esac`, and then defeated the two-phase version
+  // by simply adding `3.1) PADDED=03.1` to the same case. Any finite sample loses that race --
+  // the enumeration just grows to cover whatever the test happens to name.
+  //
+  // A phase the test picks at RUN TIME cannot be enumerated in advance, so a hardcode fails on
+  // the next run rather than never. The cost is a nondeterministic input, paid for by printing
+  // the drawn values in every assertion message, so a failure is reproducible from its own
+  // output. One integer and one dotted phase per run: the dotted one additionally pins the
+  // integer-part split a naive `%02d` cannot express.
+  const rnd = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+  const intPhase = String(rnd(2, 89));
+  const dotPhase = rnd(2, 89) + '.' + rnd(1, 9);
+  const pad = (v) => {
+    const [i, sub] = String(v).split('.');
+    return String(Number(i)).padStart(2, '0') + (sub === undefined ? '' : '.' + sub);
+  };
+  for (const [phaseNumber, padded] of [[intPhase, pad(intPhase)], [dotPhase, pad(dotPhase)]]) {
     test('block 2 derives its own paths and writes the ledger for phase ' + phaseNumber,
       { skip: !HAS_BASH }, () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-blk2-'));
+      const drawn = ' (drawn phase ' + phaseNumber + ' -> ' + padded + ')';
       try {
         fs.writeFileSync(path.join(dir, padded + '-REVIEW.md'),
           ['---', 'phase: ' + padded, 'status: issues_found', '---', '',
@@ -2370,13 +2405,13 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
           interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS, env,
         });
         assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the block must run to completion');
-        assert.strictEqual(res.exitCode, 0, 'advisory: it must not abort: ' + res.stderr);
+        assert.strictEqual(res.exitCode, 0, 'advisory: it must not abort' + drawn + ': ' + res.stderr);
         assert.ok(fs.existsSync(path.join(dir, padded + '-REVIEW-DISPOSITION.md')),
-          'the ledger must land at the DERIVED path — a lost derivation writes elsewhere or nowhere');
+          'the ledger must land at the DERIVED path — a lost derivation writes elsewhere or nowhere' + drawn);
         const rows = ledgerRows(fs.readFileSync(path.join(dir, padded + '-REVIEW-DISPOSITION.md'), 'utf8'));
-        assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'and it must have read the review');
+        assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'and it must have read the review' + drawn);
         assert.ok(!fs.existsSync(path.join(dir, '-REVIEW-DISPOSITION.md')),
-          'an empty PADDED must never produce a bare-named ledger');
+          'an empty PADDED must never produce a bare-named ledger' + drawn);
       } finally {
         cleanup(dir);
       }

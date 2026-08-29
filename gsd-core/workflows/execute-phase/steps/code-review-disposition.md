@@ -26,7 +26,8 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # `set -euo pipefail` aborts this step on its FIRST line -- the loudest possible failure from
 # the gate that promises never to block, and it takes the whole phase's review reporting with
 # it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
-# Both arms fall back to the raw value rather than aborting: advisory means advisory.
+# On failure NO path is built and the fence refuses by name: advisory means advisory, and it
+# also means never probing a path assembled out of a value we just rejected.
 # VALIDATE, THEN FORMAT -- never format and fall back on failure. `printf "%02d" abc` writes
 # `00` to stdout BEFORE it fails, so a `$(printf ... || printf %s ...)` fallback CONCATENATES
 # the two and yields `00abc`; `08` fails the same way as invalid octal, giving `0008.1` for a
@@ -41,17 +42,28 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
+# PHASE_DIR is the step's other declared input and gets the same treatment. Unset, it aborted
+# both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class as
+# PHASE_NUMBER, in the step that promises never to block. Driven.
+_pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
+[ -n "$_pd" ] || _ok=0
 case "$_pn" in
   ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
   .*|*.)        _ok=0 ;;   # leading or trailing dot
   *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
-  # LENGTH-BOUNDED, exactly as the counts are and for the same reason: bash integers wrap at
-  # 2^64, so `$((10#$_int))` on a 54-digit value yields -7908320945662590977 SILENTLY and that
-  # becomes the padded phase. Driven. No phase number has nine digits.
-  ?????????*)   _ok=0 ;;
 esac
+# LENGTH-BOUND EACH COMPONENT SEPARATELY. Bash integers wrap at 2^64, so `$((10#$_int))` on a
+# 54-digit value yields -7908320945662590977 SILENTLY and that becomes the padded phase. The
+# bound belongs on the INTEGER PART: applied to the whole value it rejected `12345678.1`, whose
+# integer part is a legal 8 digits, while accepting `1.123456` -- an accidental bound on the
+# composite that was both too strict and too loose. The sub-number is bounded too, since it is
+# also interpolated into a filename and filesystem components are finite. Both driven.
+if [ "$_ok" = "1" ]; then
+  case "${_pn%%.*}" in ?????????*) _ok=0 ;; esac
+  case "$_pn" in *.*) case "${_pn#*.}" in ?????????*) _ok=0 ;; esac ;; esac
+fi
 if [ "$_ok" = "1" ]; then
   _int="${_pn%%.*}"
   case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
@@ -60,8 +72,16 @@ if [ "$_ok" = "1" ]; then
 else
   PADDED=""
 fi
-REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
-DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
+# REFUSE BEFORE BUILDING ANY PATH. An unusable input yields an empty PADDED above, and the
+# earlier placement -- after the assignments -- meant a rejected value still had
+# `${_pd}/-REVIEW.md` assembled and stat'ed before the refusal fired. Nothing is constructed
+# from a value we have already rejected.
+if [ -z "$PADDED" ]; then
+  echo "Code review reporting skipped (unusable phase number or directory: '${PHASE_NUMBER:-}')"
+  return 0 2>/dev/null || exit 0
+fi
+REVIEW_FILE="${_pd}/${PADDED}-REVIEW.md"
+DISPOSITION_FILE="${_pd}/${PADDED}-REVIEW-DISPOSITION.md"
 # Extract ONLY the leading frontmatter block: `sed -n '/^---$/,/^---$/p'` re-opens its range
 # on a body `---` and runs to EOF, which leaks body lines into the scan. That leak is benign
 # for a key the frontmatter always carries (the first match still wins) but NOT for an
@@ -126,12 +146,6 @@ fi
 # rule block 2 states about itself — a prose-only gate on a value no later block can see is not a
 # gate — applied to the block that is this step's primary deliverable rather than only to its
 # sibling. The status arm is re-derived here, not left to the reader, for the same reason.
-# An unusable phase number yields an empty PADDED above, so there is no review path to read.
-# Say so and stop rather than reporting counts parsed from `${PHASE_DIR}/-REVIEW.md`.
-if [ -z "$PADDED" ]; then
-  echo "Code review reporting skipped (unusable phase number: '${PHASE_NUMBER:-}')"
-  return 0 2>/dev/null || exit 0
-fi
 case "$REVIEW_STATUS" in
   ''|clean|skipped) ;;   # nothing to report; block 2 still reconciles an existing ledger
   *)
@@ -175,7 +189,8 @@ the step — never blocks:
 # `set -euo pipefail` aborts this step on its FIRST line -- the loudest possible failure from
 # the gate that promises never to block, and it takes the whole phase's review reporting with
 # it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
-# Both arms fall back to the raw value rather than aborting: advisory means advisory.
+# On failure NO path is built and the fence refuses by name: advisory means advisory, and it
+# also means never probing a path assembled out of a value we just rejected.
 # VALIDATE, THEN FORMAT -- never format and fall back on failure. `printf "%02d" abc` writes
 # `00` to stdout BEFORE it fails, so a `$(printf ... || printf %s ...)` fallback CONCATENATES
 # the two and yields `00abc`; `08` fails the same way as invalid octal, giving `0008.1` for a
@@ -190,17 +205,28 @@ the step — never blocks:
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
+# PHASE_DIR is the step's other declared input and gets the same treatment. Unset, it aborted
+# both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class as
+# PHASE_NUMBER, in the step that promises never to block. Driven.
+_pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
+[ -n "$_pd" ] || _ok=0
 case "$_pn" in
   ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
   .*|*.)        _ok=0 ;;   # leading or trailing dot
   *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
-  # LENGTH-BOUNDED, exactly as the counts are and for the same reason: bash integers wrap at
-  # 2^64, so `$((10#$_int))` on a 54-digit value yields -7908320945662590977 SILENTLY and that
-  # becomes the padded phase. Driven. No phase number has nine digits.
-  ?????????*)   _ok=0 ;;
 esac
+# LENGTH-BOUND EACH COMPONENT SEPARATELY. Bash integers wrap at 2^64, so `$((10#$_int))` on a
+# 54-digit value yields -7908320945662590977 SILENTLY and that becomes the padded phase. The
+# bound belongs on the INTEGER PART: applied to the whole value it rejected `12345678.1`, whose
+# integer part is a legal 8 digits, while accepting `1.123456` -- an accidental bound on the
+# composite that was both too strict and too loose. The sub-number is bounded too, since it is
+# also interpolated into a filename and filesystem components are finite. Both driven.
+if [ "$_ok" = "1" ]; then
+  case "${_pn%%.*}" in ?????????*) _ok=0 ;; esac
+  case "$_pn" in *.*) case "${_pn#*.}" in ?????????*) _ok=0 ;; esac ;; esac
+fi
 if [ "$_ok" = "1" ]; then
   _int="${_pn%%.*}"
   case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
@@ -209,8 +235,16 @@ if [ "$_ok" = "1" ]; then
 else
   PADDED=""
 fi
-REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
-DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
+# REFUSE BEFORE BUILDING ANY PATH. An unusable input yields an empty PADDED above, and the
+# earlier placement -- after the assignments -- meant a rejected value still had
+# `${_pd}/-REVIEW.md` assembled and stat'ed before the refusal fired. Nothing is constructed
+# from a value we have already rejected.
+if [ -z "$PADDED" ]; then
+  echo "Code review disposition skipped (unusable phase number or directory: '${PHASE_NUMBER:-}')"
+  return 0 2>/dev/null || exit 0
+fi
+REVIEW_FILE="${_pd}/${PADDED}-REVIEW.md"
+DISPOSITION_FILE="${_pd}/${PADDED}-REVIEW-DISPOSITION.md"
 # The condition stated above this block is re-derived HERE rather than left to the reader. Block 1
 # computes REVIEW_STATUS and emits nothing, and its shell is gone, so nothing downstream can act on
 # it: a prose-only gate on a value no later block can see is not a gate. Without this, a clean
@@ -231,12 +265,6 @@ if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
   REVIEW_TOTAL=$(echo "$_FM" | awk '/^findings:[[:space:]]*$/{f=1; next} f&&/^[^[:space:]]/{exit} f' | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
   case "$REVIEW_TOTAL" in ''|*[!0-9]*) REVIEW_TOTAL="" ;; ?????????*) REVIEW_TOTAL="" ;; esac
 fi
-# An unusable phase number yields an empty PADDED above, which would make every path below
-# bare (`-REVIEW-DISPOSITION.md`) -- the exact silent-write defect round 1 closed. Refuse.
-if [ -z "$PADDED" ]; then
-  echo "Code review disposition skipped (unusable phase number: '${PHASE_NUMBER:-}')"
-  return 0 2>/dev/null || exit 0
-fi
 # Skip a clean/skipped/absent review ONLY when there is no ledger to reconcile. An EXISTING
 # ledger still has to be brought up to date — its decided rows are carried and its untriaged
 # `open` rows dropped — because freezing it would leave findings showing as open that the
@@ -254,7 +282,7 @@ esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
 REVIEW_TOTAL="${REVIEW_TOTAL}" \
-FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
+FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   const fs = require('fs'), path = require('path');
   const norm = (s) => s.replace(/\r\n/g, '\n');
   // Captures the id AND the title: the title is what tells a stale fix report apart from a
@@ -474,6 +502,15 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const prev = fs.existsSync(process.env.DISPOSITION_FILE) ? norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')) : '';
   if (prev && stripTs(prev) === stripTs(render(''))) {
     console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote);
+    process.exit(0);
+  }
+  // REFUSE TO WRITE THROUGH A SYMLINK. writeFileSync FOLLOWS one, so a pre-existing symlink at
+  // the ledger path replaced the contents of whatever it pointed at -- outside the phase
+  // directory, with the link left intact so nothing looked wrong. Driven. This step introduces
+  // the artifact, so it owns the check: an existing ledger that is not a regular file is not a
+  // ledger, and the gate is advisory, so it says so and steps over.
+  if (fs.existsSync(process.env.DISPOSITION_FILE) && !fs.lstatSync(process.env.DISPOSITION_FILE).isFile()) {
+    console.log('Code review disposition skipped: ' + process.env.DISPOSITION_FILE + ' exists and is not a regular file; refusing to write through it.');
     process.exit(0);
   }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
