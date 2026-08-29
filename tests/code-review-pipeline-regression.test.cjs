@@ -1828,13 +1828,6 @@ describe('#3829 review round 2 — a review that reports nothing still reconcile
     );
   });
 
-  test('docs-parity: the countless fallback requires all four counts, not just the total', () => {
-    const src = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      src.includes('REVIEW_COUNTS_OK') && src.includes('`REVIEW_COUNTS_OK` is `1`'),
-      'a numeric total with missing severities must not emit a half-filled breakdown'
-    );
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2107,7 +2100,16 @@ describe('#3861 round 1 — step-file structural contract', () => {
 
 const HAS_BASH = process.platform !== 'win32';
 
-// Run the step's FIRST shell block — the frontmatter reads — and report what it set.
+// Run the step's FIRST shell block — the frontmatter reads — and report WHAT IT PRINTS.
+//
+// This harness used to append its own `printf` of the six internal variables to the fence before
+// running it, and every assertion below then read those six lines. That is a test manufacturing the
+// observable it asserts on: the shipped fence emitted nothing, the tested fence emitted six lines
+// because the test added them, and the whole group was green against a script that did not exist
+// outside this process. It is why the "the gate reports the counts" defect shipped past a suite that
+// looks like it covers exactly that surface — the green was structurally incapable of turning red
+// for it. The emitter now lives in the fence (see the step file), so the harness reads the fence's
+// own stdout and nothing is synthesized here.
 function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-'));
   try {
@@ -2118,20 +2120,49 @@ function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, m
     assert.ok(fence && fence.includes('REVIEW_COUNTS_OK'), 'the counts block must still be the first fence');
     // `set -euo pipefail` is the point, not decoration: the step is advisory, so a
     // non-matching grep or an unreadable review must not take the block down.
-    const script = 'set -euo pipefail\n' + fence
-      + '\nprintf "%s\\n%s\\n%s\\n%s\\n%s\\n%s\\n" "$REVIEW_STATUS" "$REVIEW_CRITICAL"'
-      + ' "$REVIEW_WARNING" "$REVIEW_INFO" "$REVIEW_TOTAL" "$REVIEW_COUNTS_OK"\n';
+    const script = 'set -euo pipefail\n' + fence + '\n';
     const res = runHook('-c', [script], {
       interpreter: 'bash',
       timeoutMs: PROBE_TIMEOUT_MS,
       env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: String(Number(padded)) },
     });
     assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the counts block must run to completion');
-    const [status, critical, warning, info, total, countsOk] = res.stdout.split('\n');
-    return { exitCode: res.exitCode, status, critical, warning, info, total, countsOk, stderr: res.stderr };
+    return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
   } finally {
     cleanup(dir);
   }
+}
+
+// Read the shipped message back into the facts it asserts. This parses the OBSERVABLE the operator
+// sees — it does not reach into the fence — so a value the gate declines to report is `reported:
+// false` here rather than a number this helper invented.
+function readGateMessage(stdout) {
+  const full = /^Code review: (\d+) findings — (\d+) critical, (\d+) warning, (\d+) info\.$/m.exec(stdout);
+  if (full) {
+    return { reported: true, countsOk: '1', total: full[1], critical: full[2], warning: full[3], info: full[4] };
+  }
+  if (/^Code review found issues\.$/m.test(stdout)) return { reported: true, countsOk: '0' };
+  return { reported: false };
+}
+
+// The mirror's other half: render the two arms exactly as the shipped fence does, from the mirror's
+// own parsed counts. Parity is asserted over this WHOLE STRING rather than over five intermediate
+// values, which is what makes the assertion bind to something a user can see. The countsOk gate is
+// modelled here because the shipped fence gates on it — digit-only, at most 8 digits, and the three
+// severities must sum to the total.
+function renderGateMessage(counts, phaseNumber) {
+  const numeric = (v) => v !== '' && /^[0-9]+$/.test(v) && v.length <= 8;
+  const all = [counts.total, counts.critical, counts.warning, counts.info];
+  let ok = all.every(numeric);
+  if (ok) {
+    const n = (v) => parseInt(v, 10);
+    if (n(counts.critical) + n(counts.warning) + n(counts.info) !== n(counts.total)) ok = false;
+  }
+  if (counts.status === '' || counts.status === 'clean' || counts.status === 'skipped') return '';
+  const head = ok
+    ? `Code review: ${counts.total} findings — ${counts.critical} critical, ${counts.warning} warning, ${counts.info} info.`
+    : 'Code review found issues.';
+  return head + '\n' + `Consider running: /gsd:code-review ${phaseNumber} --fix` + '\n';
 }
 
 describe('#3861 round 1 — the counts mirror is asserted against the shipped shell', () => {
@@ -2161,11 +2192,12 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
   for (const [name, reviewText] of Object.entries(FIXTURES)) {
     test('shipped shell and mirror agree on ' + name, { skip: !HAS_BASH }, () => {
       const shipped = runShippedGateCounts({ reviewText });
-      const mirrored = parseGateCounts(reviewText);
-      assert.deepStrictEqual(
-        { status: shipped.status, critical: shipped.critical, warning: shipped.warning,
-          info: shipped.info, total: shipped.total },
-        mirrored,
+      // Parity over the WHOLE emitted message, not over five intermediate variables the test
+      // used to print for itself. A drift in any parsed value changes this string or the arm
+      // it selects, so the assertion binds to what an operator actually sees.
+      assert.strictEqual(
+        shipped.stdout,
+        renderGateMessage(parseGateCounts(reviewText), 1),
         'the mirror has drifted from the shipped awk/grep block'
       );
     });
@@ -2176,17 +2208,20 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     // rather than fall back. The `case` guard rejects the empty string and non-digits;
     // a guard written against truthiness would reject this and say nothing at all.
     const shipped = runShippedGateCounts({ reviewText: FIXTURES['a zero-finding review'] });
-    assert.strictEqual(shipped.countsOk, '1', 'all four counts are numeric, so the breakdown is reportable');
-    assert.deepStrictEqual(
-      [shipped.total, shipped.critical, shipped.warning, shipped.info], ['0', '0', '0', '0']
-    );
+    assert.strictEqual(shipped.stdout,
+      'Code review: 0 findings \u2014 0 critical, 0 warning, 0 info.\n'
+      + 'Consider running: /gsd:code-review 1 --fix\n',
+      'all four counts are numeric, so the breakdown is reported rather than withheld');
   });
 
   test('a partial findings: block makes the whole breakdown unavailable', { skip: !HAS_BASH }, () => {
     const shipped = runShippedGateCounts({
       reviewText: ['---', 'findings:', '  total: 4', 'status: issues_found', '---'].join('\n'),
     });
-    assert.strictEqual(shipped.countsOk, '0', 'a total without the three severities is not a breakdown');
+    assert.strictEqual(readGateMessage(shipped.stdout).countsOk, '0',
+      'a total without the three severities is not a breakdown');
+    assert.match(shipped.stdout, /^Code review found issues\.$/m,
+      'the countless form is what reaches the operator');
   });
 
   test('a missing REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
@@ -2194,14 +2229,37 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     // assertion: under `set -e` an aborting block is what actually breaks the phase.
     const shipped = runShippedGateCounts({ reviewText: '', writeReview: false });
     assert.strictEqual(shipped.exitCode, 0, 'advisory: a missing review must not abort the step');
-    assert.strictEqual(shipped.status, '');
-    assert.strictEqual(shipped.countsOk, '0');
+    // An absent review yields an empty status, which is a NON-REPORTING arm: the gate says
+    // nothing at all rather than claiming a countless review. Asserting on the observable is
+    // what makes that distinction visible; the old six-line probe could not express it.
+    assert.strictEqual(shipped.stdout, '', 'no review, no message');
+    assert.strictEqual(readGateMessage(shipped.stdout).reported, false);
+  });
+
+  test('the countless fallback requires all four counts, not just the total', { skip: !HAS_BASH }, () => {
+    // Fifth `src.includes()` assertion converted to a behavioural one (round 1 retired four).
+    // It pinned the PROSE that stated the condition, so it went red the moment the emitter moved
+    // into the fence and the prose was rewritten — while the behaviour it named was untouched.
+    // That is the pin arguing for its own conversion: the arm is now executed and observable, so
+    // assert the arm. Contrast is the point — a bare total takes the countless arm, the full set
+    // takes the breakdown arm — which a one-sided assertion could not express.
+    const fm = (rows) => ['---', 'findings:', ...rows, 'status: issues_found', '---'].join('\n');
+    const totalOnly = runShippedGateCounts({ reviewText: fm(['  total: 4']) });
+    assert.match(totalOnly.stdout, /^Code review found issues\.$/m,
+      'a numeric total with missing severities must not emit a half-filled breakdown');
+    assert.doesNotMatch(totalOnly.stdout, /findings —/,
+      'and must not emit the breakdown form at all');
+    const allFour = runShippedGateCounts({
+      reviewText: fm(['  critical: 1', '  warning: 2', '  info: 1', '  total: 4']),
+    });
+    assert.match(allFour.stdout, /^Code review: 4 findings — 1 critical, 2 warning, 1 info\.$/m,
+      'all four present and consistent is what the breakdown arm requires');
   });
 
   test('an unreadable REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
     const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS, mode: 0o000 });
     assert.strictEqual(shipped.exitCode, 0, 'advisory: an unreadable review must not abort the step');
-    assert.strictEqual(shipped.countsOk, '0');
+    assert.strictEqual(shipped.stdout, '', 'an unreadable review reports nothing, and does not guess');
   });
 });
 
@@ -2345,13 +2403,14 @@ describe('#3861 round 1 — fence tracking, status gating, count consistency', (
       reviewText: ['---', 'findings:', '  critical: 1', '  warning: 0', '  info: 0',
         '  total: 0', 'status: issues_found', '---'].join('\n'),
     });
-    assert.strictEqual(shipped.countsOk, '0', 'the counts do not sum to the total, so no breakdown');
+    assert.strictEqual(readGateMessage(shipped.stdout).countsOk, '0',
+      'the counts do not sum to the total, so no breakdown');
   });
 
   test('a consistent breakdown is still reported', { skip: !HAS_BASH }, () => {
     // Negative control for the sum check — it must not withhold a correct breakdown.
     const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS });
-    assert.strictEqual(shipped.countsOk, '1');
+    assert.strictEqual(readGateMessage(shipped.stdout).countsOk, '1');
   });
 
   test('a carried finding that REAPPEARS loses the carried marker', () => {
@@ -2502,12 +2561,14 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
     const padded = (total) => ['---', 'findings:', '  critical: 08', '  warning: 0',
       '  info: 0', '  total: ' + total, 'status: issues_found', '---'].join('\n');
     const inconsistent = runShippedGateCounts({ reviewText: padded('9') });
-    assert.strictEqual(inconsistent.countsOk, '0', '08 + 0 + 0 is 8, not 9 — the check must FIRE');
+    assert.strictEqual(readGateMessage(inconsistent.stdout).countsOk, '0',
+      '08 + 0 + 0 is 8, not 9 \u2014 the check must FIRE');
     assert.doesNotMatch(inconsistent.stderr, /value too great for base/,
       'the padded count must be read as decimal, not left to base inference');
     const consistent = runShippedGateCounts({ reviewText: padded('8') });
     assert.strictEqual(consistent.exitCode, 0, 'an advisory gate must not abort on a padded count');
-    assert.strictEqual(consistent.countsOk, '1', '08 + 0 + 0 is 8, so the breakdown is consistent');
+    assert.strictEqual(readGateMessage(consistent.stdout).countsOk, '1',
+      '08 + 0 + 0 is 8, so the breakdown is consistent');
   });
 
   test('a fence indented past three spaces is not a fence', { skip: !HAS_BASH }, () => {
@@ -2526,15 +2587,14 @@ describe('#3861 round 1 — count validation, executed', () => {
     // line grew a length bound. The behaviour is what matters and is now executed directly.
     const counts = (c, w, i, t) => ['---', 'findings:', '  critical: ' + c, '  warning: ' + w,
       '  info: ' + i, '  total: ' + t, 'status: issues_found', '---'].join('\n');
-    assert.strictEqual(runShippedGateCounts({ reviewText: counts('x', '0', '0', '0') }).countsOk, '0',
+    const ok = (t) => readGateMessage(runShippedGateCounts({ reviewText: t }).stdout).countsOk;
+    assert.strictEqual(ok(counts('x', '0', '0', '0')), '0',
       'a non-numeric count withholds the whole breakdown');
-    assert.strictEqual(runShippedGateCounts({ reviewText: counts('1', '2', '1', '4') }).countsOk, '1');
+    assert.strictEqual(ok(counts('1', '2', '1', '4')), '1');
     // Bash integers wrap at 2^64, so a 20-digit count reaches the sum as 0 and an inconsistent
     // breakdown passes. Length-bounded, because no review reports nine digits of findings.
-    assert.strictEqual(
-      runShippedGateCounts({ reviewText: counts('18446744073709551616', '0', '0', '0') }).countsOk, '0',
-      'a count long enough to wrap the sum is not a count'
-    );
+    assert.strictEqual(ok(counts('18446744073709551616', '0', '0', '0')), '0',
+      'a count long enough to wrap the sum is not a count');
   });
 });
 
