@@ -1383,12 +1383,32 @@ function parseGateCounts(reviewText) {
     }
     return '';
   };
+  // The four counts belong to the `findings:` MAPPING, so the mirror scopes to it exactly as the
+  // shipped awk does: select the findings: block, stop at the next column-0 key. Without this a
+  // top-level key later named `total:` / `info:` / `critical:` is picked up ahead of the nested
+  // one. `status:` stays anchored at column 0 because it IS top-level.
+  const findingsBlock = [];
+  {
+    let inBlock = false;
+    for (const line of fm) {
+      if (/^findings:\s*$/.test(line)) { inBlock = true; continue; }
+      if (inBlock && /^\S/.test(line)) break;
+      if (inBlock) findingsBlock.push(line);
+    }
+  }
+  const firstIn = (lines, re) => {
+    for (const line of lines) {
+      const m = line.match(re);
+      if (m) return line.split(':')[1].replace(/ /g, '');
+    }
+    return '';
+  };
   return {
     status: first(/^status:(.*)$/),
-    critical: first(/^\s*(?:critical|blocker):(.*)$/),
-    warning: first(/^\s*warning:(.*)$/),
-    info: first(/^\s*info:(.*)$/),
-    total: first(/^\s*total:(.*)$/),
+    critical: firstIn(findingsBlock, /^\s*(?:critical|blocker):(.*)$/),
+    warning: firstIn(findingsBlock, /^\s*warning:(.*)$/),
+    info: firstIn(findingsBlock, /^\s*info:(.*)$/),
+    total: firstIn(findingsBlock, /^\s*total:(.*)$/),
   };
 }
 
@@ -2249,6 +2269,15 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     // POSIX [[:space:]] covers form feed and vertical tab; a [ \t] mirror does not, so the
     // shipped grep matches a line the mirror rejects outright. Third counterexample, same class.
     'a key indented with a form feed': REVIEW_WITH_FINDINGS.replace('  critical: 1', '\fcritical: 1'),
+    // Minor 1: a TOP-LEVEL key sharing a name with a nested count. The reads were scoped to the
+    // frontmatter but not to the `findings:` mapping the values belong to, so `^[[:space:]]*total:`
+    // matched this one first and the gate reported a number from outside the breakdown.
+    'a top-level total: ahead of the nested one':
+      ['---', 'phase: 02', 'total: 999', 'status: issues_found', 'findings:',
+        '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---'].join('\n'),
+    'a top-level info: and critical: ahead of the nested ones':
+      ['---', 'critical: 42', 'info: 7', 'status: issues_found', 'findings:',
+        '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---'].join('\n'),
   };
 
   for (const [name, reviewText] of Object.entries(FIXTURES)) {

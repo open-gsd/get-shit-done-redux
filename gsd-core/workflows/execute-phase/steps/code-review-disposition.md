@@ -44,13 +44,21 @@ fi
 # whose command substitution fails aborts the step under `set -e`. An advisory gate must survive
 # a REVIEW.md with no frontmatter at all.
 REVIEW_STATUS=$(echo "$REVIEW_FM" | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
-# The counts sit in the block just parsed. `blocker:` is the documented tier-equivalent of
-# `critical:` (gsd-code-reviewer.md § "Label equivalence") — accept either, exactly as
-# code-review.md's present_results already does.
-REVIEW_CRITICAL=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*(critical|blocker):" | cut -d: -f2 | tr -d ' ' || true)
-REVIEW_WARNING=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*warning:" | cut -d: -f2 | tr -d ' ' || true)
-REVIEW_INFO=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*info:" | cut -d: -f2 | tr -d ' ' || true)
-REVIEW_TOTAL=$(echo "$REVIEW_FM" | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
+# The counts belong to the `findings:` MAPPING, not merely to the frontmatter, and the scoping now
+# goes all the way there. `^[[:space:]]*total:` matches any indented key anywhere in the block, so
+# a top-level key later named `total:`, `info:` or `critical:` was picked up ahead of the nested
+# one — the extensive comment above is about scoping the frontmatter, and the scoping stopped one
+# level short of the mapping the values actually live in. `status:` was never exposed: it is
+# anchored to column 0 because it IS top-level.
+# The awk selects the `findings:` block and stops at the next column-0 key, so the reads below can
+# only see keys nested under it. Block 2 derives REVIEW_TOTAL through the same filter.
+# `blocker:` is the documented tier-equivalent of `critical:` (gsd-code-reviewer.md § "Label
+# equivalence") — accept either, exactly as code-review.md's present_results already does.
+REVIEW_FINDINGS_FM=$(echo "$REVIEW_FM" | awk '/^findings:[[:space:]]*$/{f=1; next} f&&/^[^[:space:]]/{exit} f' || true)
+REVIEW_CRITICAL=$(echo "$REVIEW_FINDINGS_FM" | grep -E -m1 "^[[:space:]]*(critical|blocker):" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_WARNING=$(echo "$REVIEW_FINDINGS_FM" | grep -E -m1 "^[[:space:]]*warning:" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_INFO=$(echo "$REVIEW_FINDINGS_FM" | grep -E -m1 "^[[:space:]]*info:" | cut -d: -f2 | tr -d ' ' || true)
+REVIEW_TOTAL=$(echo "$REVIEW_FINDINGS_FM" | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
 # The breakdown is reportable only when ALL FOUR counts are numbers. Deciding on REVIEW_TOTAL
 # alone would still emit `6 findings —  critical` for a review carrying a total and nothing else.
 REVIEW_COUNTS_OK=1
