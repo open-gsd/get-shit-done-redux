@@ -124,8 +124,20 @@ DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
 # it: a prose-only gate on a value no later block can see is not a gate. Without this, a clean
 # re-review rewrites an existing ledger it was never meant to touch.
 REVIEW_STATUS=""
+REVIEW_TOTAL=""
 if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
-  REVIEW_STATUS=$(tr -d '\r' < "$REVIEW_FILE" 2>/dev/null | awk 'NR==1{if($0!="---") exit; next} /^---$/{exit} {print}' | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
+  _FM=$(tr -d '\r' < "$REVIEW_FILE" 2>/dev/null | awk 'NR==1{if($0!="---") exit; next} /^---$/{closed=1; exit} {buf = buf $0 "\n"} END{if (closed) printf "%s", buf}' || true)
+  REVIEW_STATUS=$(echo "$_FM" | grep -m1 "^status:" | cut -d: -f2 | tr -d ' ' || true)
+  # The frontmatter total is carried into the script so the two parsers in this step can be
+  # RECONCILED. The counts come from the frontmatter; the rows come from `### <ID>:` heading
+  # matches against a closed CR|BL|WR|IN alternation. They are two independent numbers produced
+  # one paragraph apart, and nothing compared them: a finding the heading parser cannot match
+  # contributed no row, no note and no diagnostic, and the ledger then asserted `open: 3 of 3`
+  # over a set strictly smaller than the console line had just reported. Anchored inside the
+  # `findings:` mapping — see the anchoring note in block 1 — and digit-only, because a
+  # non-numeric total is not a number to reconcile against.
+  REVIEW_TOTAL=$(echo "$_FM" | awk '/^findings:[[:space:]]*$/{f=1; next} f&&/^[^[:space:]]/{exit} f' | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
+  case "$REVIEW_TOTAL" in ''|*[!0-9]*) REVIEW_TOTAL="" ;; ?????????*) REVIEW_TOTAL="" ;; esac
 fi
 # Skip a clean/skipped/absent review ONLY when there is no ledger to reconcile. An EXISTING
 # ledger still has to be brought up to date — its decided rows are carried and its untriaged
@@ -143,6 +155,7 @@ case "$REVIEW_STATUS" in
 esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
+REVIEW_TOTAL="${REVIEW_TOTAL}" \
 FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const fs = require('fs'), path = require('path');
   const norm = (s) => s.replace(/\r\n/g, '\n');
@@ -269,13 +282,32 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
   // no longer matches is the one case where 'open' understates what is known, so it is stated.
   const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y names a' : 'ies name') + ' different finding under a reused id: ' + staleFix.join(', ') + ')' : '';
+  // RECONCILE THE TWO PARSERS. The counts come from REVIEW.md's frontmatter; the rows come from
+  // heading matches against a CLOSED CR|BL|WR|IN alternation. A finding the heading parser cannot
+  // match -- a fifth prefix, a missing ': ' separator, a '#### ' heading -- contributed no row, no
+  // note and no diagnostic, and the ledger then declared 'open: 3 of 3' over a set strictly
+  // smaller than the console line reported one paragraph earlier. Two findings recorded nowhere,
+  // and neither artifact said so.
+  // The earlier argument for the closed alternation -- that an unlisted prefix produces no row
+  // rather than a MIS-CLASSIFIED one -- is the wrong trade under this repo's own fail-safe rule:
+  // a dropped finding is demoted below every finding that parsed, and an unparseable finding is
+  // precisely the one a human most needs to see. Surfaced, not thrown, exactly as the stale
+  // fix-report case above is: the gate stays advisory and states the shortfall.
+  const declaredTotal = /^[0-9]+\$/.test(process.env.REVIEW_TOTAL || '') ? Number(process.env.REVIEW_TOTAL) : null;
+  // Against order.length -- the CURRENT review's findings -- never rows.length, which also counts
+  // rows carried from earlier reviews and would understate the shortfall or invent one.
+  const unparsed = declaredTotal !== null && declaredTotal > order.length ? declaredTotal - order.length : 0;
+  const unparsedNote = unparsed ? ' (' + unparsed + ' finding(s) recorded NOWHERE: the review reports ' + declaredTotal + ', but only ' + order.length + ' matched the expected heading shape \`### <CR|BL|WR|IN>-NN: <title>\`)' : '';
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = r.src || '-'; const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
     .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. Escape any \`|\`.', 'Re-running the gate preserves every disposition except \`open\`.', '']).join('\n');
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))
-    .concat(['open: ' + open, 'total: ' + rows.length]).join('\n');
+    .concat(['open: ' + open, 'total: ' + rows.length])
+    // Emitted only when there IS a shortfall, so an ordinary ledger gains no noise key and the
+    // unchanged-run check below is unaffected on every review that parses cleanly.
+    .concat(unparsed ? ['unparsed: ' + unparsed] : []).join('\n');
   // Rewrite only on a real change. The timestamp is the one field that always differs, so
   // stamping unconditionally would dirty the tree and produce a docs commit on every phase
   // re-run with nothing to report.
@@ -283,11 +315,11 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const stripTs = (t) => t.replace(/^recorded:.*\$/m, 'recorded:');
   const prev = fs.existsSync(process.env.DISPOSITION_FILE) ? norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')) : '';
   if (prev && stripTs(prev) === stripTs(render(''))) {
-    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote);
+    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote);
     process.exit(0);
   }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
-  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + ' — ' + process.env.DISPOSITION_FILE);
+  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + ' — ' + process.env.DISPOSITION_FILE);
 " || echo "Code review disposition record skipped (non-blocking)."
 
 COMMIT_DOCS=$(gsd_run query config-get commit_docs 2>/dev/null || echo "true")

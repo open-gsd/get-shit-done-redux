@@ -1419,7 +1419,7 @@ function shippedDispositionScript() {
 }
 
 // Run the shipped script against a temp phase dir and return the ledger it wrote (or null).
-function runShippedDisposition({ reviewText, priorText, fixText, padded = '01' }) {
+function runShippedDisposition({ reviewText, priorText, fixText, padded = '01', reviewTotal }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3829-'));
   try {
     const reviewPath = path.join(dir, padded + '-REVIEW.md');
@@ -1437,6 +1437,9 @@ function runShippedDisposition({ reviewText, priorText, fixText, padded = '01' }
         DISPOSITION_FILE: dispPath,
         FIX_REPORT_FILE: fixPath,
         PADDED: padded,
+        // The frontmatter total block 2 derives and hands to the script, so the two parsers can
+        // be reconciled. Passed through here so a test can drive the shortfall path.
+        REVIEW_TOTAL: reviewTotal === undefined ? '' : String(reviewTotal),
       },
     });
     assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the shipped script must run to completion');
@@ -1465,8 +1468,8 @@ function ledgerRows(ledger) {
 // confirmed the cost: a hand-written model of a shell-embedded script drifts, and when it drifts
 // the tests pass while the shipped block is broken. The model is gone; this adapter runs the real
 // thing and returns the same shape the assertions below already expect.
-function buildDisposition({ reviewText, priorText, fixText, padded = '01' }) {
-  const rows = ledgerRows(runShippedDisposition({ reviewText, priorText, fixText, padded }).ledger);
+function buildDisposition({ reviewText, priorText, fixText, padded = '01', reviewTotal }) {
+  const rows = ledgerRows(runShippedDisposition({ reviewText, priorText, fixText, padded, reviewTotal }).ledger);
   if (rows === null) return null;
   return {
     rows: rows.map((r) => ({
@@ -1795,6 +1798,65 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
       src.includes('title.get(h.id) === h.title'),
       'a fix report must name the SAME finding before its outcome is applied'
     );
+  });
+});
+
+describe('#3861 round 2 — a finding the heading parser cannot match is SURFACED, not dropped (B4)', () => {
+  // Two independent parsers produce two numbers one paragraph apart: the counts come from
+  // REVIEW.md's frontmatter, the rows from `### <ID>:` heading matches against a CLOSED
+  // CR|BL|WR|IN alternation. Nothing reconciled them, so a finding the alternation cannot reach
+  // contributed no row, no note and no diagnostic -- and the ledger asserted `open: N of N` over
+  // a set strictly smaller than the console line had just reported.
+  const REVIEW_5 = ['---', 'phase: 01', 'status: issues_found', 'findings:',
+    '  critical: 1', '  warning: 2', '  info: 2', '  total: 5', '---', '',
+    '### CR-01: a conforming finding',
+    '### WR-01: another conforming one',
+    '### WR-02: a third',
+    '### SEC-01: a prefix the alternation does not carry',
+    '#### IN-09: a heading one level too deep'].join('\n');
+
+  test('the shortfall is stated in the ledger frontmatter and on the console', () => {
+    const out = runShippedDisposition({ reviewText: REVIEW_5, reviewTotal: 5 });
+    assert.match(out.ledger, /^unparsed: 2$/m,
+      'the ledger must record that two findings reached no row');
+    assert.match(out.ledger, /^total: 3$/m, 'and must still report the rows it does have');
+    assert.match(out.stdout, /2 finding\(s\) recorded NOWHERE/,
+      'the console line must say so too -- the ledger is not the only surface a human reads');
+    assert.match(out.stdout, /the review reports 5, but only 3 matched/,
+      'and must name both numbers, so the shortfall is checkable rather than asserted');
+  });
+
+  test('a review whose findings all parse gains no unparsed key at all', () => {
+    // Negative control for the key itself. An ordinary ledger must not grow a noise key, or the
+    // unchanged-run check starts rewriting the file on every phase.
+    const clean = ['---', 'phase: 01', 'status: issues_found', 'findings:',
+      '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---', '',
+      '### CR-01: the only finding'].join('\n');
+    const out = runShippedDisposition({ reviewText: clean, reviewTotal: 1 });
+    assert.doesNotMatch(out.ledger, /^unparsed:/m, 'nothing was dropped, so nothing is reported');
+    assert.doesNotMatch(out.stdout, /recorded NOWHERE/);
+  });
+
+  test('an absent or non-numeric total reconciles nothing rather than inventing a shortfall', () => {
+    // The reconciliation needs a number on BOTH sides. A legacy review with no findings: block
+    // has no total to compare against, and reporting `unparsed: 3` there would be a fabrication.
+    const legacy = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '### CR-01: a', '### WR-01: b'].join('\n');
+    const out = runShippedDisposition({ reviewText: legacy, reviewTotal: '' });
+    assert.doesNotMatch(out.ledger, /^unparsed:/m);
+    assert.match(out.ledger, /^total: 2$/m);
+  });
+
+  test('a total SMALLER than the rows is not reported as a negative shortfall', () => {
+    // Boundary in the other direction: the subtraction is clamped, so a review under-reporting
+    // its own total cannot produce `unparsed: -1`.
+    const out = runShippedDisposition({
+      reviewText: ['---', 'phase: 01', 'status: issues_found', 'findings:', '  total: 1', '---', '',
+        '### CR-01: a', '### WR-01: b'].join('\n'),
+      reviewTotal: 1,
+    });
+    assert.doesNotMatch(out.ledger, /^unparsed:/m, 'no shortfall when more parsed than declared');
+    assert.doesNotMatch(out.ledger, /unparsed: -/);
   });
 });
 
