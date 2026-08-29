@@ -426,6 +426,31 @@ fi
 This commit happens ONCE at the end of the workflow, after all iterations (if --auto) complete. Not per-iteration.
 </step>
 
+<step name="record_disposition">
+**Reconcile the per-finding disposition ledger, now that REVIEW-FIX.md exists.** Read and execute
+`gsd-core/workflows/execute-phase/steps/code-review-disposition.md`. It consumes `PHASE_DIR` and
+`PHASE_NUMBER` and derives everything else, and it is advisory throughout: it never blocks.
+
+This is the step's second and final call site, and without it REQ-REVIEW-09 is unreachable in every
+shipped path. `execute-phase.md`'s `code_review_gate` runs the same step immediately after review,
+where `<NN>-REVIEW-FIX.md` cannot yet exist — the gate invokes review with neither `--fix` nor
+`--auto` — so every row it writes is `open` by construction. The reconciliation logic that turns
+those rows into `fixed` / `skipped` is reachable only once a fix report is on disk, which is here.
+Wired anywhere earlier and it reads a report that has not been written; wired into `code-review.md`
+instead, it is unreachable — that workflow delegates through `code-review/steps/dispatch-fix.md`,
+which exits the workflow after invoking this one, so there is no point in it that is after
+REVIEW-FIX.md exists. Placing it here also covers a direct invocation of this workflow, which a
+wiring in `code-review.md` would miss.
+
+Placed AFTER `commit_fix_report` deliberately: the fix report must be on disk and committed before
+the ledger claims anything about it, and the step's own reconciliation reads
+`${PHASE_DIR}/${PADDED_PHASE}-REVIEW-FIX.md` directly.
+
+Safe to run twice. The step is idempotent — a re-render that changes nothing reports `unchanged` and
+rewrites no file — so a phase that reaches the gate and then a fix run ends with one ledger reflecting
+both, not two competing ones.
+</step>
+
 <step name="present_results">
 Parse REVIEW-FIX.md frontmatter and present formatted summary to user.
 

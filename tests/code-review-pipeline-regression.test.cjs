@@ -1834,6 +1834,64 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
   });
 });
 
+describe('#3861 round 2 — the disposition ledger is reachable in a shipped path (B1c/B1d)', () => {
+  const FIX_WORKFLOW = path.join(ROOT, 'gsd-core', 'workflows', 'code-review-fix.md');
+
+  test('code-review-fix.md reads and executes the disposition step after committing the fix report', () => {
+    // Without this the reconciliation logic -- the bulk of the step and nearly all of its test
+    // surface -- is reachable only on a RE-EXECUTION of the phase, and REQ-REVIEW-09 is unmet in
+    // every shipped path. execute-phase.md's gate invokes review with neither --fix nor --auto,
+    // so REVIEW-FIX.md cannot exist there and every row it writes is `open` by construction.
+    const src = fs.readFileSync(FIX_WORKFLOW, 'utf8');
+    assert.match(src, /<step name="record_disposition">/,
+      'the fix workflow must carry a step that records the disposition');
+    assert.match(src, /gsd-core\/workflows\/execute-phase\/steps\/code-review-disposition\.md/,
+      'and it must invoke the SAME step, not a second copy of the logic');
+    // Ordering is load-bearing: the fix report must be on disk before the ledger claims anything
+    // about it. Assert the step positions rather than merely their presence.
+    const commitAt = src.indexOf('<step name="commit_fix_report">');
+    const recordAt = src.indexOf('<step name="record_disposition">');
+    const presentAt = src.indexOf('<step name="present_results">');
+    assert.ok(commitAt > -1 && recordAt > -1 && presentAt > -1, 'all three steps must exist');
+    assert.ok(commitAt < recordAt, 'the ledger is reconciled AFTER the fix report is written');
+    assert.ok(recordAt < presentAt, 'and before results are presented');
+  });
+
+  test('the reconciliation is reachable: gate writes all-open, the fix path resolves it', () => {
+    // The two call sites driven in sequence, which is the shipped order. This is the review's own
+    // input -> wrong output case, inverted: a phase whose findings are all fixed by a subsequent
+    // --fix run used to end at `open: N / total: N`, asserting that every triaged finding was
+    // forgotten -- worse than recording nothing, because it looks authoritative and is inverted.
+    const review = ['---', 'phase: 01', 'status: issues_found', 'findings:',
+      '  critical: 1', '  warning: 1', '  info: 0', '  total: 2', '---', '',
+      '## Critical Issues', '', '### CR-01: the critical one', '',
+      '## Warnings', '', '### WR-01: the warning one'].join('\n');
+    const fixReport = ['---', 'status: complete', '---', '',
+      '## Fixed Issues', '', '### CR-01: the critical one', '',
+      '## Skipped Issues', '', '### WR-01: the warning one'].join('\n');
+
+    // Call site 1 -- execute-phase.md's code_review_gate. No fix report exists yet.
+    const gate = runShippedDisposition({ reviewText: review, reviewTotal: 2 });
+    const gateRows = ledgerRows(gate.ledger);
+    assert.deepStrictEqual(gateRows.map((r) => r.disposition), ['open', 'open'],
+      'at the gate there is no fix report, so every row is open -- correctly');
+
+    // Call site 2 -- code-review-fix.md's record_disposition, with the report on disk and the
+    // gate's ledger carried in as prior state.
+    const after = runShippedDisposition({
+      reviewText: review, priorText: gate.ledger, fixText: fixReport, reviewTotal: 2,
+    });
+    const rows = ledgerRows(after.ledger);
+    assert.deepStrictEqual(
+      rows.map((r) => [r.id, r.disposition]),
+      [['CR-01', 'fixed'], ['WR-01', 'skipped']],
+      'the fix outcomes reach the ledger'
+    );
+    assert.match(after.ledger, /^open: 0$/m, 'and the headline agrees');
+    assert.match(after.ledger, /^total: 2$/m);
+  });
+});
+
 describe('#3861 round 2 — severity comes from the section, not just the id prefix (M3)', () => {
   const sevOf = (reviewText, id) => {
     const rows = ledgerRows(runShippedDisposition({ reviewText }).ledger);
