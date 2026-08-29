@@ -2301,10 +2301,23 @@ describe('#3861 round 1 — step-file structural contract', () => {
     for (const [i, fence] of fences.entries()) {
       for (const v of DERIVED) {
         if (INPUTS.has(v)) continue;
-        const reads = new RegExp('\\$\\{?' + v + '\\b').test(fence.replace(new RegExp('^' + v + '=', 'gm'), ''));
+        // The derivation may be INDENTED or sit inside a `case` arm -- PADDED is derived by a
+        // case split so a dotted phase number does not reach `printf %02d`. Anchoring the
+        // detector at column 0 made a real derivation invisible and the guard fired on it. The
+        // property being checked is unchanged: the block must ASSIGN what it reads.
+        // A SELF-REFERENTIAL assignment is a PASS-THROUGH, not a derivation. Block 2 prefixes its
+        // `node -e` with `REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" ...`
+        // to put them in the child's environment, and the detector counted that as deriving them.
+        // So deleting block 2's REAL derivation left this guard GREEN -- on the exact defect it
+        // was written for. Found by negative-controlling the guard rather than by reading it.
+        // (Pre-existing: the original column-0 anchor matched that same line, which is at column 0.)
+        const fenceNoPassthrough = fence.replace(
+          new RegExp('(?:^|[\\s;])' + v + '="\\$\\{' + v + '\\}"', 'gm'), ' ');
+        const assigned = new RegExp('(?:^|[\\s;])' + v + '=', 'm');
+        const reads = new RegExp('\\$\\{?' + v + '\\b').test(fence.replace(new RegExp('(?:^|[\\s;])' + v + '=', 'gm'), ''));
         if (!reads) continue;
         assert.ok(
-          new RegExp('^' + v + '=', 'm').test(fence),
+          assigned.test(fenceNoPassthrough),
           'block ' + (i + 1) + ' reads ' + v + ' without deriving it — it is empty in a fresh shell'
         );
       }
@@ -2357,6 +2370,9 @@ function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, m
     const res = runHook('-c', [script], {
       interpreter: 'bash',
       timeoutMs: PROBE_TIMEOUT_MS,
+      // `Number(padded)` is deliberate for the integer case (strips the leading zero the way a
+      // caller's parsed phase_number does) but must not mangle a DOTTED phase: Number('03.1') is
+      // 3.1, which is what we want, while a non-numeric padded value would become NaN.
       env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: String(Number(padded)) },
     });
     assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the counts block must run to completion');
@@ -2397,6 +2413,36 @@ function renderGateMessage(counts, phaseNumber) {
     : 'Code review found issues.';
   return head + '\n' + `Consider running: /gsd:code-review ${phaseNumber} --fix` + '\n';
 }
+
+describe('#3861 round 2 — a DOTTED phase number does not break the step', () => {
+  // Found by the round's own adversarial review, in its MISSED section -- no finding asked about
+  // it. Both callers explicitly accept `03.1` (code-review.md:60, code-review-fix.md:36 validate
+  // ^[0-9]+(\.[0-9]+)?$), and the step reconstructed the path with `printf "%02d"`, which cannot
+  // format one: bash prints `invalid number` and exits 1. Under `set -euo pipefail` that aborts
+  // the step on its FIRST line -- the loudest possible failure from a gate that promises never to
+  // block, and it takes the phase's whole review report with it.
+  test('block 1 reports a dotted phase instead of aborting', { skip: !HAS_BASH }, () => {
+    const review = ['---', 'phase: 03.1', 'status: issues_found', 'findings:',
+      '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---', '',
+      '### CR-01: a real finding'].join('\n');
+    const out = runShippedGateCounts({ reviewText: review, padded: '03.1' });
+    assert.strictEqual(out.exitCode, 0, 'advisory: a dotted phase must not abort the step');
+    assert.doesNotMatch(out.stderr, /invalid number/,
+      'the phase number must never reach printf %02d unsplit');
+    assert.match(out.stdout, /^Code review: 1 findings — 1 critical, 0 warning, 0 info\.$/m,
+      'and the review is actually found and reported');
+  });
+
+  test('an integer phase is still zero-padded exactly as before', { skip: !HAS_BASH }, () => {
+    // Negative control for the split: the ordinary path must be untouched.
+    const review = ['---', 'phase: 01', 'status: issues_found', 'findings:',
+      '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---', '',
+      '### CR-01: a finding'].join('\n');
+    const out = runShippedGateCounts({ reviewText: review, padded: '01' });
+    assert.strictEqual(out.exitCode, 0);
+    assert.match(out.stdout, /^Code review: 1 findings/m);
+  });
+});
 
 describe('#3861 round 1 — the counts mirror is asserted against the shipped shell', () => {
   // Every fixture the mirror is exercised on above, plus the count edges.
@@ -2546,19 +2592,41 @@ describe('#3861 round 1 — stale fix reports are stated, not silently ignored',
     assert.match(out.stdout, /CR-01/, 'naming the finding it could not reconcile');
   });
 
-  test('a REFLOWED title still reconciles, and produces no spurious mismatch (m2)', () => {
+  test('a title differing only in INTRA-LINE whitespace still reconciles (m2)', () => {
     // gsd-code-fixer.md writes '### {finding_id}: {title}' under no contract that the title is
-    // copied byte-for-byte. A fixer that wraps a long title used to produce a spurious note, leave
-    // a genuinely-fixed row 'open', and tell the reader the report named a different finding.
-    // Whitespace is the one divergence carrying no information: a wrapped title is the same title.
-    const title = 'a long finding title that a fixer might wrap across lines';
+    // copied byte-for-byte, so a fixer that re-spaces a title used to produce a spurious note and
+    // leave a genuinely-fixed row 'open'. Runs of spaces carry no information; they are collapsed.
+    // NAMED PRECISELY. An earlier version of this test called itself the "reflowed" case while
+    // substituting triple spaces, which is not a reflow -- see the bound pinned below.
+    const title = 'a long finding title a fixer might re-space';
     const review = ['---', 'status: issues_found', '---', '', '### CR-01: ' + title].join('\n');
-    const reflowed = ['## Fixed Issues', '', '### CR-01: ' + title.replace(/ /g, '   ')].join('\n');
-    const out = runShippedDisposition({ reviewText: review, fixText: reflowed });
+    const respaced = ['## Fixed Issues', '', '### CR-01: ' + title.replace(/ /g, '   ')].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText: respaced });
     assert.strictEqual(ledgerRows(out.ledger)[0].disposition, 'fixed',
-      'a reflowed title is the same title, and the fix outcome must reach the ledger');
+      'a re-spaced title is the same title, and the fix outcome must reach the ledger');
     assert.doesNotMatch(out.stdout, /titles its finding differently/,
       'and no spurious mismatch is reported');
+  });
+
+  test('a title WRAPPED across lines is not reconciled — the bound, pinned deliberately', () => {
+    // The limit of the m2 fix, stated rather than left to be discovered. A `###` heading is ONE
+    // line by definition: if a fixer wraps a long title, the continuation is a separate paragraph
+    // and the heading parser -- correctly -- captures only the first line. Whitespace collapsing
+    // cannot reach across that boundary.
+    //
+    // NOT widened, and the reason is that widening is the worse defect: to reconcile a wrapped
+    // title the parser would have to absorb whatever follows a heading into the title, which
+    // silently swallows arbitrary prose and would make the stale-report check meaningless. The
+    // failure mode kept here is the SAFE one -- a visible mismatch note and a row left open,
+    // never a wrong 'fixed'.
+    const review = ['---', 'status: issues_found', '---', '',
+      '### CR-01: a long finding title that wraps'].join('\n');
+    const wrapped = ['## Fixed Issues', '', '### CR-01: a long', 'finding title that wraps'].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText: wrapped });
+    assert.strictEqual(ledgerRows(out.ledger)[0].disposition, 'open',
+      'a wrapped heading does not reconcile -- and fails in the safe direction');
+    assert.match(out.stdout, /titles its finding differently/,
+      'the mismatch is reported rather than swallowed');
   });
 
   test('a RE-CASED or truncated title still reports a mismatch — the strict half is kept', () => {

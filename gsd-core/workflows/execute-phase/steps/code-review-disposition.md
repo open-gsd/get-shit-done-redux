@@ -20,7 +20,17 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 
 **Check results using deterministic path (not glob):**
 ```bash
-PADDED=$(printf "%02d" "${PHASE_NUMBER}")
+# PADDED must survive a DOTTED phase number. Both callers explicitly accept `03.1`
+# (code-review.md:60, code-review-fix.md:36 validate `^[0-9]+(\.[0-9]+)?$`), and
+# `printf "%02d"` cannot format one: bash prints `invalid number` and exits 1, which under
+# `set -euo pipefail` aborts this step on its FIRST line -- the loudest possible failure from
+# the gate that promises never to block, and it takes the whole phase's review reporting with
+# it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
+# Both arms fall back to the raw value rather than aborting: advisory means advisory.
+case "${PHASE_NUMBER}" in
+  *.*) PADDED="$(printf "%02d" "${PHASE_NUMBER%%.*}" 2>/dev/null || printf "%s" "${PHASE_NUMBER%%.*}").${PHASE_NUMBER#*.}" ;;
+  *)   PADDED="$(printf "%02d" "${PHASE_NUMBER}" 2>/dev/null || printf "%s" "${PHASE_NUMBER}")" ;;
+esac
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
 # Extract ONLY the leading frontmatter block: `sed -n '/^---$/,/^---$/p'` re-opens its range
@@ -124,7 +134,17 @@ the step — never blocks:
 # the embedded script throws on reading the empty review path, the trailing `|| echo` swallows it
 # as a non-blocking skip, and no ledger is written at all. The shim preamble below is re-emitted
 # for the same reason, and these three belong beside it.
-PADDED=$(printf "%02d" "${PHASE_NUMBER}")
+# PADDED must survive a DOTTED phase number. Both callers explicitly accept `03.1`
+# (code-review.md:60, code-review-fix.md:36 validate `^[0-9]+(\.[0-9]+)?$`), and
+# `printf "%02d"` cannot format one: bash prints `invalid number` and exits 1, which under
+# `set -euo pipefail` aborts this step on its FIRST line -- the loudest possible failure from
+# the gate that promises never to block, and it takes the whole phase's review reporting with
+# it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
+# Both arms fall back to the raw value rather than aborting: advisory means advisory.
+case "${PHASE_NUMBER}" in
+  *.*) PADDED="$(printf "%02d" "${PHASE_NUMBER%%.*}" 2>/dev/null || printf "%s" "${PHASE_NUMBER%%.*}").${PHASE_NUMBER#*.}" ;;
+  *)   PADDED="$(printf "%02d" "${PHASE_NUMBER}" 2>/dev/null || printf "%s" "${PHASE_NUMBER}")" ;;
+esac
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
 # The condition stated above this block is re-derived HERE rather than left to the reader. Block 1
