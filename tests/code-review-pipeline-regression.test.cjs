@@ -2775,6 +2775,24 @@ describe('#3861 round 1 — count validation, executed', () => {
     assert.strictEqual(ok(counts('18446744073709551616', '0', '0', '0')), '0',
       'a count long enough to wrap the sum is not a count');
   });
+
+  test('the count-length threshold is covered at limit-1, limit and limit+1', { skip: !HAS_BASH }, () => {
+    // M2. The guard is `?????????*` -- nine or more characters -- so the limit is 8 digits
+    // ACCEPTED, 9 REJECTED. The only cases here were 'x', single digits and a 20-digit value,
+    // none of which pins the boundary: dropping one `?` moves the limit to 7 digits and no test
+    // would have noticed. All three points are asserted, and the sum is kept consistent at each
+    // so the length rule is what decides the verdict rather than the sum check.
+    const counts = (c, w, i, t) => ['---', 'findings:', '  critical: ' + c, '  warning: ' + w,
+      '  info: ' + i, '  total: ' + t, 'status: issues_found', '---'].join('\n');
+    const ok = (t) => readGateMessage(runShippedGateCounts({ reviewText: t }).stdout).countsOk;
+    const d = (n) => '1'.padEnd(n, '0');       // n digits, leading 1 so the value is exact
+    assert.strictEqual(d(7).length, 7);
+    assert.strictEqual(d(8).length, 8);
+    assert.strictEqual(d(9).length, 9);
+    assert.strictEqual(ok(counts(d(7), '0', '0', d(7))), '1', 'limit-1: 7 digits is accepted');
+    assert.strictEqual(ok(counts(d(8), '0', '0', d(8))), '1', 'limit: 8 digits is accepted');
+    assert.strictEqual(ok(counts(d(9), '0', '0', d(9))), '0', 'limit+1: 9 digits is rejected');
+  });
 });
 
 describe('#3861 round 1 — an absent review still reconciles', () => {
