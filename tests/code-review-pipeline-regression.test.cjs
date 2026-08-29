@@ -2404,7 +2404,7 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
 // looks like it covers exactly that surface — the green was structurally incapable of turning red
 // for it. The emitter now lives in the fence (see the step file), so the harness reads the fence's
 // own stdout and nothing is synthesized here.
-function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode }) {
+function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode, phaseNumber }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-'));
   try {
     const reviewPath = path.join(dir, padded + '-REVIEW.md');
@@ -2421,7 +2421,14 @@ function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, m
       // `Number(padded)` is deliberate for the integer case (strips the leading zero the way a
       // caller's parsed phase_number does) but must not mangle a DOTTED phase: Number('03.1') is
       // 3.1, which is what we want, while a non-numeric padded value would become NaN.
-      env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: String(Number(padded)) },
+      // `phaseNumber` overrides the derivation so a test can drive a value `padded` cannot
+      // express -- an unusable one. Otherwise PHASE_NUMBER is derived from `padded` as a caller's
+      // parsed phase_number would be.
+      env: {
+        ...process.env,
+        PHASE_DIR: dir,
+        PHASE_NUMBER: phaseNumber === undefined ? String(Number(padded)) : phaseNumber,
+      },
     });
     assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the counts block must run to completion');
     return { exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr };
@@ -2479,6 +2486,22 @@ describe('#3861 round 2 — a DOTTED phase number does not break the step', () =
       'the phase number must never reach printf %02d unsplit');
     assert.match(out.stdout, /^Code review: 1 findings — 1 critical, 0 warning, 0 info\.$/m,
       'and the review is actually found and reported');
+  });
+
+  test('a phase number outside the documented shape builds NO path — traversal fence', { skip: !HAS_BASH }, () => {
+    // PHASE_NUMBER is interpolated into a file path. The first draft of the dotted-phase fix
+    // carried an unusable value VERBATIM, which made `${PHASE_DIR}/../../etc/passwd-REVIEW.md`
+    // reachable where the old `printf "%02d"` had at least mangled it to `00` -- a regression
+    // introduced by the fix, found by adversarially reviewing it. Both callers already validate
+    // ^[0-9]+(\.[0-9]+)?$; this step has two call sites and validates for itself.
+    for (const bad of ['../../etc/passwd', 'abc', '', '1.2.3', '-1', '3.', '.1', '+1', '3 1']) {
+      const out = runShippedGateCounts({ reviewText: '', writeReview: false, phaseNumber: bad });
+      assert.strictEqual(out.exitCode, 0, 'advisory: `' + bad + '` must not abort the step');
+      assert.match(out.stdout, /skipped \(unusable phase number/,
+        '`' + bad + '` must be refused by name, not silently coerced');
+      assert.doesNotMatch(out.stdout, /Code review: /,
+        '`' + bad + '` must not report counts read from a path built out of it');
+    }
   });
 
   test('an integer phase is still zero-padded exactly as before', { skip: !HAS_BASH }, () => {

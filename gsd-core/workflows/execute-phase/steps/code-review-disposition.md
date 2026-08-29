@@ -33,13 +33,29 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # legitimate `08.1`. Both were driven. `${PHASE_NUMBER:-}` because an UNSET input must not trip
 # `set -u` in a step that promises not to abort, and `10#` because bash reads a leading zero as
 # octal, which is what breaks 08 and 09.
+# VALIDATE THE WHOLE VALUE, then format -- and on failure build NO path at all.
+# Carrying an unusable value verbatim was the first draft and it was worse than the bug it
+# replaced: PHASE_NUMBER is interpolated into a file path, so `../../etc/passwd` produced
+# `${PHASE_DIR}/../../etc/passwd-REVIEW.md`, where the old `printf "%02d"` had at least
+# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$`
+# (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
+# itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
+# below refuse to build a path from it.
 _pn="${PHASE_NUMBER:-}"
-_int="${_pn%%.*}"
-case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
-case "$_int" in
-  ''|*[!0-9]*) PADDED="$_pn" ;;                                  # unusable: carry it verbatim
-  *)           PADDED="$(printf "%02d" "$((10#$_int))")$_sub" ;;
+_ok=1
+case "$_pn" in
+  ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
+  .*|*.)        _ok=0 ;;   # leading or trailing dot
+  *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
 esac
+if [ "$_ok" = "1" ]; then
+  _int="${_pn%%.*}"
+  case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
+  # `10#` because bash reads a leading zero as octal, which is what breaks 08 and 09.
+  PADDED="$(printf "%02d" "$((10#$_int))")$_sub"
+else
+  PADDED=""
+fi
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
 # Extract ONLY the leading frontmatter block: `sed -n '/^---$/,/^---$/p'` re-opens its range
@@ -106,6 +122,12 @@ fi
 # rule block 2 states about itself — a prose-only gate on a value no later block can see is not a
 # gate — applied to the block that is this step's primary deliverable rather than only to its
 # sibling. The status arm is re-derived here, not left to the reader, for the same reason.
+# An unusable phase number yields an empty PADDED above, so there is no review path to read.
+# Say so and stop rather than reporting counts parsed from `${PHASE_DIR}/-REVIEW.md`.
+if [ -z "$PADDED" ]; then
+  echo "Code review reporting skipped (unusable phase number: '${PHASE_NUMBER:-}')"
+  return 0 2>/dev/null || exit 0
+fi
 case "$REVIEW_STATUS" in
   ''|clean|skipped) ;;   # nothing to report; block 2 still reconciles an existing ledger
   *)
@@ -156,13 +178,29 @@ the step — never blocks:
 # legitimate `08.1`. Both were driven. `${PHASE_NUMBER:-}` because an UNSET input must not trip
 # `set -u` in a step that promises not to abort, and `10#` because bash reads a leading zero as
 # octal, which is what breaks 08 and 09.
+# VALIDATE THE WHOLE VALUE, then format -- and on failure build NO path at all.
+# Carrying an unusable value verbatim was the first draft and it was worse than the bug it
+# replaced: PHASE_NUMBER is interpolated into a file path, so `../../etc/passwd` produced
+# `${PHASE_DIR}/../../etc/passwd-REVIEW.md`, where the old `printf "%02d"` had at least
+# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$`
+# (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
+# itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
+# below refuse to build a path from it.
 _pn="${PHASE_NUMBER:-}"
-_int="${_pn%%.*}"
-case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
-case "$_int" in
-  ''|*[!0-9]*) PADDED="$_pn" ;;                                  # unusable: carry it verbatim
-  *)           PADDED="$(printf "%02d" "$((10#$_int))")$_sub" ;;
+_ok=1
+case "$_pn" in
+  ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
+  .*|*.)        _ok=0 ;;   # leading or trailing dot
+  *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
 esac
+if [ "$_ok" = "1" ]; then
+  _int="${_pn%%.*}"
+  case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
+  # `10#` because bash reads a leading zero as octal, which is what breaks 08 and 09.
+  PADDED="$(printf "%02d" "$((10#$_int))")$_sub"
+else
+  PADDED=""
+fi
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
 # The condition stated above this block is re-derived HERE rather than left to the reader. Block 1
@@ -184,6 +222,12 @@ if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
   # non-numeric total is not a number to reconcile against.
   REVIEW_TOTAL=$(echo "$_FM" | awk '/^findings:[[:space:]]*$/{f=1; next} f&&/^[^[:space:]]/{exit} f' | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
   case "$REVIEW_TOTAL" in ''|*[!0-9]*) REVIEW_TOTAL="" ;; ?????????*) REVIEW_TOTAL="" ;; esac
+fi
+# An unusable phase number yields an empty PADDED above, which would make every path below
+# bare (`-REVIEW-DISPOSITION.md`) -- the exact silent-write defect round 1 closed. Refuse.
+if [ -z "$PADDED" ]; then
+  echo "Code review disposition skipped (unusable phase number: '${PHASE_NUMBER:-}')"
+  return 0 2>/dev/null || exit 0
 fi
 # Skip a clean/skipped/absent review ONLY when there is no ledger to reconcile. An EXISTING
 # ledger still has to be brought up to date — its decided rows are carried and its untriaged
