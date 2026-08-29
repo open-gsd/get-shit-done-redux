@@ -83,6 +83,16 @@ function runOnce(dir, padded) {
 const PREFIX = fc.constantFrom('CR', 'BL', 'WR', 'IN');
 const DECIDED = fc.constantFrom('fixed', 'skipped', 'deferred');
 
+// The vocabulary the ledger documents, and a generator for its COMPLEMENT.
+// DECIDED is drawn from the vocabulary, so no property built on it can ever present the parser
+// with an out-of-vocabulary token — the round-trip property below is structurally unable to fail
+// on one, which is precisely how a bare ([a-z]+) capture shipped past it. JUNK is the arbitrary
+// that reaches the class DECIDED cannot: lowercase, so it stays inside the old capture's own
+// character set, because a token OUTSIDE it ('Deferred') already failed safe. The unsafe half is
+// the one that looks like a decision and is not.
+const VOCABULARY = ['open', 'fixed', 'skipped', 'deferred'];
+const JUNK = fc.stringMatching(/^[a-z]{2,10}$/).filter((s) => !VOCABULARY.includes(s));
+
 // A hand-written Source cell: the one place a human writes prose into the
 // ledger, so it carries the escaped pipe the rendered instruction asks for.
 // The reserved suffix is generated DELIBERATELY. The gate strips a carried marker before storing
@@ -155,6 +165,37 @@ describe('#3829 — the disposition ledger is a render/re-parse fixed point', ()
           'the reason survives, less at most one trailing carried marker'
         );
         assert.doesNotMatch(cells[3], MARK, 'and a current finding is never marked as carried');
+      } finally {
+        cleanup(dir);
+      }
+    }), RUNS);
+  });
+
+  test('an out-of-vocabulary disposition is coerced to open, never treated as a decision', () => {
+    fc.assert(fc.property(FINDINGS, JUNK, SOURCE_CELL, (ids, junk, source) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3829-prop-'));
+      try {
+        fs.writeFileSync(path.join(dir, '01-REVIEW.md'), reviewFor(ids));
+        const target = ids[0];
+        // One transposed character is the whole input. Under ([a-z]+) this was stored as a
+        // decision: not the literal 'open', so it beat the default, was excluded from the open:
+        // headline count, and was carried forward forever — a ledger reporting a phase fully
+        // triaged off a typo. ADR-227's rule is that a value failing the enum check is coerced
+        // to the contract's safe default, and 'open' is that default.
+        fs.writeFileSync(
+          path.join(dir, '01-REVIEW-DISPOSITION.md'),
+          '| ' + target + ' | critical | ' + junk + ' | ' + source + ' |\n'
+        );
+        const out = runOnce(dir, '01');
+        const row = out.ledger.split('\n').find((l) => l.startsWith('| ' + target + ' '));
+        assert.ok(row, 'the finding must still have a row');
+        const cells = row.split(/\s\|\s/).map((c) => c.replace(/^\|\s*|\s*\|$/g, '').trim());
+        assert.strictEqual(cells[2], 'open', 'a junk token is not a decision');
+        // And the headline count must AGREE with the row it renders. This is the half the
+        // original defect actually reported wrongly: the row said one thing, `open: N` another.
+        assert.match(out.ledger, /^open: (\d+)$/m);
+        const open = Number(/^open: (\d+)$/m.exec(out.ledger)[1]);
+        assert.strictEqual(open, ids.length, 'every finding is open, and the count says so');
       } finally {
         cleanup(dir);
       }

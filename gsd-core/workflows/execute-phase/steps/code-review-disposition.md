@@ -201,7 +201,19 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   const prior = new Map();
   if (fs.existsSync(process.env.DISPOSITION_FILE)) {
     for (const l of norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')).split('\n')) {
-      const m = l.match(/^\|\s*((?:CR|BL|WR|IN)-\d+)\s*\|[^|]*\|\s*([a-z]+)\s*\|\s*((?:[^|\\\\]|\\\\.)*?)\s*\|?\s*\$/);
+      // The disposition column is an ENUM, not 'any lowercase token'. ADR-227 requires a trust
+      // boundary to validate semantic SHAPE, not merely type, and to coerce a failure to the
+      // contract's safe default -- and this ledger is a trust boundary by construction, because
+      // the rendered instruction tells a human to hand-edit it. Under the old ([a-z]+) capture a
+      // single transposed character ('opne') was stored as a decision: it is not 'open', so it
+      // beat the default, was excluded from the open: headline count, and was carried forward
+      // forever. One typo and the ledger reported a phase fully triaged.
+      // Note the asymmetry that made this a correctness bug rather than a style point: a typo
+      // OUTSIDE [a-z] ('Deferred') already failed to match, lost the decision and reset the row
+      // to open -- safe. A typo INSIDE [a-z] was unsafe. The parser failed open in the one
+      // direction that matters. A row that does not match now yields no prior entry, so the row
+      // falls back to 'open' -- the safe default, by the same path the capital-D case took.
+      const m = l.match(/^\|\s*((?:CR|BL|WR|IN)-\d+)\s*\|[^|]*\|\s*(open|fixed|skipped|deferred)\s*\|\s*((?:[^|\\\\]|\\\\.)*?)\s*\|?\s*\$/);
       // Strip the carried marker before storing: it is rendered from the carried flag, so
       // leaving it on the stored value would re-append it every run — the cell grows without
       // bound AND the file changes on every run, defeating the unchanged-run check below.
