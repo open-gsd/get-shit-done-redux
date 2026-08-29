@@ -27,9 +27,18 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # the gate that promises never to block, and it takes the whole phase's review reporting with
 # it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
 # Both arms fall back to the raw value rather than aborting: advisory means advisory.
-case "${PHASE_NUMBER}" in
-  *.*) PADDED="$(printf "%02d" "${PHASE_NUMBER%%.*}" 2>/dev/null || printf "%s" "${PHASE_NUMBER%%.*}").${PHASE_NUMBER#*.}" ;;
-  *)   PADDED="$(printf "%02d" "${PHASE_NUMBER}" 2>/dev/null || printf "%s" "${PHASE_NUMBER}")" ;;
+# VALIDATE, THEN FORMAT -- never format and fall back on failure. `printf "%02d" abc` writes
+# `00` to stdout BEFORE it fails, so a `$(printf ... || printf %s ...)` fallback CONCATENATES
+# the two and yields `00abc`; `08` fails the same way as invalid octal, giving `0008.1` for a
+# legitimate `08.1`. Both were driven. `${PHASE_NUMBER:-}` because an UNSET input must not trip
+# `set -u` in a step that promises not to abort, and `10#` because bash reads a leading zero as
+# octal, which is what breaks 08 and 09.
+_pn="${PHASE_NUMBER:-}"
+_int="${_pn%%.*}"
+case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
+case "$_int" in
+  ''|*[!0-9]*) PADDED="$_pn" ;;                                  # unusable: carry it verbatim
+  *)           PADDED="$(printf "%02d" "$((10#$_int))")$_sub" ;;
 esac
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
@@ -141,9 +150,18 @@ the step — never blocks:
 # the gate that promises never to block, and it takes the whole phase's review reporting with
 # it. Pad the integer part only and carry the sub-number verbatim, so 3.1 -> 03.1 and 3 -> 03.
 # Both arms fall back to the raw value rather than aborting: advisory means advisory.
-case "${PHASE_NUMBER}" in
-  *.*) PADDED="$(printf "%02d" "${PHASE_NUMBER%%.*}" 2>/dev/null || printf "%s" "${PHASE_NUMBER%%.*}").${PHASE_NUMBER#*.}" ;;
-  *)   PADDED="$(printf "%02d" "${PHASE_NUMBER}" 2>/dev/null || printf "%s" "${PHASE_NUMBER}")" ;;
+# VALIDATE, THEN FORMAT -- never format and fall back on failure. `printf "%02d" abc` writes
+# `00` to stdout BEFORE it fails, so a `$(printf ... || printf %s ...)` fallback CONCATENATES
+# the two and yields `00abc`; `08` fails the same way as invalid octal, giving `0008.1` for a
+# legitimate `08.1`. Both were driven. `${PHASE_NUMBER:-}` because an UNSET input must not trip
+# `set -u` in a step that promises not to abort, and `10#` because bash reads a leading zero as
+# octal, which is what breaks 08 and 09.
+_pn="${PHASE_NUMBER:-}"
+_int="${_pn%%.*}"
+case "$_pn" in *.*) _sub=".${_pn#*.}" ;; *) _sub="" ;; esac
+case "$_int" in
+  ''|*[!0-9]*) PADDED="$_pn" ;;                                  # unusable: carry it verbatim
+  *)           PADDED="$(printf "%02d" "$((10#$_int))")$_sub" ;;
 esac
 REVIEW_FILE="${PHASE_DIR}/${PADDED}-REVIEW.md"
 DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"
@@ -300,8 +318,12 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   // '### {finding_id}: {title}' under no contract that the title is copied byte-for-byte from
   // REVIEW.md. A fixer that REFLOWS a long title produced a spurious stale note, left a
   // genuinely-fixed row 'open', and told the reader the fix report named a different finding.
-  // Whitespace is normalized because reflowing is the one divergence that carries no information:
-  // a wrapped title is the same title. Case changes and truncation stay strict, deliberately --
+  // Runs of whitespace are collapsed because re-spacing carries no information. The BOUND, stated
+  // because it is easy to over-read this: a title WRAPPED across lines is NOT reconciled. A '###'
+  // heading is one line by definition, so the continuation is a separate paragraph the heading
+  // parser correctly never captures, and collapsing whitespace cannot reach across that boundary.
+  // Not widened -- absorbing whatever follows a heading into the title would swallow arbitrary
+  // prose and make this very check meaningless. Case changes and truncation stay strict too --
   // they are the shapes a genuinely different finding actually takes, and widening to them would
   // trade this false positive for the silent false NEGATIVE the strict match exists to prevent.
   // Residual, stated: a fixer that re-cases or truncates still produces a spurious note. That is

@@ -2318,9 +2318,10 @@ what records what happened to it.
 
 Reconciliation applies an outcome only when the fix report names the **same** finding, because
 finding IDs are reused across re-reviews and a stale report would otherwise declare a brand-new
-`CR-01` already fixed. Titles are compared ignoring whitespace, so a fixer that reflows a long
-title still reconciles; a title that differs otherwise leaves the row `open` and is reported —
-naming the ids it could not reconcile — rather than passing silently. The report does not claim to
+`CR-01` already fixed. Titles are compared with runs of whitespace collapsed, so a fixer that
+re-spaces a title still reconciles. A title that differs otherwise — including one **wrapped across
+lines**, since a `###` heading is one line and the continuation is a separate paragraph — leaves the
+row `open` and is reported, naming the ids it could not reconcile, rather than passing silently. The report does not claim to
 know whether such a report is stale or merely re-titled, because it cannot tell.
 
 The disposition column is a closed vocabulary — `open`, `fixed`, `skipped`, `deferred`. A

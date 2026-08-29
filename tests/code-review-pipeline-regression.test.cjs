@@ -33,6 +33,13 @@ const { createTempDir, createTempGitProject, cleanup, readFileNormalized } = req
 const os = require('node:os');
 
 const ROOT = path.resolve(__dirname, '..');
+// HOISTED. `const` is in the temporal dead zone until its declaration executes, and a
+// `{ skip: !HAS_BASH }` option object is evaluated EAGERLY when its describe body runs --
+// so a bash-gated test added ABOVE the old mid-file declaration threw a ReferenceError
+// that aborted the whole describe and CANCELLED its siblings. It caught three separate
+// additions in this round alone, and the cancellation reads as a passing run in the
+// summary line. Declared with the other file-level constants so placement stops mattering.
+const HAS_BASH = process.platform !== 'win32';
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
 const PRE_PASS_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review', 'steps', 'structural-pre-pass.md');
 const FIXER_PATH = path.join(ROOT, 'agents', 'gsd-code-fixer.md');
@@ -2313,7 +2320,10 @@ describe('#3861 round 1 — step-file structural contract', () => {
         // (Pre-existing: the original column-0 anchor matched that same line, which is at column 0.)
         const fenceNoPassthrough = fence.replace(
           new RegExp('(?:^|[\\s;])' + v + '="\\$\\{' + v + '\\}"', 'gm'), ' ');
-        const assigned = new RegExp('(?:^|[\\s;])' + v + '=', 'm');
+        // Non-empty RHS required. `REVIEW_FILE=` is an assignment TOKEN and not a derivation, and
+        // the reviewer evaded the earlier predicate with exactly that. This is a cheap fast-fail,
+        // NOT the guard's authority -- see the executed guard below, which is.
+        const assigned = new RegExp('(?:^|[\\s;])' + v + '=(?![\\s;#]|$)', 'm');
         const reads = new RegExp('\\$\\{?' + v + '\\b').test(fence.replace(new RegExp('(?:^|[\\s;])' + v + '=', 'gm'), ''));
         if (!reads) continue;
         assert.ok(
@@ -2321,6 +2331,45 @@ describe('#3861 round 1 — step-file structural contract', () => {
           'block ' + (i + 1) + ' reads ' + v + ' without deriving it — it is empty in a fresh shell'
         );
       }
+    }
+  });
+});
+
+describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
+  // The textual guard above is a fast-fail, not the authority. An adversarial pass evaded it
+  // three ways -- an empty `REVIEW_FILE=`, a self-referential `REVIEW_FILE=$REVIEW_FILE`, and a
+  // commented assignment -- because a structural predicate recognises assignment TOKENS, never
+  // assignments that derive a usable value. No amount of regex fixes that class.
+  //
+  // So the authority moves to execution, which is the lesson this PR has now learned three times:
+  // run the real second fence in a FRESH shell with nothing but the step's two declared inputs,
+  // and require it to write the ledger at the correct derived path. Every derivation in that
+  // fence is load-bearing for that outcome, so no textual dodge survives it.
+  test('block 2 derives its own paths and writes the ledger, given only PHASE_DIR and PHASE_NUMBER',
+    { skip: !HAS_BASH }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-blk2-'));
+    try {
+      fs.writeFileSync(path.join(dir, '07-REVIEW.md'),
+        ['---', 'phase: 07', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n'));
+      const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[1];
+      assert.ok(fence && fence.includes('DISPOSITION_FILE'), 'the disposition block must be fence 2');
+      const res = runHook('-c', ['set -euo pipefail\n' + fence + '\n'], {
+        interpreter: 'bash',
+        timeoutMs: PROBE_TIMEOUT_MS,
+        // ONLY the two declared inputs. Anything the fence needs beyond these it must derive.
+        env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: '7', RUNTIME_DIR: ROOT },
+      });
+      assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the block must run to completion');
+      assert.strictEqual(res.exitCode, 0, 'advisory: it must not abort: ' + res.stderr);
+      assert.ok(fs.existsSync(path.join(dir, '07-REVIEW-DISPOSITION.md')),
+        'the ledger must land at the DERIVED path — a lost derivation writes elsewhere or nowhere');
+      const rows = ledgerRows(fs.readFileSync(path.join(dir, '07-REVIEW-DISPOSITION.md'), 'utf8'));
+      assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'and it must have read the review');
+      // The bare-name failure this whole guard exists for: an empty PADDED writes `-REVIEW-...`.
+      assert.ok(!fs.existsSync(path.join(dir, '-REVIEW-DISPOSITION.md')),
+        'an empty PADDED must never produce a bare-named ledger');
+    } finally {
+      cleanup(dir);
     }
   });
 });
@@ -2344,7 +2393,6 @@ describe('#3861 round 1 — step-file structural contract', () => {
 // the assertions were describing.
 // ---------------------------------------------------------------------------
 
-const HAS_BASH = process.platform !== 'win32';
 
 // Run the step's FIRST shell block — the frontmatter reads — and report WHAT IT PRINTS.
 //
