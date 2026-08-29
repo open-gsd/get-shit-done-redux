@@ -1664,10 +1664,17 @@ describe('#3829 — code_review_gate per-finding disposition record', () => {
       src.includes('DISPOSITION_FILE="${PHASE_DIR}/${PADDED}-REVIEW-DISPOSITION.md"'),
       'code_review_gate must write the disposition record to a REVIEW-DISPOSITION sibling'
     );
-    const step = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      step.includes("if (h.id && order.indexOf(h.id) === -1) { order.push(h.id); title.set(h.id, h.title); }"),
-      'code_review_gate must enumerate every finding ID from REVIEW.md'
+    // Sixth src.includes() converted. It pinned the exact SOURCE LINE of the enumeration loop, so
+    // it went red when M3 reformatted that loop to track the enclosing section -- while the
+    // property it names, "enumerate every finding ID", was strictly widened rather than broken.
+    // A pin on a code shape reports every refactor as a regression and no regression as one.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '### CR-01: a', '### WR-01: b', '### IN-01: c',
+      '### CR-01: a duplicate id, which must not produce a second row'].join('\n');
+    const rows = ledgerRows(runShippedDisposition({ reviewText: review }).ledger);
+    assert.deepStrictEqual(
+      rows.map((r) => r.id), ['CR-01', 'WR-01', 'IN-01'],
+      'code_review_gate must enumerate every finding ID from REVIEW.md, in order, once each'
     );
   });
 
@@ -1818,6 +1825,64 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
       src.includes('title.get(h.id) === h.title'),
       'a fix report must name the SAME finding before its outcome is applied'
     );
+  });
+});
+
+describe('#3861 round 2 — severity comes from the section, not just the id prefix (M3)', () => {
+  const sevOf = (reviewText, id) => {
+    const rows = ledgerRows(runShippedDisposition({ reviewText }).ledger);
+    const row = rows.find((r) => r.id === id);
+    assert.ok(row, id + ' must have a row');
+    return row.severity;
+  };
+
+  test("a Critical mis-numbered as WR- is recorded critical when it sits under '## Critical Issues'", () => {
+    // The section heading is the reviewer's OWN statement of severity, and the walker already
+    // visits it. Deriving from the prefix alone puts the ledger's Severity column -- the whole
+    // basis for triaging it -- in disagreement with the review it summarizes and with the
+    // frontmatter count line block 1 prints.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '## Critical Issues', '', '### CR-01: properly numbered', '',
+      '### WR-04: a critical the reviewer mis-numbered', '',
+      '## Info', '', '### IN-01: an info item'].join('\n');
+    assert.strictEqual(sevOf(review, 'WR-04'), 'critical', 'the section outranks the prefix');
+    assert.strictEqual(sevOf(review, 'CR-01'), 'critical');
+    assert.strictEqual(sevOf(review, 'IN-01'), 'info');
+  });
+
+  test('an IN- finding under ## Warnings is recorded warning', () => {
+    // The other direction, so the rule is not one-way: the section governs whichever way the
+    // prefix disagrees with it.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '## Warnings', '', '### IN-02: mis-numbered the other way'].join('\n');
+    assert.strictEqual(sevOf(review, 'IN-02'), 'warning');
+  });
+
+  test('the id prefix still governs when no recognized section encloses the finding', () => {
+    // Fallback control. A review that does not use the documented headings -- and every carried
+    // row from an earlier review -- must keep the prefix mapping, BL- included.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '### CR-01: a', '### BL-02: b', '### WR-03: c', '### IN-04: d'].join('\n');
+    assert.strictEqual(sevOf(review, 'CR-01'), 'critical');
+    assert.strictEqual(sevOf(review, 'BL-02'), 'critical', 'BL- stays Critical-tier-equivalent');
+    assert.strictEqual(sevOf(review, 'WR-03'), 'warning');
+    assert.strictEqual(sevOf(review, 'IN-04'), 'info');
+  });
+
+  test('a lookalike section heading does not re-tier the findings under it', () => {
+    // Matched WHOLE, exactly as the fix-report sections are. A prefix match would let
+    // '## Critical Issues Verification' promote everything beneath it.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '## Critical Issues Verification', '', '### IN-05: not actually critical'].join('\n');
+    assert.strictEqual(sevOf(review, 'IN-05'), 'info', 'an unrecognized section falls back to the prefix');
+  });
+
+  test('a section heading inside a fenced example does not govern', () => {
+    // The fence walker already skips fenced content; this pins that the new section tracking
+    // honours it rather than reading an illustration as document structure.
+    const review = ['---', 'phase: 01', 'status: issues_found', '---', '',
+      '```markdown', '## Critical Issues', '```', '', '### IN-06: outside the fence'].join('\n');
+    assert.strictEqual(sevOf(review, 'IN-06'), 'info');
   });
 });
 

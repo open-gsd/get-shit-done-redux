@@ -171,7 +171,11 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   // current one, because finding ids are reused across re-reviews.
   const ID_RE = /^###\s+((?:CR|BL|WR|IN)-\d+)\s*:\s*(.*)\$/;
   // BL- is Critical-tier-equivalent to CR- (gsd-code-reviewer.md 'Label equivalence').
-  const sev = (id) => ({ CR: 'critical', BL: 'critical', WR: 'warning' }[id.split('-')[0]] || 'info');
+  const sectionSev = new Map();
+  // PREFIX severity -- the fallback, used when the finding sat under no recognized section (a
+  // carried row from an earlier review, or a review that does not use the documented headings).
+  const prefixSev = (id) => ({ CR: 'critical', BL: 'critical', WR: 'warning' }[id.split('-')[0]] || 'info');
+  const sev = (id) => sectionSev.get(id) || prefixSev(id);
   const headings = (text) => {
     // Fenced blocks are skipped: review and fix bodies quote example findings, and a heading
     // inside a fence is an illustration, not a finding.
@@ -207,8 +211,28 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   // with the
   // ledger untouched -- the freeze the reconciliation path exists to prevent.
   const reviewText = fs.existsSync(process.env.REVIEW_FILE) ? fs.readFileSync(process.env.REVIEW_FILE, 'utf-8') : '';
+  // SEVERITY COMES FROM THE SECTION FIRST, the id prefix second. The section heading is the
+  // reviewer's OWN statement of a finding's severity -- gsd-code-reviewer.md emits findings under
+  // '## Critical Issues' / '## Warnings' / '## Info' -- and this walker already visits every line,
+  // so the signal was in hand and discarded. Deriving from the prefix alone means a reviewer who
+  // mis-numbers a Critical as WR-04 while filing it under '## Critical Issues' gets a ledger row
+  // reading 'warning', which then disagrees with the review it summarizes AND with the frontmatter
+  // count line block 1 prints from findings.critical. The Severity column is the whole basis for
+  // triaging the ledger, so it has to agree with the document it describes.
+  // Matched WHOLE, exactly as the fix-report sections are: a prefix match would let a heading like
+  // '## Critical Issues Verification' re-tier everything under it.
+  const SECTION_SEV = [[/^##\s+Critical Issues\s*\$/, 'critical'], [/^##\s+Warnings\s*\$/, 'warning'], [/^##\s+Info\s*\$/, 'info']];
+  let curSection = null;
   for (const h of headings(reviewText)) {
-    if (h.id && order.indexOf(h.id) === -1) { order.push(h.id); title.set(h.id, h.title); }
+    if (h.fence || h.skip) continue;
+    if (h.line !== undefined && /^##\s+/.test(h.line)) {
+      const hit = SECTION_SEV.find(([re]) => re.test(h.line));
+      curSection = hit ? hit[1] : null;   // an unrecognized ## section falls back to the prefix
+    }
+    if (h.id && order.indexOf(h.id) === -1) {
+      order.push(h.id); title.set(h.id, h.title);
+      if (curSection) sectionSev.set(h.id, curSection);
+    }
   }
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
   // become carried and its untriaged rows are dropped. Exiting here would freeze a stale ledger
