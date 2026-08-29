@@ -235,7 +235,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     }
   }
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
-  // become carried and its untriaged rows are dropped. Exiting here would freeze a stale ledger
+  // and its untriaged rows are BOTH carried, marked. Exiting here would freeze a stale ledger
   // showing findings as open that the review no longer reports.
   if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   // Prior rows: keep the disposition AND its source cell — the source is where a human writes
@@ -305,10 +305,24 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
     return { id, sev: sev(id), d: 'open', src: '-' };
   };
   const rows = order.map(row);
-  // A decided finding the current review no longer reports is CARRIED, never dropped: losing
-  // the row would erase the record that it was seen and triaged, which is the whole point.
+  // A prior finding the current review no longer reports is CARRIED, never dropped -- and that
+  // now holds for UNTRIAGED rows too, which is the correction. Carrying only decided rows meant
+  // an untriaged row for a dropped or renumbered finding disappeared without trace, and combined
+  // with the reconciliation gap that left EVERY row untriaged, a re-review silently deleted the
+  // whole ledger. The --auto loop rewrites REVIEW.md on every iteration, so it does not retain it
+  // either: run 1 records CR-01 open, the re-review renumbers it to CR-02, and run 2's ledger
+  // contains neither. That is #3829's complaint verbatim -- 'no trace of what happened to them' --
+  // reproduced by the artifact built to prevent it, and 'nothing was decided about it' is exactly
+  // the state #3829 says must leave a trace.
+  // The carried marker is what keeps this honest rather than merely additive: the row does not
+  // claim the finding is live, it records that it was seen and never triaged. Stated cost, since
+  // it is real: a RENUMBERED finding appears twice until someone triages the old row, and a
+  // carried untriaged row persists across runs until decided. Both are bounded by the phase's own
+  // findings, both are legible from the marker, and both are strictly better than a silent delete.
   for (const [id, was] of prior) {
-    if (order.indexOf(id) === -1 && was.d !== 'open') rows.push({ id, sev: sev(id), d: was.d, src: was.src || 'recorded', carried: true });
+    if (order.indexOf(id) === -1) {
+      rows.push({ id, sev: sev(id), d: was.d, src: was.src || (was.d === 'open' ? '-' : 'recorded'), carried: true });
+    }
   }
   const open = rows.filter((r) => r.d === 'open').length;
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
@@ -333,7 +347,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = r.src || '-'; const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
-    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. Escape any \`|\`.', 'Re-running the gate preserves every disposition except \`open\`.', '']).join('\n');
+    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. Escape any \`|\`.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))
     .concat(['open: ' + open, 'total: ' + rows.length])

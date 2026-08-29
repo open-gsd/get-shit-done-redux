@@ -1775,7 +1775,13 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
     assert.strictEqual(byId['CR-01'].disposition, 'deferred');
     assert.strictEqual(byId['CR-01'].carried, true);
     assert.strictEqual(byId['CR-01'].source, 'ships next phase');
-    assert.ok(!byId['IN-01'], 'an untriaged open row for a vanished finding is not carried');
+    // M1: the untriaged row is carried TOO, and marked. Dropping it erased the record that the
+    // finding was ever seen -- which is #3829's complaint verbatim, reproduced by the artifact
+    // built to prevent it. 'Nothing was decided about it' is precisely the state that must leave
+    // a trace. The marker keeps it honest: the row does not claim the finding is live.
+    assert.ok(byId['IN-01'], 'an untriaged row for a vanished finding is carried, not deleted');
+    assert.strictEqual(byId['IN-01'].disposition, 'open');
+    assert.strictEqual(byId['IN-01'].carried, true);
   });
 
   test('the carried marker is rendered, never stored — it cannot accumulate across runs', () => {
@@ -1956,11 +1962,15 @@ describe('#3829 review round 2 — a review that reports nothing still reconcile
       '| WR-01 | warning | open | - |',
     ].join('\n');
     const d = buildDisposition({ reviewText: EMPTY_REVIEW, priorText, padded: '01' });
-    assert.strictEqual(d.total, 1, 'only the decided row survives');
-    assert.strictEqual(d.rows[0].id, 'CR-01');
+    // M1: BOTH rows survive. The decided one because it was triaged, the untriaged one because
+    // it was not -- and an untriaged finding vanishing without trace is the defect #3829 names.
+    assert.strictEqual(d.total, 2, 'both rows survive; neither is silently deleted');
+    assert.deepStrictEqual(d.rows.map((r) => r.id), ['CR-01', 'WR-01']);
     assert.strictEqual(d.rows[0].disposition, 'deferred');
     assert.strictEqual(d.rows[0].carried, true);
-    assert.strictEqual(d.open, 0);
+    assert.strictEqual(d.rows[1].disposition, 'open');
+    assert.strictEqual(d.rows[1].carried, true);
+    assert.strictEqual(d.open, 1, 'the untriaged carried row is still open, and the count says so');
   });
 
   test('a review with no findings and no prior ledger produces nothing at all', () => {
@@ -2031,20 +2041,33 @@ describe('#3829 — shipped disposition script (executed, not mirrored)', () => 
     assert.strictEqual(again.ledger, first, 'and must leave the bytes alone');
   });
 
-  test('a decided finding the review no longer reports is carried; an untriaged one is dropped', () => {
+  test('a finding the review no longer reports is carried whether or not it was triaged', () => {
     const prior = ['| CR-01 | critical | deferred | later |', '| IN-01 | info | open | - |'].join('\n');
     const shrunk = ['---', 'status: issues_found', '---', '', '### WR-01: b'].join('\n');
     const rows = ledgerRows(runShippedDisposition({ reviewText: shrunk, priorText: prior }).ledger);
     const ids = rows.map((r) => r.id);
     assert.ok(ids.includes('CR-01'), 'a deferred finding must survive leaving the review');
-    assert.ok(!ids.includes('IN-01'), 'an untriaged finding that vanished is not carried');
+    assert.ok(ids.includes('IN-01'), 'and so must an untriaged one -- that is the whole record');
+  });
+
+  test('a renumbered finding leaves its old row behind, marked, rather than vanishing', () => {
+    // The concrete case M1 names: run 1 records CR-01 open, the re-review renumbers it to CR-02,
+    // and run 2's ledger used to contain neither. The old row is now carried and marked, so the
+    // double-count is legible rather than a silent delete -- the stated cost of the fix.
+    const prior = '| CR-01 | critical | open | - |';
+    const renumbered = ['---', 'status: issues_found', '---', '', '### CR-02: the same finding, renumbered'].join('\n');
+    const ledger = runShippedDisposition({ reviewText: renumbered, priorText: prior }).ledger;
+    const rows = ledgerRows(ledger);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-02', 'CR-01']);
+    assert.match(ledger, /\| CR-01 \|.*\(not in the current review\) \|/,
+      'the carried row is MARKED, so it does not claim the finding is live');
   });
 
   test('a review reporting nothing still reconciles an existing ledger', () => {
     const empty = ['---', 'status: issues_found', '---', '', 'no findings'].join('\n');
     const prior = ['| CR-01 | critical | deferred | later |', '| WR-01 | warning | open | - |'].join('\n');
     const rows = ledgerRows(runShippedDisposition({ reviewText: empty, priorText: prior }).ledger);
-    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01']);
+    assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01', 'WR-01'], 'reconciled, not truncated');
   });
 
   test('a review reporting nothing with no prior ledger writes no ledger at all', () => {
@@ -2777,7 +2800,8 @@ describe('#3861 round 1 — an absent review still reconciles', () => {
       assert.strictEqual(res.outcome, OUTCOME.EXITED);
       assert.strictEqual(res.exitCode, 0, 'an absent review is not an error: ' + res.stderr);
       const rows = ledgerRows(fs.readFileSync(dispPath, 'utf8'));
-      assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'decided carried, untriaged dropped');
+      assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01', 'WR-09'],
+        'an absent review reconciles the ledger; it does not delete rows from it');
       assert.match(rows[0].source, /not in the current review/);
     } finally {
       cleanup(dir);
