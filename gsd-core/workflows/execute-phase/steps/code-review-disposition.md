@@ -322,7 +322,7 @@ FIX_REPORT_FILE="${PHASE_DIR}/${PADDED}-REVIEW-FIX.md" node -e "
   console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + ' — ' + process.env.DISPOSITION_FILE);
 " || echo "Code review disposition record skipped (non-blocking)."
 
-COMMIT_DOCS=$(gsd_run query config-get commit_docs 2>/dev/null || echo "true")
+COMMIT_DOCS=$(gsd_run query config-get commit_docs --raw 2>/dev/null || echo "true")
 if [ "$COMMIT_DOCS" = "true" ] && [ -f "${DISPOSITION_FILE}" ]; then
   gsd_run query commit "docs(${PADDED}): record code review disposition" --files "${DISPOSITION_FILE}" || true
 fi
