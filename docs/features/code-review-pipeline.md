@@ -73,11 +73,34 @@ defaulting to `open`:
 | CR-01 | critical | open | - |
 | WR-01 | warning | fixed | 01-REVIEW-FIX.md |
 
-`open` means recorded but not yet triaged. `/gsd-code-review <N> --fix` records `fixed` and
-`skipped`, which the gate reconciles from REVIEW-FIX.md — but only when the fix report names the
-**same** finding, because finding IDs are reused across re-reviews and a stale report would
-otherwise declare a brand-new `CR-01` already fixed. A fix report that names a different finding
-under a reused id leaves the row `open` and is reported as unreconciled, rather than passing
+`open` means recorded but not yet triaged, and it is the only value the gate assigns on its own.
+
+**Where the reconciliation happens, which is not where you might expect.** The in-phase gate runs
+immediately after review, and at that moment `<NN>-REVIEW-FIX.md` does not exist — the gate invokes
+review with neither `--fix` nor `--auto` — so every row it writes is `open`. The `fixed` and
+`skipped` outcomes are reconciled by `/gsd-code-review <N> --fix`, which records them once the fix
+report is on disk. Running the gate alone therefore tells you what was found; running `--fix` is
+what records what happened to it.
+
+Reconciliation applies an outcome only when the fix report names the **same** finding, because
+finding IDs are reused across re-reviews and a stale report would otherwise declare a brand-new
+`CR-01` already fixed. Titles are compared ignoring whitespace, so a fixer that reflows a long
+title still reconciles; a title that differs otherwise leaves the row `open` and is reported —
+naming the ids it could not reconcile — rather than passing silently. The report does not claim to
+know whether such a report is stale or merely re-titled, because it cannot tell.
+
+The disposition column is a closed vocabulary — `open`, `fixed`, `skipped`, `deferred`. A
+hand-edited value outside it is not treated as a decision: the row falls back to `open`, so a
+typo cannot quietly mark a phase as triaged.
+
+Severity comes from the section a finding sits under (`## Critical Issues`, `## Warnings`,
+`## Info`) when the review uses those headings, and from the ID prefix otherwise. The section is
+the reviewer's own statement of severity, so a Critical filed under `## Critical Issues` is
+recorded critical even if its ID was mis-numbered `WR-04`.
+
+If the review's `total:` exceeds the number of findings whose headings the gate could parse, the
+shortfall is stated — on the console and as an `unparsed:` key in the ledger's frontmatter. A
+finding the gate cannot record is the one a human most needs to see, so it is never dropped
 silently. `deferred` is the one disposition the gate never writes: it is recorded by hand, and the
 reason recorded beside it in the Source cell is preserved across re-runs, a literal `|` included
 once escaped. One exception, because it cannot be resolved: a reason ending in the literal phrase
@@ -85,13 +108,15 @@ once escaped. One exception, because it cannot be resolved: a reason ending in t
 carried marker the gate appends. The alternative is worse — a stored marker never leaves, so a
 carried finding that later reappears would keep claiming it is absent from the review reporting it.
 
-Re-running the gate preserves every disposition except `open`, so a decision recorded here is never
-overwritten by a later pass. A finding that has been decided but that the current review no longer
-reports — `--auto` re-reviews and rewrites REVIEW.md, so this happens routinely — is **carried**
-rather than dropped, marked *(not in the current review)*, because losing the row would erase the
-record that the finding was seen and triaged. An untriaged `open` row for a finding that has
-vanished is not carried; nothing was decided about it. A run that changes no disposition rewrites
-nothing, so a re-executed phase does not produce a docs commit with no content.
+Re-running the gate preserves every row and every disposition, so a decision recorded here is never
+overwritten by a later pass. A finding the current review no longer reports — `--auto` re-reviews
+and rewrites REVIEW.md, so this happens routinely — is **carried** rather than dropped, marked
+*(not in the current review)*. That holds whether or not it was triaged: losing a decided row would
+erase the record that the finding was seen, and losing an *untriaged* one would erase the record
+that it was never answered, which is the trace this ledger exists to keep. The cost is that a
+renumbered finding shows under both IDs until the old row is decided; the marker makes that legible.
+A run that changes nothing rewrites nothing, so a re-executed phase does not produce a docs commit
+with no content.
 
 The record is a sibling artifact rather than a section inside REVIEW.md because `--auto`'s
 re-review loop rewrites REVIEW.md on every iteration — a ledger kept inside it would not survive
