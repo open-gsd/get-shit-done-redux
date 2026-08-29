@@ -47,6 +47,10 @@ case "$_pn" in
   ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
   .*|*.)        _ok=0 ;;   # leading or trailing dot
   *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
+  # LENGTH-BOUNDED, exactly as the counts are and for the same reason: bash integers wrap at
+  # 2^64, so `$((10#$_int))` on a 54-digit value yields -7908320945662590977 SILENTLY and that
+  # becomes the padded phase. Driven. No phase number has nine digits.
+  ?????????*)   _ok=0 ;;
 esac
 if [ "$_ok" = "1" ]; then
   _int="${_pn%%.*}"
@@ -139,7 +143,7 @@ case "$REVIEW_STATUS" in
       # rather than half-filled. Half-true is worse than withheld.
       echo "Code review found issues."
     fi
-    echo "Consider running: /gsd:code-review ${PHASE_NUMBER} --fix"
+    echo "Consider running: /gsd:code-review ${PHASE_NUMBER:-} --fix"
     ;;
 esac
 ```
@@ -192,6 +196,10 @@ case "$_pn" in
   ''|*[!0-9.]*) _ok=0 ;;   # empty, or any character outside [0-9.] -- this is the traversal fence
   .*|*.)        _ok=0 ;;   # leading or trailing dot
   *.*.*)        _ok=0 ;;   # more than one dot: not the documented shape
+  # LENGTH-BOUNDED, exactly as the counts are and for the same reason: bash integers wrap at
+  # 2^64, so `$((10#$_int))` on a 54-digit value yields -7908320945662590977 SILENTLY and that
+  # becomes the padded phase. Driven. No phase number has nine digits.
+  ?????????*)   _ok=0 ;;
 esac
 if [ "$_ok" = "1" ]; then
   _int="${_pn%%.*}"

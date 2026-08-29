@@ -2345,33 +2345,43 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
   // run the real second fence in a FRESH shell with nothing but the step's two declared inputs,
   // and require it to write the ledger at the correct derived path. Every derivation in that
   // fence is load-bearing for that outcome, so no textual dodge survives it.
-  test('block 2 derives its own paths and writes the ledger, given only PHASE_DIR and PHASE_NUMBER',
-    { skip: !HAS_BASH }, () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-blk2-'));
-    try {
-      fs.writeFileSync(path.join(dir, '07-REVIEW.md'),
-        ['---', 'phase: 07', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n'));
-      const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[1];
-      assert.ok(fence && fence.includes('DISPOSITION_FILE'), 'the disposition block must be fence 2');
-      const res = runHook('-c', ['set -euo pipefail\n' + fence + '\n'], {
-        interpreter: 'bash',
-        timeoutMs: PROBE_TIMEOUT_MS,
-        // ONLY the two declared inputs. Anything the fence needs beyond these it must derive.
-        env: { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: '7', RUNTIME_DIR: ROOT },
-      });
-      assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the block must run to completion');
-      assert.strictEqual(res.exitCode, 0, 'advisory: it must not abort: ' + res.stderr);
-      assert.ok(fs.existsSync(path.join(dir, '07-REVIEW-DISPOSITION.md')),
-        'the ledger must land at the DERIVED path — a lost derivation writes elsewhere or nowhere');
-      const rows = ledgerRows(fs.readFileSync(path.join(dir, '07-REVIEW-DISPOSITION.md'), 'utf8'));
-      assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'and it must have read the review');
-      // The bare-name failure this whole guard exists for: an empty PADDED writes `-REVIEW-...`.
-      assert.ok(!fs.existsSync(path.join(dir, '-REVIEW-DISPOSITION.md')),
-        'an empty PADDED must never produce a bare-named ledger');
-    } finally {
-      cleanup(dir);
-    }
-  });
+  // TWO DISTINCT PHASES, and that is the whole point. A single-phase probe proves the fence
+  // WORKS FOR ONE VALUE, never that it DERIVES: an adversarial pass defeated the one-phase
+  // version by replacing the derivation with `case ... in 1) PADDED=01 ;; 7) PADDED=07 ;;
+  // *) PADDED=07 ;; esac`, which breaks every real phase and passed the whole suite. A
+  // hardcode cannot satisfy two values at once, and the dotted one additionally pins the
+  // integer-part split that a naive `%02d` cannot express.
+  for (const [phaseNumber, padded] of [['7', '07'], ['3.1', '03.1']]) {
+    test('block 2 derives its own paths and writes the ledger for phase ' + phaseNumber,
+      { skip: !HAS_BASH }, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-blk2-'));
+      try {
+        fs.writeFileSync(path.join(dir, padded + '-REVIEW.md'),
+          ['---', 'phase: ' + padded, 'status: issues_found', '---', '',
+            '### CR-01: a finding'].join('\n'));
+        const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[1];
+        assert.ok(fence && fence.includes('DISPOSITION_FILE'), 'the disposition block must be fence 2');
+        // Scrub the DERIVED names from the inherited environment, so the claim "given only the
+        // declared inputs" is true rather than merely intended. `...process.env` is still needed
+        // for PATH/HOME, and an adversarial pass was right to call out the earlier wording.
+        const env = { ...process.env, PHASE_DIR: dir, PHASE_NUMBER: phaseNumber, RUNTIME_DIR: ROOT };
+        for (const k of ['PADDED', 'REVIEW_FILE', 'DISPOSITION_FILE', 'FIX_REPORT_FILE']) delete env[k];
+        const res = runHook('-c', ['set -euo pipefail\n' + fence + '\n'], {
+          interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS, env,
+        });
+        assert.strictEqual(res.outcome, OUTCOME.EXITED, 'the block must run to completion');
+        assert.strictEqual(res.exitCode, 0, 'advisory: it must not abort: ' + res.stderr);
+        assert.ok(fs.existsSync(path.join(dir, padded + '-REVIEW-DISPOSITION.md')),
+          'the ledger must land at the DERIVED path — a lost derivation writes elsewhere or nowhere');
+        const rows = ledgerRows(fs.readFileSync(path.join(dir, padded + '-REVIEW-DISPOSITION.md'), 'utf8'));
+        assert.deepStrictEqual(rows.map((r) => r.id), ['CR-01'], 'and it must have read the review');
+        assert.ok(!fs.existsSync(path.join(dir, '-REVIEW-DISPOSITION.md')),
+          'an empty PADDED must never produce a bare-named ledger');
+      } finally {
+        cleanup(dir);
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -2988,9 +2998,11 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
   });
 });
 
-// Lives at the end of the file, not beside its siblings: the `skip` option is evaluated when
-// `describe` runs, so a test referencing HAS_BASH from an earlier block hits the temporal dead
-// zone and cancels its neighbours rather than failing visibly.
+// Placement here is now incidental. This block used to be pinned to the end of the file because
+// HAS_BASH was declared mid-file and a `skip` option referencing it from an earlier block hit the
+// temporal dead zone -- cancelling its neighbours rather than failing visibly. HAS_BASH is
+// declared with the file's other top-level constants now, so that constraint is gone and this
+// block may be moved beside its siblings whenever someone is tidying.
 describe('#3861 round 1 — count validation, executed', () => {
   test('all four counts are validated before the breakdown is shown', { skip: !HAS_BASH }, () => {
     // Was a `src.includes()` assertion on the exact `case` line, which broke the moment that
