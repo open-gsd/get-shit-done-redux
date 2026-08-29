@@ -285,6 +285,24 @@ REVIEW_TOTAL="${REVIEW_TOTAL}" \
 FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   const fs = require('fs'), path = require('path');
   const norm = (s) => s.replace(/\r\n/g, '\n');
+  // AN EXISTING LEDGER THAT IS NOT A REGULAR FILE IS NOT A LEDGER. Checked FIRST, before any read
+  // or write of that path, and the ordering is the fix rather than a tidy-up:
+  //   * writeFileSync FOLLOWS a symlink, so a planted link replaced the contents of whatever it
+  //     pointed at -- outside the phase directory, link left intact so nothing looked wrong;
+  //   * a FIFO at that path made readFileSync BLOCK FOREVER, which is the one behaviour a gate
+  //     documented as advisory and non-blocking must never have;
+  //   * and the unchanged-run fast path read the file before the check, so a symlink whose
+  //     target already matched slipped through reporting 'unchanged'.
+  // All three driven. lstatSync does not follow the link, which is why it is the right call.
+  // NAMED RESIDUAL, not silently accepted: this is a check-then-write, so a symlink planted
+  // between the lstat and the write still wins. Node exposes no portable O_NOFOLLOW write, and
+  // an attacker who can write into the phase directory mid-run already has what the check would
+  // protect. It narrows a real accident; it is not a security boundary, and the docs do not
+  // claim one. A hard link likewise passes isFile() by construction.
+  if (fs.existsSync(process.env.DISPOSITION_FILE) && !fs.lstatSync(process.env.DISPOSITION_FILE).isFile()) {
+    console.log('Code review disposition skipped: ' + process.env.DISPOSITION_FILE + ' exists and is not a regular file; refusing to read or write through it.');
+    process.exit(0);
+  }
   // Captures the id AND the title: the title is what tells a stale fix report apart from a
   // current one, because finding ids are reused across re-reviews.
   const ID_RE = /^###\s+((?:CR|BL|WR|IN)-\d+)\s*:\s*(.*)\$/;
@@ -504,21 +522,14 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
     console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote);
     process.exit(0);
   }
-  // REFUSE TO WRITE THROUGH A SYMLINK. writeFileSync FOLLOWS one, so a pre-existing symlink at
-  // the ledger path replaced the contents of whatever it pointed at -- outside the phase
-  // directory, with the link left intact so nothing looked wrong. Driven. This step introduces
-  // the artifact, so it owns the check: an existing ledger that is not a regular file is not a
-  // ledger, and the gate is advisory, so it says so and steps over.
-  if (fs.existsSync(process.env.DISPOSITION_FILE) && !fs.lstatSync(process.env.DISPOSITION_FILE).isFile()) {
-    console.log('Code review disposition skipped: ' + process.env.DISPOSITION_FILE + ' exists and is not a regular file; refusing to write through it.');
-    process.exit(0);
-  }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
   console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + ' — ' + process.env.DISPOSITION_FILE);
 " || echo "Code review disposition record skipped (non-blocking)."
 
 COMMIT_DOCS=$(gsd_run query config-get commit_docs --raw 2>/dev/null || echo "true")
-if [ "$COMMIT_DOCS" = "true" ] && [ -f "${DISPOSITION_FILE}" ]; then
+# `-f` FOLLOWS a symlink, so this could hand the commit helper a link the script above just
+# refused to write through -- the guard and its consumer disagreeing about the same path.
+if [ "$COMMIT_DOCS" = "true" ] && [ -f "${DISPOSITION_FILE}" ] && [ ! -L "${DISPOSITION_FILE}" ]; then
   gsd_run query commit "docs(${PADDED}): record code review disposition" --files "${DISPOSITION_FILE}" || true
 fi
 ```

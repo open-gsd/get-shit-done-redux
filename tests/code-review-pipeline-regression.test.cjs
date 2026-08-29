@@ -2373,11 +2373,19 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
   // by simply adding `3.1) PADDED=03.1` to the same case. Any finite sample loses that race --
   // the enumeration just grows to cover whatever the test happens to name.
   //
-  // A phase the test picks at RUN TIME cannot be enumerated in advance, so a hardcode fails on
-  // the next run rather than never. The cost is a nondeterministic input, paid for by printing
-  // the drawn values in every assertion message, so a failure is reproducible from its own
-  // output. One integer and one dotted phase per run: the dotted one additionally pins the
-  // integer-part split a naive `%02d` cannot express.
+  // A phase picked at RUN TIME raises the cost of a hardcode from two arms to the whole drawn
+  // domain, so an accidental loss of derivation fails on some run rather than never.
+  //
+  // STATED HONESTLY, because the first version of this comment overclaimed and was refuted: the
+  // domain is FINITE -- 88 integer values and 792 dotted ones -- so a mutation enumerating all
+  // 880 passes forever, and one covering 90 or 12345678.1 or 1.10 would still break real phases
+  // the draw cannot reach. This raises the bar; it does not prove derivation, and nothing short
+  // of reading the fence can. `Math.random()` is also unseeded, so a failure is reproducible only
+  // in the sense that the drawn values are printed in every assertion message below -- re-running
+  // draws different ones. That is the honest description of what this buys.
+  //
+  // One integer and one dotted phase per run: the dotted one additionally pins the integer-part
+  // split a naive `%02d` cannot express.
   const rnd = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
   const intPhase = String(rnd(2, 89));
   const dotPhase = rnd(2, 89) + '.' + rnd(1, 9);
@@ -2513,6 +2521,100 @@ function renderGateMessage(counts, phaseNumber) {
     : 'Code review found issues.';
   return head + '\n' + `Consider running: /gsd:code-review ${phaseNumber} --fix` + '\n';
 }
+
+describe('#3861 round 2 — the ledger write refuses a non-regular file', () => {
+  // The write-safety behaviour shipped with NO regression control at all -- I hand-drove it and
+  // did not pin it, which the round review caught by grepping for the words. Three shapes, each
+  // a distinct failure mode, all driven before this test existed:
+  //   symlink   -> writeFileSync FOLLOWS it and replaced the target's contents, outside the
+  //                phase directory, leaving the link intact so nothing looked wrong;
+  //   FIFO      -> readFileSync BLOCKED FOREVER, in a gate documented as never blocking;
+  //   directory -> the write throws.
+  const mkPhase = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-nrf-'));
+    fs.writeFileSync(path.join(dir, '03-REVIEW.md'),
+      ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n'));
+    return dir;
+  };
+  const runAt = (dir) => runNode(['-e', shippedDispositionScript()], {
+    timeoutMs: PROBE_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      REVIEW_FILE: path.join(dir, '03-REVIEW.md'),
+      DISPOSITION_FILE: path.join(dir, '03-REVIEW-DISPOSITION.md'),
+      FIX_REPORT_FILE: path.join(dir, '03-REVIEW-FIX.md'),
+      PADDED: '03',
+    },
+  });
+
+  test('a symlink at the ledger path is refused, and its target is untouched', () => {
+    const dir = mkPhase();
+    try {
+      const outside = path.join(dir, 'outside.txt');
+      fs.writeFileSync(outside, 'ORIGINAL');
+      fs.symlinkSync(outside, path.join(dir, '03-REVIEW-DISPOSITION.md'));
+      const res = runAt(dir);
+      assert.strictEqual(res.exitCode, 0, 'advisory: it refuses, it does not fail');
+      assert.match(res.stdout, /not a regular file/, 'and says why');
+      assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'ORIGINAL',
+        'the symlink target must not be overwritten');
+      assert.ok(fs.lstatSync(path.join(dir, '03-REVIEW-DISPOSITION.md')).isSymbolicLink(),
+        'and the link itself is left alone');
+    } finally { cleanup(dir); }
+  });
+
+  test('a symlink whose target ALREADY matches is refused too — the fast path does not bypass it', () => {
+    // The unchanged-run fast path read the ledger before the check, so a link whose target
+    // happened to match slipped through reporting `unchanged`. The check is first now.
+    const dir = mkPhase();
+    try {
+      const outside = path.join(dir, 'outside.txt');
+      fs.writeFileSync(outside, 'ORIGINAL');
+      fs.symlinkSync(outside, path.join(dir, '03-REVIEW-DISPOSITION.md'));
+      runAt(dir);
+      const res = runAt(dir);
+      assert.match(res.stdout, /not a regular file/);
+      assert.doesNotMatch(res.stdout, /unchanged/, 'the fast path must not run ahead of the check');
+      assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'ORIGINAL');
+    } finally { cleanup(dir); }
+  });
+
+  test('a FIFO at the ledger path is refused rather than blocking the phase forever', () => {
+    const dir = mkPhase();
+    try {
+      // Through the process seam, like every other spawn in this file.
+      const mk = runHook('-c', ['mkfifo "$1"', '_', path.join(dir, '03-REVIEW-DISPOSITION.md')], {
+        interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS,
+      });
+      if (mk.outcome !== OUTCOME.EXITED || mk.exitCode !== 0) return;   // no mkfifo here
+      const res = runAt(dir);
+      assert.strictEqual(res.outcome, OUTCOME.EXITED,
+        'a FIFO must not hang the step — readFileSync blocks on one forever');
+      assert.strictEqual(res.exitCode, 0);
+      assert.match(res.stdout, /not a regular file/);
+    } finally { cleanup(dir); }
+  });
+
+  test('a directory at the ledger path is refused', () => {
+    const dir = mkPhase();
+    try {
+      fs.mkdirSync(path.join(dir, '03-REVIEW-DISPOSITION.md'));
+      const res = runAt(dir);
+      assert.strictEqual(res.exitCode, 0);
+      assert.match(res.stdout, /not a regular file/);
+    } finally { cleanup(dir); }
+  });
+
+  test('an ordinary ledger is still written — the refusal is not a blanket refusal', () => {
+    const dir = mkPhase();
+    try {
+      const res = runAt(dir);
+      assert.strictEqual(res.exitCode, 0);
+      assert.doesNotMatch(res.stdout, /not a regular file/);
+      assert.ok(fs.existsSync(path.join(dir, '03-REVIEW-DISPOSITION.md')));
+    } finally { cleanup(dir); }
+  });
+});
 
 describe('#3861 round 2 — a DOTTED phase number does not break the step', () => {
   // Found by the round's own adversarial review, in its MISSED section -- no finding asked about
