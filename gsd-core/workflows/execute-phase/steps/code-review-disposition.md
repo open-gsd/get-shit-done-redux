@@ -72,24 +72,34 @@ if [ "$REVIEW_COUNTS_OK" = "1" ] \
    && [ "$((10#$REVIEW_CRITICAL + 10#$REVIEW_WARNING + 10#$REVIEW_INFO))" -ne "$((10#$REVIEW_TOTAL))" ]; then
   REVIEW_COUNTS_OK=0
 fi
+# EMIT — inside the fence, on every reporting arm. Until this block existed, the fence computed six
+# values and printed none of them, and the prose below then asked the agent to display four of them.
+# The shell exits at the closing fence and the agent sees only stdout, so those values were
+# unobtainable: the message could not be rendered, and the whole block was decorative. That is the
+# rule block 2 states about itself — a prose-only gate on a value no later block can see is not a
+# gate — applied to the block that is this step's primary deliverable rather than only to its
+# sibling. The status arm is re-derived here, not left to the reader, for the same reason.
+case "$REVIEW_STATUS" in
+  ''|clean|skipped) ;;   # nothing to report; block 2 still reconciles an existing ledger
+  *)
+    if [ "$REVIEW_COUNTS_OK" = "1" ]; then
+      echo "Code review: ${REVIEW_TOTAL} findings — ${REVIEW_CRITICAL} critical, ${REVIEW_WARNING} warning, ${REVIEW_INFO} info."
+    else
+      # A REVIEW.md written without a `findings:` block has no counts to report, and any count that
+      # is empty, non-numeric, over-long or inconsistent makes the whole breakdown unavailable
+      # rather than half-filled. Half-true is worse than withheld.
+      echo "Code review found issues."
+    fi
+    echo "Consider running: /gsd:code-review ${PHASE_NUMBER} --fix"
+    ;;
+esac
 ```
 
-If REVIEW_STATUS is not "clean" and not "skipped" and not empty, and `REVIEW_COUNTS_OK` is `1`,
-display the severity breakdown. The counts were parsed above at no extra cost, and stating them is
-what makes a review with one `info` finding distinguishable from a review with a Critical:
-```
-Code review: ${REVIEW_TOTAL} findings — ${REVIEW_CRITICAL} critical, ${REVIEW_WARNING} warning, ${REVIEW_INFO} info.
-Consider running: /gsd:code-review ${PHASE_NUMBER} --fix
-```
-
-That form requires `REVIEW_COUNTS_OK` to be `1`. A REVIEW.md written without a `findings:` block
-has no counts to report, and any count that is empty or non-numeric makes the whole breakdown
-unavailable rather than half-filled. When `REVIEW_COUNTS_OK` is `0`, display the countless form
-instead:
-```
-Code review found issues. Consider running:
-/gsd:code-review ${PHASE_NUMBER} --fix
-```
+**Display that block's stdout verbatim.** It prints the severity breakdown when all four counts are
+numeric and mutually consistent, and the countless form otherwise; on a clean, skipped or absent
+review it prints nothing and there is nothing to display. Do not re-derive any of it — a number the
+shell computed and did not print is gone once the fence closes, which is precisely the defect this
+arm exists to close.
 
 **Record a per-finding disposition.** The counts say how many findings there were, not what
 happened to any of them. On the same condition as the message above — REVIEW_STATUS not "clean",
