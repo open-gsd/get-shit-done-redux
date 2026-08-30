@@ -283,6 +283,15 @@ _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-pars
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
 REVIEW_TOTAL="${REVIEW_TOTAL}" \
 FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
+  // EVERYTHING BELOW RUNS INSIDE main() AND LEAVES BY return, NEVER an explicit exit call. The script
+  // prints its one-line verdict and then ends; with an explicit exit directly after console.log,
+  // the exit can pre-empt the write when stdout is a pipe or socket (Node documents those writes
+  // as asynchronous on POSIX), and the caller then sees an exit 0 with NO verdict line. A
+  // hardening against that documented hazard, not a reproduced defect: the 'unchanged' branch was
+  // the only one that exited explicitly, and the empty stdout that first pointed at it turned out to
+  // be a reviewing sandbox's own. A function that returns lets the event loop drain stdout before
+  // the process ends. Same exit status either way.
+  (function main() {
   const fs = require('fs'), path = require('path');
   const norm = (s) => s.replace(/\r\n/g, '\n');
   // AN EXISTING LEDGER THAT IS NOT A REGULAR FILE IS NOT A LEDGER. Checked FIRST, before any read
@@ -301,7 +310,7 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   // claim one. A hard link likewise passes isFile() by construction.
   if (fs.existsSync(process.env.DISPOSITION_FILE) && !fs.lstatSync(process.env.DISPOSITION_FILE).isFile()) {
     console.log('Code review disposition skipped: ' + process.env.DISPOSITION_FILE + ' exists and is not a regular file; refusing to read or write through it.');
-    process.exit(0);
+    return;
   }
   // Captures the id AND the title: the title is what tells a stale fix report apart from a
   // current one, because finding ids are reused across re-reviews.
@@ -373,7 +382,7 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
   // and its untriaged rows are BOTH carried, marked. Exiting here would freeze a stale ledger
   // showing findings as open that the review no longer reports.
-  if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
+  if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) return;
   // Prior rows: keep the disposition AND its source cell — the source is where a human writes
   // the reason a finding was deferred, and rewriting it would discard the very thing the
   // 'set deferred by hand, with the reason' instruction asks for. The Source cell is the LAST
@@ -508,14 +517,15 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   // rows carried from earlier reviews and would understate the shortfall or invent one.
   const unparsed = declaredTotal !== null && declaredTotal > order.length ? declaredTotal - order.length : 0;
   const unparsedNote = unparsed ? ' (' + unparsed + ' finding(s) recorded NOWHERE: the review reports ' + declaredTotal + ', but only ' + order.length + ' matched the expected heading shape \`### <CR|BL|WR|IN>-NN: <title>\`)' : '';
-  if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
+  if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) return;
   // A bare | in a Source cell is escaped on render so the table stays a table. Scanned as PAIRS,
   // not by the preceding character: an escaped pair (backslash + anything) is kept verbatim and only
   // a pipe outside one is escaped. The previous form, /(^|[^\\\\])\|/g, CONSUMED the character before
   // the pipe, so adjacent bare pipes were escaped one per run (A||B -> A\\||B -> A\\|\\|B, a third run
   // to converge) and an escaped backslash before a pipe (A\\\\|B) hid the pipe behind the wrong
   // parity and left it bare. Found by the round-3 adversarial pass, not by the property -- whose
-  // generator emits at most one bare pipe, which is the one case the old form got right.
+  // generator then emitted at most one bare pipe, the one case the old form got right; it now
+  // reaches adjacent pipes and both backslash parities, against an independent parity oracle.
   const escapePipes = (t) => t.replace(/\\\\.|\|/g, (m) => (m === '|' ? '\\\\|' : m));
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
@@ -534,10 +544,11 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   const prev = fs.existsSync(process.env.DISPOSITION_FILE) ? norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')) : '';
   if (prev && stripTs(prev) === stripTs(render(''))) {
     console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote);
-    process.exit(0);
+    return;
   }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
   console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + ' — ' + process.env.DISPOSITION_FILE);
+  })();
 " || echo "Code review disposition record skipped (non-blocking)."
 
 COMMIT_DOCS=$(gsd_run query config-get commit_docs --raw 2>/dev/null || echo "true")

@@ -2069,13 +2069,11 @@ describe('#3829 review round 2 — a review that reports nothing still reconcile
     assert.strictEqual(buildDisposition({ reviewText: EMPTY_REVIEW, padded: '01' }), null);
   });
 
-  test('docs-parity: the empty-review guard checks for an existing ledger before exiting', () => {
-    const step = fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8');
-    assert.ok(
-      step.includes('if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);'),
-      'an empty review must still reconcile an existing ledger'
-    );
-  });
+  // Ninth src.includes() retired (round 3): it pinned the guard's exact line, including the
+  // process.exit(0) the script no longer calls, so it went red on a change that left the property
+  // untouched. The property -- an empty review still reconciles an EXISTING ledger -- is asserted
+  // behaviourally by the round-2 describe '#3829 review round 2 — a review that reports nothing
+  // still reconciles the ledger' below, which drives the shipped script against a prior ledger.
 
 });
 
@@ -2302,7 +2300,24 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
   // the character before the pipe: adjacent bare pipes were escaped one per run (A||B -> A\||B ->
   // A\|\|B, a third run to converge, breaking the advertised second-run fixed point), and an escaped
   // backslash before a pipe (A\\|B) hid the pipe behind the wrong parity and left it bare in the
-  // rendered table. The generator emits at most one bare pipe, so no property reached either.
+  // rendered table. The generator then emitted at most one bare pipe, so no property reached either; it does now.
+  // Round-3 adversarial pass. The script printed its verdict and then called process.exit(0) on the
+  // 'unchanged' branch only. Node documents process.stdout writes to pipes as ASYNCHRONOUS on
+  // POSIX, and an explicit exit can pre-empt a pending write, so on those lanes the caller can see
+  // exit 0 with no verdict line -- a hardening, not a reproduced defect: the reviewer's empty-stdout
+  // observation turned out to be its own sandbox (a bare console.log child printed nothing there
+  // either), which is stated so nobody re-reads this as evidence the drop was seen. The script now
+  // runs inside main() and leaves by return, so the loop drains stdout before exit.
+  // Shape-pinned deliberately: the property IS the absence of the call, and a behavioural test would
+  // have to race a pipe to fail. Comments are stripped first so a mention is not a match, and the
+  // match covers the dotted, bracketed and whitespace-split spellings; a call built by any other
+  // indirection is outside this pin and is what code review is for.
+  test('the shipped script never calls process.exit -- it returns, so its verdict line is never lost', () => {
+    const code = shippedDispositionScript().replace(/^\s*\/\/.*$/gm, '');
+    assert.doesNotMatch(code, /process\s*(?:\.\s*exit\b|\[\s*['"]exit['"]\s*\])/,
+      'leave main() by return; an explicit exit can drop the verdict line on a piped stdout');
+  });
+
   test('adjacent bare pipes and a backslash-then-pipe are escaped in ONE write, then converge', () => {
     const review = ['---', 'status: issues_found', '---', '', '### CR-01: a'].join('\n');
     const prior = '| CR-01 | critical | deferred | A||B and C\\\\|D |';

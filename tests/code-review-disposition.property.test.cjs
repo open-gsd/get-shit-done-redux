@@ -108,6 +108,9 @@ const SOURCE_CELL = fc.stringMatching(/^[A-Za-z0-9 .,()-]{0,24}$/)
   .map((s) => s.trim() || 'recorded')
   .chain((s) => fc.boolean().map((withPipe) => (withPipe ? s + ' \\| see ADR-9' : s)))
   .chain((s) => fc.boolean().map((barePipe) => (barePipe ? s + ' | team B to align' : s)))
+  // Adjacent pipes and a backslash of either parity before a pipe: the first render escape got both
+  // wrong while passing every input above (round 3, adversarial pass over the fix).
+  .chain((s) => fc.constantFrom('', ' A||B', ' C\\\\|D', ' E\\\\\\|F').map((t) => s + t))
   .chain((s) => fc.boolean().map((reserved) => (reserved ? s + ' (not in the current review)' : s)));
 
 const FINDINGS = fc.uniqueArray(
@@ -170,7 +173,20 @@ describe('#3829 — the disposition ledger is a render/re-parse fixed point', ()
         // cell is the escaped form of what the human wrote — same text under any markdown
         // renderer, and the file converges on the second run. Before this the row simply
         // failed to parse and the decision was lost, which is the defect this arbitrary now reaches.
-        const escapePipes = (t) => t.replace(/(^|[^\\])\|/g, '$1\\|');
+        // An INDEPENDENT oracle, deliberately not the render's own scan: a pipe is escaped iff an
+        // EVEN number of backslashes (including zero) immediately precedes it, counted by walking
+        // the string. A copy of the production regex here would agree with it when both are wrong
+        // (the round-3 adversarial pass refused exactly that shape), and a single-character
+        // look-behind agreed with the first, wrong render -- the negative control caught the mirror.
+        const escapePipes = (t) => {
+          let out = '', run = 0;
+          for (const ch of t) {
+            if (ch === '\\') { run += 1; out += ch; continue; }
+            if (ch === '|' && run % 2 === 0) out += '\\|'; else out += ch;
+            run = 0;
+          }
+          return out;
+        };
         assert.strictEqual(
           cells[3], escapePipes(source.replace(MARK, '')),
           'the reason survives, bare pipes escaped, less at most one trailing carried marker'
