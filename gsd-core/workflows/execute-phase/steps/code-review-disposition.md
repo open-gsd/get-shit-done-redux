@@ -509,8 +509,16 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   const unparsed = declaredTotal !== null && declaredTotal > order.length ? declaredTotal - order.length : 0;
   const unparsedNote = unparsed ? ' (' + unparsed + ' finding(s) recorded NOWHERE: the review reports ' + declaredTotal + ', but only ' + order.length + ' matched the expected heading shape \`### <CR|BL|WR|IN>-NN: <title>\`)' : '';
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
+  // A bare | in a Source cell is escaped on render so the table stays a table. Scanned as PAIRS,
+  // not by the preceding character: an escaped pair (backslash + anything) is kept verbatim and only
+  // a pipe outside one is escaped. The previous form, /(^|[^\\\\])\|/g, CONSUMED the character before
+  // the pipe, so adjacent bare pipes were escaped one per run (A||B -> A\\||B -> A\\|\\|B, a third run
+  // to converge) and an escaped backslash before a pipe (A\\\\|B) hid the pipe behind the wrong
+  // parity and left it bare. Found by the round-3 adversarial pass, not by the property -- whose
+  // generator emits at most one bare pipe, which is the one case the old form got right.
+  const escapePipes = (t) => t.replace(/\\\\.|\|/g, (m) => (m === '|' ? '\\\\|' : m));
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
-    .concat(rows.map((r) => { const src = (r.src || '-').replace(/(^|[^\\\\])\|/g, '\$1\\\\|'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
+    .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
     .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))

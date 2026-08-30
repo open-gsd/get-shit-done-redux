@@ -2298,6 +2298,22 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
     assert.match(second.stdout, /disposition unchanged/, 'the second run must converge');
   });
 
+  // Round-3 adversarial pass on the fix above. The first escape used /(^|[^\\])\|/g, which CONSUMES
+  // the character before the pipe: adjacent bare pipes were escaped one per run (A||B -> A\||B ->
+  // A\|\|B, a third run to converge, breaking the advertised second-run fixed point), and an escaped
+  // backslash before a pipe (A\\|B) hid the pipe behind the wrong parity and left it bare in the
+  // rendered table. The generator emits at most one bare pipe, so no property reached either.
+  test('adjacent bare pipes and a backslash-then-pipe are escaped in ONE write, then converge', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a'].join('\n');
+    const prior = '| CR-01 | critical | deferred | A||B and C\\\\|D |';
+    const first = runShippedDisposition({ reviewText: review, priorText: prior });
+    assert.strictEqual(ledgerRows(first.ledger)[0].source, 'A\\|\\|B and C\\\\\\|D',
+      'every bare pipe is escaped on the first write, whatever precedes it');
+    const second = runShippedDisposition({ reviewText: review, priorText: first.ledger });
+    assert.strictEqual(second.ledger, first.ledger, 'and the escaped form is a fixed point');
+    assert.match(second.stdout, /disposition unchanged/);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
