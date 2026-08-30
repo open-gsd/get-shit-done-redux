@@ -1852,10 +1852,10 @@ describe('#3829 review round — frontmatter scoping, section anchoring, ledger 
       src.includes('/^##\\s+Fixed Issues\\s*\\$/') && src.includes('/^##\\s+Skipped Issues\\s*\\$/'),
       'fix-report section headings must be matched whole, never by prefix'
     );
-    assert.ok(
-      src.includes('((?:[^|\\\\\\\\]|\\\\\\\\.)*?)'),
-      'the prior-row regex must capture the source cell, escaped pipes included'
-    );
+    // Eighth src.includes() converted -- it pinned the exact source-cell CAPTURE, and that
+    // capture was the round-3 defect (a bare | failed the whole match). The property it named
+    // is asserted behaviourally below: 'an escaped pipe in a deferral reason survives whole'
+    // and 'a bare pipe in a deferral reason is kept as prose'.
     // Seventh src.includes() converted -- it pinned the exact comparison EXPRESSION, so it went
     // red when the comparison gained whitespace normalization while the property it names was
     // unchanged. Assert the property instead: a fix report naming a different finding under a
@@ -2273,6 +2273,29 @@ describe('#3829 review round 3 — stale fix reports, fenced examples, hostile R
     const prior = '| CR-01 | critical | deferred | wait \\| see ADR-9 |';
     const rows = ledgerRows(runShippedDisposition({ reviewText: review, priorText: prior }).ledger);
     assert.strictEqual(rows[0].source, 'wait \\| see ADR-9');
+  });
+
+  // #3861 round 3. The Source cell is the one field this ledger asks a human to hand-edit, and
+  // "waiting on team A | team B to align" is an ordinary thing to type there. Under the previous
+  // capture a bare | failed the WHOLE prior-row match: prior.get() was undefined, the row fell
+  // through to open with an empty Source, and the console line read "1 of 1 finding(s) open" --
+  // a Critical a human explicitly deferred, with a documented reason, rendered indistinguishable
+  // from one never triaged, and the reason gone. Exactly the "was this ever seen" ambiguity
+  // #3829 exists to remove, reachable by one missing backslash. The cell is the LAST column, so
+  // it is now captured to the end of the line and a bare pipe is prose; the render escapes it
+  // so the table stays a table, and the second run converges.
+  test('a bare pipe in a deferral reason is kept as prose: the decision and the reason survive', () => {
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a'].join('\n');
+    const prior = '| CR-01 | critical | deferred | waiting on team A | team B to align |';
+    const first = runShippedDisposition({ reviewText: review, priorText: prior });
+    const rows = ledgerRows(first.ledger);
+    assert.strictEqual(rows[0].disposition, 'deferred', 'a bare pipe must not revert the decision');
+    assert.strictEqual(rows[0].source, 'waiting on team A \\| team B to align', 'the reason survives, escaped');
+    assert.match(first.ledger, /^open: 0$/m, 'and the headline count agrees with the row');
+    // Fixed point: the escaped form re-parses to itself, so the second run rewrites nothing.
+    const second = runShippedDisposition({ reviewText: review, priorText: first.ledger });
+    assert.strictEqual(ledgerRows(second.ledger)[0].source, 'waiting on team A \\| team B to align');
+    assert.match(second.stdout, /disposition unchanged/, 'the second run must converge');
   });
 
 });

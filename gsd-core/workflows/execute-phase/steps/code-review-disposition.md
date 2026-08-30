@@ -376,9 +376,15 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   // Prior rows: keep the disposition AND its source cell — the source is where a human writes
   // the reason a finding was deferred, and rewriting it would discard the very thing the
-  // 'set deferred by hand, with the reason' instruction asks for. An escaped \\| is legal in a
-  // table cell (the rendered instruction says to escape it), and the trailing pipe is optional
-  // so a hand-mangled row loses no decision.
+  // 'set deferred by hand, with the reason' instruction asks for. The Source cell is the LAST
+  // column, so it is captured through to the end of the line, less an optional trailing pipe:
+  // a bare | inside it is prose, not a column break. The previous capture admitted a pipe only
+  // when escaped, and the whole-line match then FAILED on a bare one -- a human who wrote
+  // 'waiting on team A | team B' as a deferral reason had the row not match at all, the finding
+  // reset to open, and the reason destroyed: a triaged Critical rendered indistinguishable from
+  // one never seen, off an ordinary typo in the one field this ledger asks a human to hand-edit.
+  // The render below escapes a bare pipe on the next write, so the file converges to the escaped
+  // form either way. The trailing pipe is optional so a hand-mangled row loses no decision.
   const prior = new Map();
   if (fs.existsSync(process.env.DISPOSITION_FILE)) {
     for (const l of norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')).split('\n')) {
@@ -394,7 +400,7 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
       // to open -- safe. A typo INSIDE [a-z] was unsafe. The parser failed open in the one
       // direction that matters. A row that does not match now yields no prior entry, so the row
       // falls back to 'open' -- the safe default, by the same path the capital-D case took.
-      const m = l.match(/^\|\s*((?:CR|BL|WR|IN)-\d+)\s*\|[^|]*\|\s*(open|fixed|skipped|deferred)\s*\|\s*((?:[^|\\\\]|\\\\.)*?)\s*\|?\s*\$/);
+      const m = l.match(/^\|\s*((?:CR|BL|WR|IN)-\d+)\s*\|[^|]*\|\s*(open|fixed|skipped|deferred)\s*\|\s*(.*?)\s*\|?\s*\$/);
       // Strip the carried marker before storing: it is rendered from the carried flag, so
       // leaving it on the stored value would re-append it every run — the cell grows without
       // bound AND the file changes on every run, defeating the unchanged-run check below.
@@ -504,8 +510,8 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   const unparsedNote = unparsed ? ' (' + unparsed + ' finding(s) recorded NOWHERE: the review reports ' + declaredTotal + ', but only ' + order.length + ' matched the expected heading shape \`### <CR|BL|WR|IN>-NN: <title>\`)' : '';
   if (rows.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) process.exit(0);
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
-    .concat(rows.map((r) => { const src = r.src || '-'; const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
-    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. Escape any \`|\`.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
+    .concat(rows.map((r) => { const src = (r.src || '-').replace(/(^|[^\\\\])\|/g, '\$1\\\\|'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
+    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))
     .concat(['open: ' + open, 'total: ' + rows.length])

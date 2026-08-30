@@ -11,7 +11,7 @@
  * every disposition except `open`", and it rewrites nothing when nothing
  * changed. Both are invariants over an input space that fixtures sample at a
  * handful of points — id ordering, severity mix, hand-edited source cells with
- * escaped pipes, carried rows from a review that no longer reports them.
+ * escaped AND bare pipes, carried rows from a review that no longer reports them.
  *
  * Two properties, both over the SHIPPED script (extracted from the step file
  * and executed), never over a model of it:
@@ -94,7 +94,12 @@ const VOCABULARY = ['open', 'fixed', 'skipped', 'deferred'];
 const JUNK = fc.stringMatching(/^[a-z]{2,10}$/).filter((s) => !VOCABULARY.includes(s));
 
 // A hand-written Source cell: the one place a human writes prose into the
-// ledger, so it carries the escaped pipe the rendered instruction asks for.
+// ledger, so it carries the escaped pipe the rendered instruction asks for — AND the bare
+// pipe a human actually types. Round 3 of #3861 found that this generator only ever emitted
+// the escaped form, so the property built to stress this cell was structurally unable to
+// reach the one input that broke it: a bare | failed the whole-line prior-row match, the
+// finding reset to open and the reason was destroyed. A generator that reaches only the
+// inputs the parser was written for is a fixture with extra steps.
 // The reserved suffix is generated DELIBERATELY. The gate strips a carried marker before storing
 // it, so a hand-written reason that merely ENDS in that phrase is the input most likely to be
 // eaten — and a generator drawn only from innocuous characters can never produce it. Found by
@@ -102,6 +107,7 @@ const JUNK = fc.stringMatching(/^[a-z]{2,10}$/).filter((s) => !VOCABULARY.includ
 const SOURCE_CELL = fc.stringMatching(/^[A-Za-z0-9 .,()-]{0,24}$/)
   .map((s) => s.trim() || 'recorded')
   .chain((s) => fc.boolean().map((withPipe) => (withPipe ? s + ' \\| see ADR-9' : s)))
+  .chain((s) => fc.boolean().map((barePipe) => (barePipe ? s + ' | team B to align' : s)))
   .chain((s) => fc.boolean().map((reserved) => (reserved ? s + ' (not in the current review)' : s)));
 
 const FINDINGS = fc.uniqueArray(
@@ -160,9 +166,14 @@ describe('#3829 — the disposition ledger is a render/re-parse fixed point', ()
         // stripping unboundedly ate the cell. One occurrence, one direction, stated here so the
         // trade is visible rather than discovered.
         const MARK = /\s*\(not in the current review\)\s*$/;
+        // A bare | in the reason is kept as prose and ESCAPED on re-render, so the rendered
+        // cell is the escaped form of what the human wrote — same text under any markdown
+        // renderer, and the file converges on the second run. Before this the row simply
+        // failed to parse and the decision was lost, which is the defect this arbitrary now reaches.
+        const escapePipes = (t) => t.replace(/(^|[^\\])\|/g, '$1\\|');
         assert.strictEqual(
-          cells[3], source.replace(MARK, ''),
-          'the reason survives, less at most one trailing carried marker'
+          cells[3], escapePipes(source.replace(MARK, '')),
+          'the reason survives, bare pipes escaped, less at most one trailing carried marker'
         );
         assert.doesNotMatch(cells[3], MARK, 'and a current finding is never marked as carried');
       } finally {
