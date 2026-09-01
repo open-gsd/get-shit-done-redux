@@ -22,14 +22,21 @@ const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const HAS_BASH = process.platform !== 'win32';
 
 // Extract the bash fence out of a named <step>, so a test can RUN it rather than grep it.
+// Line-scanned rather than matched with a multiline regex: an ad-hoc fence regex trips
+// local/no-adhoc-markdown-parsing, and a bare \n against readFileSync content trips
+// local/no-crlf-fragile-split (Windows autocrlf yields \r\n). Same shape as bashFences() in
+// tests/code-review-pipeline-regression.test.cjs, which solved this first.
 function stepFence(src, name) {
   const open = src.indexOf(`<step name="${name}">`);
   assert.notStrictEqual(open, -1, `step "${name}" not found`);
   const close = src.indexOf('</step>', open);
-  const region = src.slice(open, close);
-  const m = region.match(/```bash\n([\s\S]*?)\n```/);
-  assert.ok(m, `step "${name}" carries no bash fence`);
-  return m[1];
+  const lines = src.slice(open, close).replace(/\r\n/g, '\n').split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (start === -1 && /^```bash\s*$/.test(lines[i])) { start = i + 1; continue; }
+    if (start !== -1 && /^```\s*$/.test(lines[i])) return lines.slice(start, i).join('\n');
+  }
+  assert.fail(`step "${name}" carries no bash fence`);
 }
 const { createTempDir, cleanup } = require('./helpers.cjs');
 
