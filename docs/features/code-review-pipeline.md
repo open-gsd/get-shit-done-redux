@@ -82,6 +82,22 @@ review with neither `--fix` nor `--auto` — so every row it writes is `open`. T
 report is on disk. Running the gate alone therefore tells you what was found; running `--fix` is
 what records what happened to it.
 
+**`--auto`'s iterations are reconciled too, and that takes reading more than the final report.**
+The loop overwrites `REVIEW-FIX.md` on every pass and the re-review stops reporting a finding once
+it is fixed, so a finding closed in iteration 1 appears in neither final artifact. The gate
+therefore also reads the per-iteration backups the loop writes (`<NN>-REVIEW-FIX.iterN.md`), newest
+first, so the most recent statement about an ID wins; the backups are removed after the ledger has
+read them, not before. Without this a fully successful multi-iteration run recorded its early fixes
+as `open (not in the current review)` — indistinguishable from a finding that vanished for an
+unrelated reason, which is the one distinction this ledger exists to make. A finding a fix report
+decided but the current review no longer reports gets a row of its own, carrying that decision and
+marked *(not in the current review)*.
+
+A converged `--auto` run also reaches the gate with a clean review and, on a direct
+`/gsd-code-review` invocation, no ledger from the in-phase gate. A fix report on disk is reason
+enough to record: without that, a run in which every finding was fixed and committed produced no
+disposition record at all.
+
 Reconciliation applies an outcome only when the fix report names the **same** finding, because
 finding IDs are reused across re-reviews and a stale report would otherwise declare a brand-new
 `CR-01` already fixed. Titles are compared with runs of whitespace collapsed, so a fixer that
