@@ -2332,6 +2332,19 @@ A converged `--auto` run also reaches the gate with a clean review and, on a dir
 enough to record: without that, a run in which every finding was fixed and committed produced no
 disposition record at all.
 
+**A decision belongs to a finding, not to an ID.** IDs are reused across re-reviews — `--auto`
+renumbers — so the ledger records each finding's title alongside its disposition, and a recorded
+decision is carried forward only while the ID still names the same finding. Without that, a prior
+`CR-01 fixed` would be inherited by a brand-new `CR-01`, which is a false decision in the one
+artifact whose purpose is telling triaged from forgotten.
+
+**The limitation that follows, stated rather than hidden.** When an ID *is* reused, the new finding
+is recorded `open` (nobody decided anything about it) and the earlier decision **loses its row** —
+the ledger keys rows on the finding ID, and two rows under one ID is an ambiguity, not a record. The
+drop is reported on the console, naming the ID and what had been decided, and the previous ledger is
+committed, so the superseded row remains in git. Preserving it in the file was tried and withdrawn:
+it needed a second identity scheme and produced a fresh defect on each of three review passes.
+
 Reconciliation applies an outcome only when the fix report names the **same** finding, because
 finding IDs are reused across re-reviews and a stale report would otherwise declare a brand-new
 `CR-01` already fixed. Titles are compared with runs of whitespace collapsed, so a fixer that
