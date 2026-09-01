@@ -477,6 +477,22 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // The render below escapes a bare pipe on the next write, so the file converges to the escaped
   // form either way. The trailing pipe is optional so a hand-mangled row loses no decision.
   const prior = new Map();
+  // TITLES, AND WHY THE TABLE CANNOT CARRY THEM. Finding ids are reused across re-reviews -- the
+  // --auto loop renumbers -- so an id alone does not identify a finding, and row() below inherited a
+  // decision on an id match with nothing checking that it was the SAME finding. Driven: a prior
+  // 'CR-01 fixed' row against a review reporting a brand-new CR-01 rendered the new finding 'fixed'.
+  // That is a false decision in the artifact whose whole purpose is telling triaged from forgotten.
+  // The title lives in the FRONTMATTER, not in a fifth table column: the Source cell is the field a
+  // human hand-edits and the one that must escape pipes, and adding a second free-text column doubles
+  // that surface for no reader benefit. Frontmatter is machine-owned and already per-finding.
+  const priorTitle = new Map();
+  // Decisions whose id has since been reused by a DIFFERENT finding. They cannot keep a row -- the id
+  // is taken, and two rows under one id is not a record, it is an ambiguity -- but dropping them is
+  // the silent loss this ledger exists to prevent, so they are preserved here and re-emitted every
+  // run. Keyed by id + title so a re-run cannot accumulate duplicates.
+  const superseded = [];
+  const supersededKey = new Set();
+  var _fmId = null;
   if (fs.existsSync(process.env.DISPOSITION_FILE)) {
     for (const l of norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')).split('\n')) {
       // The disposition column is an ENUM, not 'any lowercase token'. ADR-227 requires a trust
@@ -505,6 +521,18 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
       // current row the phrase was self-contradictory to begin with. The unbounded quantifier is
       // what had to go, not the strip itself.
       if (m) prior.set(m[1], { d: m[2], src: m[3].replace(/\s*\(not in the current review\)\s*\$/, '') });
+      // Frontmatter, walked in the same pass: '    title: <t>' belongs to the most recent '  - id:'.
+      var mi = l.match(/^  - id: ((?:CR|BL|WR|IN)-\d+)\s*\$/);
+      if (mi) { _fmId = mi[1]; continue; }
+      var mt = l.match(/^    title: (.*)\$/);
+      if (mt && _fmId) { priorTitle.set(_fmId, mt[1]); continue; }
+      // Superseded records, carried verbatim. Without re-emission they would survive exactly one
+      // render and then vanish when the frontmatter is rebuilt from rows -- the same silent drop.
+      var ms = l.match(/^  - id: ((?:CR|BL|WR|IN)-\d+) \| disposition: (open|fixed|skipped|deferred) \| title: (.*?) \| source: (.*)\$/);
+      if (ms && !supersededKey.has(ms[1] + '\u0000' + ms[3])) {
+        supersededKey.add(ms[1] + '\u0000' + ms[3]);
+        superseded.push({ id: ms[1], d: ms[2], t: ms[3], src: ms[4] });
+      }
     }
   }
   // TITLE COMPARISON, and its FALSE-POSITIVE mode, which was previously unacknowledged.
@@ -554,19 +582,36 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
         // The id-reuse hazard this ordering could raise is already closed by the arm below: when the
         // review DOES report the id, a title mismatch still goes to 'staleFix' and is never applied,
         // so a renumbered finding cannot inherit an earlier iteration's 'fixed'.
-        if (!title.has(h.id)) applied.set(h.id, sect);
-        else if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, sect);
+        // The ORIGINATING report is recorded, not assumed. The Source cell used to hard-code the
+        // unsuffixed <NN>-REVIEW-FIX.md, so a decision read out of an iteration backup cited a file
+        // that may not even exist on disk -- a citation the reader cannot follow is worse than none.
+        var _acted = { d: sect, src: path.basename(fixPath) };
+        if (!title.has(h.id)) applied.set(h.id, _acted);
+        else if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, _acted);
         else if (staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
       }
     }
   }
   // Precedence: an applied outcome is evidence of an action on code and wins; a recorded
   // non-'open' decision wins over the default. 'open' never overwrites a decision.
+  // A prior decision is inherited only when the id still names the SAME finding. An ABSENT prior
+  // title inherits, deliberately: a ledger written before titles were recorded carries none, and
+  // refusing there would reset every decision in it -- the loss this guard exists to prevent, caused
+  // by the guard. Same whitespace-collapsing comparison the fix-report path uses, for the same reason.
+  const sameFinding = (id) => !priorTitle.has(id) || !title.has(id) || sameTitle(priorTitle.get(id), title.get(id));
   const row = (id) => {
-    if (applied.has(id)) return { id, sev: sev(id), d: applied.get(id), src: process.env.PADDED + '-REVIEW-FIX.md' };
+    if (applied.has(id)) { const a = applied.get(id); return { id, sev: sev(id), d: a.d, src: a.src, t: title.get(id) }; }
     const was = prior.get(id);
-    if (was && was.d !== 'open') return { id, sev: sev(id), d: was.d, src: was.src || 'recorded' };
-    return { id, sev: sev(id), d: 'open', src: '-' };
+    if (was && was.d !== 'open' && sameFinding(id)) return { id, sev: sev(id), d: was.d, src: was.src || 'recorded', t: title.get(id) };
+    // The id was reused by a different finding. The NEW finding is untriaged -- nobody decided
+    // anything about it -- so it renders 'open', and the superseded decision is preserved below
+    // rather than dropped. Recording only the mismatch and losing the decision was the round-5
+    // review's driven refutation of this very arm.
+    if (was && was.d !== 'open' && !supersededKey.has(id + '\u0000' + (priorTitle.get(id) || ''))) {
+      supersededKey.add(id + '\u0000' + (priorTitle.get(id) || ''));
+      superseded.push({ id: id, d: was.d, t: priorTitle.get(id) || '(title not recorded)', src: was.src || 'recorded' });
+    }
+    return { id, sev: sev(id), d: 'open', src: '-', t: title.get(id) };
   };
   const rows = order.map(row);
   // A prior finding the current review no longer reports is CARRIED, never dropped -- and that
@@ -593,9 +638,11 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   for (const id of applied.keys()) if (order.indexOf(id) === -1 && carriedIds.indexOf(id) === -1) carriedIds.push(id);
   for (const id of carriedIds) {
     const act = applied.get(id), was = prior.get(id);
-    const d = act || (was ? was.d : 'open');
-    const src = act ? process.env.PADDED + '-REVIEW-FIX.md' : (was && was.src) || (d === 'open' ? '-' : 'recorded');
-    rows.push({ id, sev: sev(id), d: d, src: src, carried: true });
+    const d = act ? act.d : (was ? was.d : 'open');
+    const src = act ? act.src : (was && was.src) || (d === 'open' ? '-' : 'recorded');
+    // The title round-trips from whichever source knows it: a carried row is absent from the current
+    // review, so the title map has nothing for it and the prior frontmatter is the only record.
+    rows.push({ id, sev: sev(id), d: d, src: src, t: priorTitle.get(id), carried: true });
   }
   const open = rows.filter((r) => r.d === 'open').length;
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
@@ -603,6 +650,9 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // The wording no longer ASSERTS a stale report. Both causes reach here -- a genuinely different
   // finding under a reused id, and a fixer that re-titled the same one -- and the step cannot tell
   // them apart, so it reports the observation rather than a conclusion it has not earned.
+  // Surfaced on the console as well as in the file: a reader who never opens the ledger still has to
+  // learn that a decision they made no longer has a row.
+  const supersededNote = superseded.length ? ' (' + superseded.length + ' prior decision(s) superseded by a REUSED finding id, preserved under superseded: ' + superseded.map((x) => x.id + '=' + x.d).join(', ') + ')' : '';
   const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y titles its' : 'ies title their') + ' finding differently from the review, so ' + (staleFix.length === 1 ? 'it was' : 'they were') + ' not reconciled -- a stale report, or a re-titled one: ' + staleFix.join(', ') + ')' : '';
   // RECONCILE THE TWO PARSERS. The counts come from REVIEW.md's frontmatter; the rows come from
   // heading matches against a CLOSED CR|BL|WR|IN alternation. A finding the heading parser cannot
@@ -633,9 +683,20 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
     .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
+  // TITLES ARE FLATTENED TO ONE LINE. A '###' heading is one line by construction, so this cannot
+  // fire on real input -- it is here because the value is interpolated into a line-oriented record
+  // that a regex re-reads, and a newline reaching it would silently truncate the entry on the next
+  // parse. Cheap, and it fails toward a readable title rather than a broken frontmatter.
+  const oneLine = (t) => String(t === undefined || t === null ? '' : t).replace(/[\r\n]+/g, ' ').trim();
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
-    .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d))
+    .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d
+                          + (oneLine(r.t) ? '\n    title: ' + oneLine(r.t) : '')))
     .concat(['open: ' + open, 'total: ' + rows.length])
+    // Emitted only when a decision was actually superseded, so an ordinary ledger gains no key and
+    // the unchanged-run check below is unaffected. One line per record, in the shape the parser
+    // above reads back, so the record survives every subsequent run rather than one.
+    .concat(superseded.length ? ['superseded:'].concat(superseded.map((x) =>
+      '  - id: ' + x.id + ' | disposition: ' + x.d + ' | title: ' + oneLine(x.t) + ' | source: ' + oneLine(x.src))) : [])
     // Emitted only when there IS a shortfall, so an ordinary ledger gains no noise key and the
     // unchanged-run check below is unaffected on every review that parses cleanly.
     .concat(unparsed ? ['unparsed: ' + unparsed] : []).join('\n');
@@ -646,11 +707,11 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   const stripTs = (t) => t.replace(/^recorded:.*\$/m, 'recorded:');
   const prev = fs.existsSync(process.env.DISPOSITION_FILE) ? norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')) : '';
   if (prev && stripTs(prev) === stripTs(render(''))) {
-    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote);
+    console.log('Code review disposition unchanged: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + supersededNote);
     return;
   }
   fs.writeFileSync(process.env.DISPOSITION_FILE, render(new Date().toISOString()));
-  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + ' — ' + process.env.DISPOSITION_FILE);
+  console.log('Code review disposition recorded: ' + open + ' of ' + rows.length + ' finding(s) open' + staleNote + unparsedNote + supersededNote + ' — ' + process.env.DISPOSITION_FILE);
   })();
 " || echo "Code review disposition record skipped (non-blocking)."
 

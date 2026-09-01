@@ -3312,6 +3312,91 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
       'and the mismatch must be stated, not swallowed');
   });
 
+  // ── #3861 round 5 rework — a REUSED finding id must not inherit the old finding's decision ──
+  //
+  // Found by the round's own adversarial review, which drove it: ids are reused across re-reviews
+  // (the --auto loop renumbers), and row() inherited a prior decision on an id match alone. A prior
+  // 'CR-01 fixed' against a review reporting a brand-new CR-01 rendered the NEW finding `fixed` — a
+  // false decision in the artifact whose entire purpose is telling triaged from forgotten.
+
+  test('a prior decision is NOT inherited when the id now names a different finding', () => {
+    const first = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: the original finding'].join('\n'),
+      fixText: ['## Fixed Issues', '', '### CR-01: the original finding'].join('\n'),
+    });
+    assert.strictEqual(ledgerRows(first.ledger).find((r) => r.id === 'CR-01').disposition, 'fixed');
+    assert.match(first.ledger, /title: the original finding/, 'the title must be recorded to make reuse detectable');
+
+    const second = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: first.ledger,
+    });
+    const cr = ledgerRows(second.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'open', 'a different finding under a reused id must be untriaged');
+  });
+
+  test('and the superseded decision is PRESERVED, not dropped', () => {
+    // The review's driven refutation was that the mismatch was surfaced while the decision was lost.
+    const first = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: the original finding'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | waiting on the vendor |\n',
+      fixText: undefined,
+    });
+    // Seed a ledger that records both the decision and the title it belongs to.
+    const second = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: first.ledger,
+    });
+    assert.match(second.ledger, /^superseded:/m, 'the superseded decision must be recorded in the ledger');
+    assert.match(second.ledger, /id: CR-01 \| disposition: deferred \| title: the original finding \| source: waiting on the vendor/,
+      'with its disposition, the finding it belonged to, and the reason');
+    assert.match(second.stdout, /superseded by a REUSED finding id/, 'and stated on the console');
+  });
+
+  test('a superseded record survives subsequent runs rather than one', () => {
+    const first = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: the original finding'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | waiting on the vendor |\n',
+    });
+    const second = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: first.ledger,
+    });
+    const third = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: second.ledger,
+    });
+    assert.match(third.ledger, /id: CR-01 \| disposition: deferred \| title: the original finding/,
+      'rebuilding the frontmatter from rows must not drop the carried record');
+    // And it must not accumulate: the same record twice is a growing file and a never-unchanged run.
+    assert.strictEqual((third.ledger.match(/ \| disposition: deferred \| /g) || []).length, 1);
+  });
+
+  test('a prior ledger with NO recorded title still inherits its decision (back-compat)', () => {
+    // A ledger written before titles were recorded carries none. Refusing to inherit there would
+    // reset every decision in it — the loss this guard exists to prevent, caused by the guard.
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: whatever it is called now'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | a reason from an older ledger |\n',
+    });
+    const cr = ledgerRows(out.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'deferred', 'an absent prior title must inherit, not reset');
+    assert.strictEqual(cr.source, 'a reason from an older ledger');
+  });
+
+  test('an iteration-derived decision cites the report it actually came from', () => {
+    // The Source cell hard-coded the unsuffixed <NN>-REVIEW-FIX.md, so a decision read out of an
+    // iteration backup cited a file that may not exist. A citation the reader cannot follow is
+    // worse than none.
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### IN-07: unrelated'].join('\n'),
+      iterFixText: { 2: ['## Fixed Issues', '', '### CR-01: fixed in iteration one'].join('\n') },
+    });
+    const cr = ledgerRows(out.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'fixed');
+    assert.match(cr.source, /01-REVIEW-FIX\.iter2\.md/, 'the cited report must be the one that decided it');
+  });
+
   test('a carried human reason ending in the marker is preserved, and not doubled', () => {
     // Neither stripped (the previous fix's residue) nor appended twice.
     const review = ['---', 'status: issues_found', '---', '', '### WR-01: unrelated'].join('\n');
