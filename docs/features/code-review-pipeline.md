@@ -145,7 +145,7 @@ once escaped. One exception, because it cannot be resolved: a reason ending in t
 carried marker the gate appends. The alternative is worse — a stored marker never leaves, so a
 carried finding that later reappears would keep claiming it is absent from the review reporting it.
 
-Re-running the gate preserves every row and every disposition, so a decision recorded here is never
+Re-running the gate keeps every row it can, so a decision recorded here is not
 overwritten by a later pass. A finding the current review no longer reports — `--auto` re-reviews
 and rewrites REVIEW.md, so this happens routinely — is **carried** rather than dropped, marked
 *(not in the current review)*. That holds whether or not it was triaged: losing a decided row would
