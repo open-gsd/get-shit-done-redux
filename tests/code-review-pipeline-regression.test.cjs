@@ -39,17 +39,24 @@ const ROOT = path.resolve(__dirname, '..');
 // that aborted the whole describe and CANCELLED its siblings. It caught three separate
 // additions in this round alone, and the cancellation reads as a passing run in the
 // summary line. Declared with the other file-level constants so placement stops mattering.
-// AND NOT A PROBE, DELIBERATELY. Round 5 flagged that every test exercising the shipped bash
-// fences is `{ skip: !HAS_BASH }`, so block 1's severity-reporting path has no Windows-lane
-// coverage. The gap is real and the count is 22. It is not closed here, and the reason is the
-// repo's own contract rather than a judgement call: `local/no-unguarded-nonportable-exec`
-// (eslint-rules/no-unguarded-nonportable-exec.cjs, DEFECT.WINDOWS-TEST-PORTABILITY) requires
-// exactly this guard around `sh -c` / `bash -c` in tests, and its own remedy text names
-// `if (process.platform !== 'win32')` as the sanctioned form because these constructs FAIL under
-// Windows Git Bash. Replacing the assumption with a runtime `bash` probe would light the tests up
-// on a lane where the rule has already determined they cannot pass, and would trade a legible,
-// rule-encoded skip for a red matrix. Reversing that is the rule's decision to make, not this
-// PR's — a change here belongs with a change there.
+// AND NOT A PROBE — but the honest reason is narrower than the first draft of this comment claimed,
+// and the correction is worth keeping. Round 5 flagged that every test exercising the shipped bash
+// fences is `{ skip: !HAS_BASH }`, so block 1's severity-reporting path has no Windows-lane coverage.
+// The gap is real and the count is 22.
+//
+// This comment first justified the skip by citing `local/no-unguarded-nonportable-exec` as REQUIRING
+// this exact guard. That was checked and is wrong on both halves: the rule only fires on a file that
+// also chmods an exec bit with an octal literal (this file has none, so it never fires here), and
+// `eslint-rules/lib/platform-guard.cjs` accepts four guard shapes plus `os.platform()`, not one. A
+// constraint that exists is not a constraint that applies.
+//
+// What actually holds: whether these fences PASS on the repo's Windows lane is UNVERIFIED. The
+// evidence points at divergence rather than absence — the rule's own subject line is that `bash -c`
+// constructs "fail on Windows Git Bash", and this PR already measured `mkfifo` existing on that
+// runner, exiting 0, and not creating a FIFO. So a runtime probe would not reveal a clean win; it
+// would light 22 tests on a lane whose shell semantics are known to differ and unknown in detail,
+// speculatively, in a review round. That is a measurement to make deliberately, not a change to make
+// in passing — and until it is made, the platform assumption is the legible form of a real gap.
 const HAS_BASH = process.platform !== 'win32';
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
 const PRE_PASS_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review', 'steps', 'structural-pre-pass.md');
