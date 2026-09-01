@@ -42,9 +42,25 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
-# PHASE_DIR is the step's other declared input and gets the same treatment. Unset, it aborted
-# both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class as
-# PHASE_NUMBER, in the step that promises never to block. Driven.
+# PHASE_DIR is the step's other declared input, and it is checked for NON-EMPTINESS ONLY -- not
+# for shape, and not for traversal. Stated plainly because 'gets the same treatment' would be
+# false, and because the asymmetry is a deliberate answer rather than an omission.
+# BOTH inputs have the same provenance: each caller binds them from `gsd_run query init.phase-op`
+# (code-review-fix.md:7,17 -> phase_dir / padded_phase; execute-phase.md the same), so neither is
+# raw user input and neither is more trusted than the other. What differs is that only one of them
+# HAS a shape. PHASE_NUMBER has a documented contract -- `^[0-9]+(\.[0-9]+)?$`, asserted by both
+# callers -- so a value outside it is provably wrong and is refused. PHASE_DIR's contract is
+# 'a filesystem path', which admits `..`, absolute and relative forms, and symlinked parents alike;
+# there is no predicate that separates a legitimate planning directory from an illegitimate one, so
+# a shape check here would reject working setups while proving nothing.
+# The residual, unchanged and disclosed rather than carried: PHASE_DIR may itself be a symlink, and
+# the ledger is then written through it to an outside directory -- deterministically, no race. That
+# is left alone deliberately: the write goes where the caller pointed, and refusing a symlinked
+# planning directory would break legitimate layouts. It is not a security boundary and nothing here
+# claims one.
+# Unset, it aborted both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class
+# as PHASE_NUMBER, in the step that promises never to block, which is what the emptiness check is
+# actually for. Driven.
 _pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
@@ -205,9 +221,25 @@ the step — never blocks:
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
-# PHASE_DIR is the step's other declared input and gets the same treatment. Unset, it aborted
-# both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class as
-# PHASE_NUMBER, in the step that promises never to block. Driven.
+# PHASE_DIR is the step's other declared input, and it is checked for NON-EMPTINESS ONLY -- not
+# for shape, and not for traversal. Stated plainly because 'gets the same treatment' would be
+# false, and because the asymmetry is a deliberate answer rather than an omission.
+# BOTH inputs have the same provenance: each caller binds them from `gsd_run query init.phase-op`
+# (code-review-fix.md:7,17 -> phase_dir / padded_phase; execute-phase.md the same), so neither is
+# raw user input and neither is more trusted than the other. What differs is that only one of them
+# HAS a shape. PHASE_NUMBER has a documented contract -- `^[0-9]+(\.[0-9]+)?$`, asserted by both
+# callers -- so a value outside it is provably wrong and is refused. PHASE_DIR's contract is
+# 'a filesystem path', which admits `..`, absolute and relative forms, and symlinked parents alike;
+# there is no predicate that separates a legitimate planning directory from an illegitimate one, so
+# a shape check here would reject working setups while proving nothing.
+# The residual, unchanged and disclosed rather than carried: PHASE_DIR may itself be a symlink, and
+# the ledger is then written through it to an outside directory -- deterministically, no race. That
+# is left alone deliberately: the write goes where the caller pointed, and refusing a symlinked
+# planning directory would break legitimate layouts. It is not a security boundary and nothing here
+# claims one.
+# Unset, it aborted both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class
+# as PHASE_NUMBER, in the step that promises never to block, which is what the emptiness check is
+# actually for. Driven.
 _pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
