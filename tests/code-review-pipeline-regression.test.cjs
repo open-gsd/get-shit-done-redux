@@ -39,6 +39,17 @@ const ROOT = path.resolve(__dirname, '..');
 // that aborted the whole describe and CANCELLED its siblings. It caught three separate
 // additions in this round alone, and the cancellation reads as a passing run in the
 // summary line. Declared with the other file-level constants so placement stops mattering.
+// AND NOT A PROBE, DELIBERATELY. Round 5 flagged that every test exercising the shipped bash
+// fences is `{ skip: !HAS_BASH }`, so block 1's severity-reporting path has no Windows-lane
+// coverage. The gap is real and the count is 22. It is not closed here, and the reason is the
+// repo's own contract rather than a judgement call: `local/no-unguarded-nonportable-exec`
+// (eslint-rules/no-unguarded-nonportable-exec.cjs, DEFECT.WINDOWS-TEST-PORTABILITY) requires
+// exactly this guard around `sh -c` / `bash -c` in tests, and its own remedy text names
+// `if (process.platform !== 'win32')` as the sanctioned form because these constructs FAIL under
+// Windows Git Bash. Replacing the assumption with a runtime `bash` probe would light the tests up
+// on a lane where the rule has already determined they cannot pass, and would trade a legible,
+// rule-encoded skip for a red matrix. Reversing that is the rule's decision to make, not this
+// PR's — a change here belongs with a change there.
 const HAS_BASH = process.platform !== 'win32';
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
 const PRE_PASS_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review', 'steps', 'structural-pre-pass.md');
