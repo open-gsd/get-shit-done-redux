@@ -2713,6 +2713,40 @@ describe('#3861 round 2 — a DOTTED phase number does not break the step', () =
   // format one: bash prints `invalid number` and exits 1. Under `set -euo pipefail` that aborts
   // the step on its FIRST line -- the loudest possible failure from a gate that promises never to
   // block, and it takes the phase's whole review report with it.
+  // #3861 round 5, minor 1. The PADDED derivation -- the traversal fence between an
+  // attacker-influenceable phase number and a file path, plus the per-component length bound -- is
+  // duplicated verbatim across both fences, because each fenced block runs in a fresh shell and must
+  // derive what it reads. Each copy is independently tested, but nothing asserted they stay in step,
+  // and a future edit to one could silently desync the other with the suite still green. That is the
+  // shared-parallel-surface shape CLAUDE.md requires a parity test for, and it is security-relevant
+  // validation logic rather than incidental repetition.
+  //
+  // Compared LINE BY LINE rather than through a normalizing rewrite: a normalizer would have to be
+  // told what may differ, and anything it was told to tolerate would stop being asserted. Exactly one
+  // line may differ, and the test names both of its forms.
+  test('the two fences derive PADDED identically, and only the refusal message may differ', () => {
+    const fences = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'));
+    assert.strictEqual(fences.length, 2, 'the step must still carry exactly two bash fences');
+    const derivationOf = (fence, which) => {
+      const start = fence.indexOf('_pd="${PHASE_DIR:-}"');
+      const end = fence.indexOf('DISPOSITION_FILE="${_pd}/${PADDED}-REVIEW-DISPOSITION.md"');
+      assert.ok(start > -1, 'block ' + which + ' must still open the derivation with _pd');
+      assert.ok(end > start, 'block ' + which + ' must still close it by building the ledger path');
+      return fence.slice(start, end).split('\n');
+    };
+    const a = derivationOf(fences[0], 1);
+    const b = derivationOf(fences[1], 2);
+    // A parity test over an empty or trivial slice passes vacuously and pins nothing.
+    assert.ok(a.length > 20, 'the derivation must still be the substantial block this pins');
+    assert.strictEqual(a.length, b.length, 'the two derivations must have the same shape');
+    const differing = a.map((line, i) => [i, line, b[i]]).filter((e) => e[1] !== e[2]);
+    assert.strictEqual(differing.length, 1,
+      'exactly one line may differ between the two derivations; got ' + differing.length + ': ' +
+      JSON.stringify(differing.map((e) => [e[1], e[2]])));
+    assert.match(differing[0][1], /Code review reporting skipped/, 'block 1 refuses by its own name');
+    assert.match(differing[0][2], /Code review disposition skipped/, 'block 2 refuses by its own name');
+  });
+
   test('block 1 reports a dotted phase instead of aborting', { skip: !HAS_BASH }, () => {
     const review = ['---', 'phase: 03.1', 'status: issues_found', 'findings:',
       '  critical: 1', '  warning: 0', '  info: 0', '  total: 1', '---', '',
