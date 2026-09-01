@@ -373,8 +373,12 @@ ${AGENT_SKILLS_FIXER}")
       } catch (e) { console.log('unknown'); }
     " 2>/dev/null)
     if [ "$LOOP_END_STATUS" = "clean" ]; then
-      echo ""
-      echo "✓ All issues resolved on the final iteration (${MAX_ITERATIONS}/${MAX_ITERATIONS})."
+      # SILENT on convergence, deliberately. The loop's own break already printed "All issues
+      # resolved after iteration N" on its way out, and reaching the cap does not make that less
+      # true — adding a second success line here printed both, which is noise the first cut shipped.
+      # What this branch exists for is to NOT print the degradation warning; saying nothing is the
+      # whole behaviour.
+      :
     else
       echo ""
       echo "⚠ Reached maximum iterations (${MAX_ITERATIONS}). Remaining issues documented in REVIEW-FIX.md."

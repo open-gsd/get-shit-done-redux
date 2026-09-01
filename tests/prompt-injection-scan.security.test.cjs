@@ -100,6 +100,14 @@ const SIZE_ONLY_WORKFLOWS = new Set([
   // injection scanned. Splitting it per the progressive-disclosure pattern is the real
   // fix and is worth its own change.
   'gsd-core/workflows/quick.md',
+  // ~56K after #3829's disposition ledger. Same shape as the two above: this file sat at 44,523
+  // chars on next — 89% of the 50K prompt-stuffing threshold — so the feature approved on the
+  // issue could not land in it without tripping this. The round trimmed 5.8K of its own commentary
+  // rather than reach for this entry first, and even removing every added comment leaves the added
+  // CODE over the line. Size-only: the file is still fully injection scanned, exactly like the two
+  // above. Splitting it per the progressive-disclosure pattern is the real fix and is worth its own
+  // change — it is already a step file extracted from execute-phase.md for that same reason.
+  'gsd-core/workflows/execute-phase/steps/code-review-disposition.md',
 ]);
 
 // ─── Scanner ────────────────────────────────────────────────────────────────

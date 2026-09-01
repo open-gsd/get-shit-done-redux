@@ -42,25 +42,14 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
-# PHASE_DIR is the step's other declared input, and it is checked for NON-EMPTINESS ONLY -- not
-# for shape, and not for traversal. Stated plainly because 'gets the same treatment' would be
-# false, and because the asymmetry is a deliberate answer rather than an omission.
-# BOTH inputs have the same provenance: each caller binds them from `gsd_run query init.phase-op`
-# (code-review-fix.md:7,17 -> phase_dir / padded_phase; execute-phase.md the same), so neither is
-# raw user input and neither is more trusted than the other. What differs is that only one of them
-# HAS a shape. PHASE_NUMBER has a documented contract -- `^[0-9]+(\.[0-9]+)?$`, asserted by both
-# callers -- so a value outside it is provably wrong and is refused. PHASE_DIR's contract is
-# 'a filesystem path', which admits `..`, absolute and relative forms, and symlinked parents alike;
-# there is no predicate that separates a legitimate planning directory from an illegitimate one, so
-# a shape check here would reject working setups while proving nothing.
-# The residual, unchanged and disclosed rather than carried: PHASE_DIR may itself be a symlink, and
-# the ledger is then written through it to an outside directory -- deterministically, no race. That
-# is left alone deliberately: the write goes where the caller pointed, and refusing a symlinked
-# planning directory would break legitimate layouts. It is not a security boundary and nothing here
-# claims one.
-# Unset, it aborted both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class
-# as PHASE_NUMBER, in the step that promises never to block, which is what the emptiness check is
-# actually for. Driven.
+# PHASE_DIR is checked for NON-EMPTINESS ONLY -- not shape, not traversal -- and the asymmetry with
+# PHASE_NUMBER is deliberate. Both come from the caller's init query, so neither is more trusted;
+# what differs is that only PHASE_NUMBER HAS a shape (`^[0-9]+(\.[0-9]+)?$`, asserted by both
+# callers). PHASE_DIR's contract is 'a filesystem path', which admits `..`, relative forms and
+# symlinked parents alike, so a shape check would reject working setups while proving nothing.
+# Residual, disclosed: PHASE_DIR may itself be a symlink and the ledger is then written through it,
+# outside the phase directory. Left alone -- the write goes where the caller pointed; not a security
+# boundary. The emptiness check exists because unset it aborted both fences under `set -u`.
 _pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
@@ -221,25 +210,14 @@ the step — never blocks:
 # (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
-# PHASE_DIR is the step's other declared input, and it is checked for NON-EMPTINESS ONLY -- not
-# for shape, and not for traversal. Stated plainly because 'gets the same treatment' would be
-# false, and because the asymmetry is a deliberate answer rather than an omission.
-# BOTH inputs have the same provenance: each caller binds them from `gsd_run query init.phase-op`
-# (code-review-fix.md:7,17 -> phase_dir / padded_phase; execute-phase.md the same), so neither is
-# raw user input and neither is more trusted than the other. What differs is that only one of them
-# HAS a shape. PHASE_NUMBER has a documented contract -- `^[0-9]+(\.[0-9]+)?$`, asserted by both
-# callers -- so a value outside it is provably wrong and is refused. PHASE_DIR's contract is
-# 'a filesystem path', which admits `..`, absolute and relative forms, and symlinked parents alike;
-# there is no predicate that separates a legitimate planning directory from an illegitimate one, so
-# a shape check here would reject working setups while proving nothing.
-# The residual, unchanged and disclosed rather than carried: PHASE_DIR may itself be a symlink, and
-# the ledger is then written through it to an outside directory -- deterministically, no race. That
-# is left alone deliberately: the write goes where the caller pointed, and refusing a symlinked
-# planning directory would break legitimate layouts. It is not a security boundary and nothing here
-# claims one.
-# Unset, it aborted both fences with `PHASE_DIR: unbound variable` under `set -u` -- the same class
-# as PHASE_NUMBER, in the step that promises never to block, which is what the emptiness check is
-# actually for. Driven.
+# PHASE_DIR is checked for NON-EMPTINESS ONLY -- not shape, not traversal -- and the asymmetry with
+# PHASE_NUMBER is deliberate. Both come from the caller's init query, so neither is more trusted;
+# what differs is that only PHASE_NUMBER HAS a shape (`^[0-9]+(\.[0-9]+)?$`, asserted by both
+# callers). PHASE_DIR's contract is 'a filesystem path', which admits `..`, relative forms and
+# symlinked parents alike, so a shape check would reject working setups while proving nothing.
+# Residual, disclosed: PHASE_DIR may itself be a symlink and the ledger is then written through it,
+# outside the phase directory. Left alone -- the write goes where the caller pointed; not a security
+# boundary. The emptiness check exists because unset it aborted both fences under `set -u`.
 _pd="${PHASE_DIR:-}"
 _pn="${PHASE_NUMBER:-}"
 _ok=1
@@ -302,15 +280,13 @@ fi
 # `open` rows dropped — because freezing it would leave findings showing as open that the
 # review no longer reports. A guard that skipped unconditionally would make the script's own
 # reconciliation path unreachable on exactly the run that needs it.
-# A FIX REPORT IS THE SECOND REASON TO PROCEED, and its absence from this condition was a live gap:
-# a direct `/gsd-code-review N --auto` writes no gate ledger, and when its loop CONVERGES the final
-# review reads `status: clean` — so a fully successful multi-iteration run, every finding fixed and
-# committed, hit `[ ! -f "$DISPOSITION_FILE" ]` and recorded NOTHING. Zero rows for a phase whose
-# findings were all triaged is the exact state #3829 was filed to make impossible.
+# A FIX REPORT IS THE SECOND REASON TO PROCEED. A direct `/gsd:code-review N --auto` writes no gate
+# ledger, and a converged loop leaves `status: clean`, so a fully fixed phase recorded NOTHING --
+# the exact state #3829 was filed to make impossible.
 _fix_any=0
 [ -f "${_pd}/${PADDED}-REVIEW-FIX.md" ] && _fix_any=1
-# The per-iteration backups count too — the converged loop's earlier iterations live only there.
-# An unmatched glob expands to the literal pattern, which `-f` then rejects; no nullglob needed.
+# The backups count too: a converged loop's earlier iterations live only there. An unmatched glob
+# expands to the literal pattern, which `-f` rejects, so no nullglob is needed.
 # $(printf '%s' "$PADDED") per lint-workflow-shellcheck's #4109 remedy: a bare $VAR in a `for x in`
 # word splits differently under bash and zsh, and the linter's structural check is not baselineable.
 for _f in "${_pd}/$(printf '%s' "$PADDED")-REVIEW-FIX.iter"*.md; do [ -f "$_f" ] && _fix_any=1; done
@@ -324,13 +300,10 @@ case "$REVIEW_STATUS" in
     ;;
 esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
-# Built BEFORE the command rather than inside its env-prefix list, and the reason is READABILITY,
-# not a bug. ShellCheck flags the inline form SC2097/SC2098 — "this assignment is only seen by the
-# forked process" — and the obvious reading, that the later `${PADDED}` expands the OUTER variable,
-# is WRONG: assignments in one prefix list take effect left to right, so the later entry does see the
-# earlier one. Driven in bash and dash both. The warning is a false positive here; the split is kept
-# because a five-entry prefix list interpolating one of its own entries is hard to read, and it keeps
-# the fence off a baseline entry. Do not restate this as a defect fix — it is not one.
+# Built before the command for READABILITY, not as a bug fix. ShellCheck flags the inline form
+# SC2097/SC2098, but the obvious reading -- that the later `${PADDED}` expands the OUTER variable --
+# is WRONG: prefix assignments take effect left to right and the later entry does see the earlier
+# one (driven, bash and dash). A false positive. Do not restate this as a defect fix.
 FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md"
 REVIEW_FILE="${REVIEW_FILE}" DISPOSITION_FILE="${DISPOSITION_FILE}" PADDED="${PADDED}" \
 REVIEW_TOTAL="${REVIEW_TOTAL}" \
@@ -431,27 +404,21 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
       if (curSection) sectionSev.set(h.id, curSection);
     }
   }
-  // THE FIX REPORTS THIS RUN MAY RECONCILE AGAINST -- built here, above the guard below, because
-  // that guard has to know whether any of them exists.
-  // The --auto loop OVERWRITES REVIEW-FIX.md on every iteration ('one final version of each
-  // artifact, not per-iteration copies' -- code-review-fix.md), so the final report carries only the
-  // LAST iteration's scope. A finding fixed in iteration 1 is absent from it AND from the final
-  // REVIEW.md -- it was fixed, so the re-review stops reporting it -- and the row then fell back to
-  // the gate's 'open' and rendered 'open ... (not in the current review)', byte-for-byte the same as
-  // a finding that vanished for an unrelated reason. That is the 'was this ever seen' ambiguity
-  // #3829 exists to close, reproduced by the artifact built to close it.
-  // The loop already writes per-iteration backups ('<NN>-REVIEW-FIX.iterN.md'); read them.
-  // NEWEST FIRST, so the most recent statement about an id wins -- the same precedence
-  // first-occurrence-wins already applies to a duplicate id WITHIN one report.
+  // THE FIX REPORTS THIS RUN MAY RECONCILE AGAINST. Built above the guard below, which has to know
+  // whether any exists. The --auto loop overwrites REVIEW-FIX.md every iteration, so the final report
+  // carries only the LAST iteration's scope -- and a finding fixed in iteration 1 is absent from the
+  // final REVIEW.md too, since the re-review stops reporting what was fixed. Its row then fell back
+  // to 'open ... (not in the current review)', the ambiguity #3829 exists to close. So read the
+  // loop's per-iteration backups too, NEWEST FIRST: the most recent statement about an id wins, as
+  // first-occurrence-wins already decides a duplicate within one report.
   const FIX_FINAL = process.env.FIX_REPORT_FILE;
   const fixStem = path.basename(FIX_FINAL).slice(0, -3);        // '<NN>-REVIEW-FIX'
   const iterMarker = fixStem + '.iter';
-  // Parsed with string ops, not a built RegExp: this script lives inside a double-quoted bash
-  // argument, where every added backslash is one more thing bash rewrites before Node sees it.
-  // Written as ONE expression with no 'return' keyword, deliberately: this fence is linted as shell,
-  // and ShellCheck reads a JS 'return' as a shell one and marks everything after it unreachable
-  // (SC2317). Those land as new findings against a ratchet baseline whose whole purpose is to stop
-  // this file's finding count from growing. The parse is spurious; the growth is not.
+  // String ops, not a built RegExp: this script is a double-quoted bash argument, and every added
+  // backslash is one more thing bash rewrites before Node sees it.
+  // ONE expression, no 'return' keyword: this fence is linted as shell, and ShellCheck reads a JS
+  // 'return' as a shell one, marking everything after it unreachable (SC2317) -- new findings against
+  // a ratchet baseline. The parse is spurious; the growth is not.
   const iterDigits = (n) => (n.indexOf(iterMarker) === 0 && n.slice(-3) === '.md') ? n.slice(iterMarker.length, -3) : '';
   const iterOf = (n) => /^[0-9]+\$/.test(iterDigits(n)) ? Number(iterDigits(n)) : null;
   const fixReports = [];
@@ -464,9 +431,8 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
   // and its untriaged rows are BOTH carried, marked. Exiting here would freeze a stale ledger
   // showing findings as open that the review no longer reports.
-  // And a fix report with no ledger is ALSO something to record -- a direct '--auto' run that
-  // converges to 'status: clean' has no prior ledger, and exiting here left a fully successful
-  // multi-iteration run with zero disposition record at all.
+  // A fix report with no ledger is also something to record: a direct '--auto' run converging to
+  // 'status: clean' has no prior ledger, and exiting here recorded nothing for a fully fixed phase.
   if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE) && fixReports.length === 0) return;
   // Prior rows: keep the disposition AND its source cell — the source is where a human writes
   // the reason a finding was deferred, and rewriting it would discard the very thing the
@@ -480,22 +446,28 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // The render below escapes a bare pipe on the next write, so the file converges to the escaped
   // form either way. The trailing pipe is optional so a hand-mangled row loses no decision.
   const prior = new Map();
-  // TITLES, AND WHY THE TABLE CANNOT CARRY THEM. Finding ids are reused across re-reviews -- the
-  // --auto loop renumbers -- so an id alone does not identify a finding, and row() below inherited a
-  // decision on an id match with nothing checking that it was the SAME finding. Driven: a prior
-  // 'CR-01 fixed' row against a review reporting a brand-new CR-01 rendered the new finding 'fixed'.
-  // That is a false decision in the artifact whose whole purpose is telling triaged from forgotten.
-  // The title lives in the FRONTMATTER, not in a fifth table column: the Source cell is the field a
-  // human hand-edits and the one that must escape pipes, and adding a second free-text column doubles
-  // that surface for no reader benefit. Frontmatter is machine-owned and already per-finding.
+  // TITLES, AND WHY THE TABLE CANNOT CARRY THEM. Ids are reused across re-reviews (--auto
+  // renumbers), so an id alone does not identify a finding: driven, a prior 'CR-01 fixed' against a
+  // review reporting a brand-new CR-01 rendered the new finding 'fixed'. The title lives in the
+  // FRONTMATTER, not a fifth table column -- the Source cell is the hand-edited, pipe-escaping field
+  // and a second free-text column doubles that surface for nothing.
   const priorTitle = new Map();
-  // Decisions whose id has since been reused by a DIFFERENT finding. They cannot keep a row -- the id
-  // is taken, and two rows under one id is not a record, it is an ambiguity -- but dropping them is
-  // the silent loss this ledger exists to prevent, so they are preserved here and re-emitted every
-  // run. Keyed by id + title so a re-run cannot accumulate duplicates.
+  // Decisions whose id was reused by a DIFFERENT finding. They cannot keep a row -- two rows under
+  // one id is an ambiguity, not a record -- but dropping them is the silent loss this ledger exists
+  // to prevent, so they are preserved and re-emitted every run.
+  // Keyed by id + NORMALIZED title, and a newer decision REPLACES an older one. Both halves were
+  // driven defects: the raw title double-recorded re-spaced titles, and a has()-guard dropped a
+  // CHANGED decision, leaving the obsolete one standing.
   const superseded = [];
-  const supersededKey = new Set();
-  var _fmId = null;
+  const supersededAt = new Map();
+  const supKey = (id, t) => id + '\u0000' + String(t === undefined || t === null ? '' : t).replace(/\s+/g, ' ').trim();
+  const supersede = (rec) => {
+    const k = supKey(rec.id, rec.t);
+    if (supersededAt.has(k)) { superseded[supersededAt.get(k)] = rec; return; }
+    supersededAt.set(k, superseded.length); superseded.push(rec);
+  };
+  var _fmId = null, _fmSec = null, _fmRec = null;
+  const _fmPending = [];
   if (fs.existsSync(process.env.DISPOSITION_FILE)) {
     for (const l of norm(fs.readFileSync(process.env.DISPOSITION_FILE, 'utf-8')).split('\n')) {
       // The disposition column is an ENUM, not 'any lowercase token'. ADR-227 requires a trust
@@ -524,20 +496,40 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
       // current row the phrase was self-contradictory to begin with. The unbounded quantifier is
       // what had to go, not the strip itself.
       if (m) prior.set(m[1], { d: m[2], src: m[3].replace(/\s*\(not in the current review\)\s*\$/, '') });
-      // Frontmatter, walked in the same pass: '    title: <t>' belongs to the most recent '  - id:'.
+      // Frontmatter is walked in the same pass, as a SECTIONED list rather than by matching one
+      // line shape. Two sections carry per-finding entries -- findings: and superseded: -- and both
+      // open with '  - id:', so a shape-only match cannot tell them apart.
+      var msec = l.match(/^(findings|superseded):\s*\$/);
+      if (msec) { _fmSec = msec[1]; _fmId = null; _fmRec = null; continue; }
       var mi = l.match(/^  - id: ((?:CR|BL|WR|IN)-\d+)\s*\$/);
-      if (mi) { _fmId = mi[1]; continue; }
-      var mt = l.match(/^    title: (.*)\$/);
-      if (mt && _fmId) { priorTitle.set(_fmId, mt[1]); continue; }
-      // Superseded records, carried verbatim. Without re-emission they would survive exactly one
-      // render and then vanish when the frontmatter is rebuilt from rows -- the same silent drop.
-      var ms = l.match(/^  - id: ((?:CR|BL|WR|IN)-\d+) \| disposition: (open|fixed|skipped|deferred) \| title: (.*?) \| source: (.*)\$/);
-      if (ms && !supersededKey.has(ms[1] + '\u0000' + ms[3])) {
-        supersededKey.add(ms[1] + '\u0000' + ms[3]);
-        superseded.push({ id: ms[1], d: ms[2], t: ms[3], src: ms[4] });
+      if (mi && _fmSec) {
+        _fmId = mi[1];
+        // COLLECTED, not registered here. Registering at the '- id:' line keys the record under an
+        // EMPTY title -- the title arrives two lines later -- and the second registration then adds a
+        // SECOND entry under the real key. Driven: a carried record doubled on every subsequent run.
+        // The walk builds the records; they are registered once, complete, after it.
+        if (_fmSec === 'superseded') { _fmRec = { id: mi[1], d: 'open', t: '', src: '' }; _fmPending.push(_fmRec); }
+        continue;
+      }
+      var mkv = l.match(/^    ([a-z]+): (.*)\$/);
+      if (mkv && _fmId) {
+        // Values are emitted as JSON scalars, which YAML 1.2 reads as double-quoted strings. Parsing
+        // them back with JSON.parse is what makes a title containing ': ' round-trip -- the bare form
+        // produced 'bad indentation of a mapping entry' from a real YAML reader (driven).
+        var _v = mkv[2];
+        try { _v = JSON.parse(_v); } catch (e) { /* a pre-JSON ledger: take the bare scalar */ }
+        if (_fmSec === 'findings' && mkv[1] === 'title') priorTitle.set(_fmId, _v);
+        if (_fmSec === 'superseded' && _fmRec) {
+          if (mkv[1] === 'disposition') _fmRec.d = _v;
+          if (mkv[1] === 'title') _fmRec.t = _v;
+          if (mkv[1] === 'source') _fmRec.src = _v;
+        }
+        continue;
       }
     }
   }
+  // Registered once each, complete, so the dedupe sees the real (id, title) key exactly once.
+  for (const rec of _fmPending) supersede(rec);
   // TITLE COMPARISON, and its FALSE-POSITIVE mode, which was previously unacknowledged.
   // The strict instinct is right -- ids are reused across re-reviews, so a stale REVIEW-FIX.md
   // must not mark a brand-new CR-01 as already fixed -- but gsd-code-fixer.md writes
@@ -574,21 +566,16 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
       // reused, the finding is not, and a reader who sees the row stay 'open' has no way to
       // tell that from 'the fix report never mentioned it'. Record it and say so below.
       if (h.id && sect && !applied.has(h.id)) {
-        // THREE ARMS, and the first one is the fix. When the current review does not report this id
-        // AT ALL there is no title to disagree with, so this is NOT the stale-report case -- it is
-        // the shape a finding takes once it has been ACTED ON, because the re-review stops reporting
-        // what the fixer closed. The old two-arm form asked 'sameTitle(undefined, h.title)', which is
-        // false, and then 'title.has(h.id)', which is also false -- so the entry entered NEITHER
-        // 'applied' NOR 'staleFix' and was dropped in silence. The row fell back to the gate's 'open'
-        // and rendered 'open ... (not in the current review)': a genuinely fixed, committed finding
-        // made indistinguishable from one that vanished for an unrelated reason.
-        // The id-reuse hazard this ordering could raise is already closed by the arm below: when the
-        // review DOES report the id, a title mismatch still goes to 'staleFix' and is never applied,
-        // so a renumbered finding cannot inherit an earlier iteration's 'fixed'.
-        // The ORIGINATING report is recorded, not assumed. The Source cell used to hard-code the
-        // unsuffixed <NN>-REVIEW-FIX.md, so a decision read out of an iteration backup cited a file
-        // that may not even exist on disk -- a citation the reader cannot follow is worse than none.
-        var _acted = { d: sect, src: path.basename(fixPath) };
+        // THREE ARMS. When the review does not report this id at all there is no title to disagree
+        // with, so it is not the stale-report case -- it is what a finding looks like once it has
+        // been acted on. The old two-arm form dropped it in silence: both tests were false, so the
+        // entry entered neither 'applied' nor 'staleFix', and the row rendered
+        // 'open ... (not in the current review)' over a committed fix. Id reuse stays closed by the
+        // arm below -- when the review DOES report the id, a title mismatch still goes to 'staleFix'.
+        // The record carries the ORIGINATING report (the hard-coded unsuffixed name cited a file that
+        // may not exist) and the TITLE it was decided under (without it an iteration-only row had no
+        // title, and the next reuse of that id inherited its 'fixed' through the back-compat arm).
+        var _acted = { d: sect, src: path.basename(fixPath), t: h.title };
         if (!title.has(h.id)) applied.set(h.id, _acted);
         else if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, _acted);
         else if (staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
@@ -597,23 +584,16 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   }
   // Precedence: an applied outcome is evidence of an action on code and wins; a recorded
   // non-'open' decision wins over the default. 'open' never overwrites a decision.
-  // A prior decision is inherited only when the id still names the SAME finding. An ABSENT prior
-  // title inherits, deliberately: a ledger written before titles were recorded carries none, and
-  // refusing there would reset every decision in it -- the loss this guard exists to prevent, caused
-  // by the guard. Same whitespace-collapsing comparison the fix-report path uses, for the same reason.
+  // Inherited only when the id still names the SAME finding. An ABSENT prior title inherits: a
+  // pre-titles ledger carries none, and refusing there would reset every decision in it.
   const sameFinding = (id) => !priorTitle.has(id) || !title.has(id) || sameTitle(priorTitle.get(id), title.get(id));
   const row = (id) => {
-    if (applied.has(id)) { const a = applied.get(id); return { id, sev: sev(id), d: a.d, src: a.src, t: title.get(id) }; }
+    if (applied.has(id)) { const a = applied.get(id); return { id, sev: sev(id), d: a.d, src: a.src, t: title.has(id) ? title.get(id) : a.t }; }
     const was = prior.get(id);
     if (was && was.d !== 'open' && sameFinding(id)) return { id, sev: sev(id), d: was.d, src: was.src || 'recorded', t: title.get(id) };
-    // The id was reused by a different finding. The NEW finding is untriaged -- nobody decided
-    // anything about it -- so it renders 'open', and the superseded decision is preserved below
-    // rather than dropped. Recording only the mismatch and losing the decision was the round-5
-    // review's driven refutation of this very arm.
-    if (was && was.d !== 'open' && !supersededKey.has(id + '\u0000' + (priorTitle.get(id) || ''))) {
-      supersededKey.add(id + '\u0000' + (priorTitle.get(id) || ''));
-      superseded.push({ id: id, d: was.d, t: priorTitle.get(id) || '(title not recorded)', src: was.src || 'recorded' });
-    }
+    // Id reused by a different finding: the NEW one is untriaged and renders 'open', and the
+    // superseded decision is preserved rather than dropped (losing it was a driven refutation).
+    if (was && was.d !== 'open') supersede({ id: id, d: was.d, t: priorTitle.get(id) || '(title not recorded)', src: was.src || 'recorded' });
     return { id, sev: sev(id), d: 'open', src: '-', t: title.get(id) };
   };
   const rows = order.map(row);
@@ -631,11 +611,8 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // it is real: a RENUMBERED finding appears twice until someone triages the old row, and a
   // carried untriaged row persists across runs until decided. Both are bounded by the phase's own
   // findings, both are legible from the marker, and both are strictly better than a silent delete.
-  // The carried set is prior rows UNION ids a fix report decided that the current review no longer
-  // reports. The second half is what renders the arm added above: an applied outcome is a decision,
-  // and a decision the ledger cannot render is a decision LOST -- the same silent drop this loop
-  // already refuses for prior rows, one source over. Precedence matches row() exactly: an applied
-  // outcome is evidence of an action on code and beats a recorded one.
+  // Prior rows UNION ids a fix report decided that the review no longer reports: a decision the
+  // ledger cannot render is a decision lost. Precedence matches row() -- applied beats recorded.
   const carriedIds = [];
   for (const id of prior.keys()) if (order.indexOf(id) === -1 && carriedIds.indexOf(id) === -1) carriedIds.push(id);
   for (const id of applied.keys()) if (order.indexOf(id) === -1 && carriedIds.indexOf(id) === -1) carriedIds.push(id);
@@ -643,9 +620,9 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
     const act = applied.get(id), was = prior.get(id);
     const d = act ? act.d : (was ? was.d : 'open');
     const src = act ? act.src : (was && was.src) || (d === 'open' ? '-' : 'recorded');
-    // The title round-trips from whichever source knows it: a carried row is absent from the current
-    // review, so the title map has nothing for it and the prior frontmatter is the only record.
-    rows.push({ id, sev: sev(id), d: d, src: src, t: priorTitle.get(id), carried: true });
+    // Title precedence: the report that DECIDED it, then the prior ledger. A carried row is absent
+    // from the review, so one of those two is the only record of it.
+    rows.push({ id, sev: sev(id), d: d, src: src, t: (act && act.t) || priorTitle.get(id), carried: true });
   }
   const open = rows.filter((r) => r.d === 'open').length;
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title
@@ -653,8 +630,7 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // The wording no longer ASSERTS a stale report. Both causes reach here -- a genuinely different
   // finding under a reused id, and a fixer that re-titled the same one -- and the step cannot tell
   // them apart, so it reports the observation rather than a conclusion it has not earned.
-  // Surfaced on the console as well as in the file: a reader who never opens the ledger still has to
-  // learn that a decision they made no longer has a row.
+  // On the console too: a reader who never opens the ledger still has to learn a decision lost its row.
   const supersededNote = superseded.length ? ' (' + superseded.length + ' prior decision(s) superseded by a REUSED finding id, preserved under superseded: ' + superseded.map((x) => x.id + '=' + x.d).join(', ') + ')' : '';
   const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y titles its' : 'ies title their') + ' finding differently from the review, so ' + (staleFix.length === 1 ? 'it was' : 'they were') + ' not reconciled -- a stale report, or a re-titled one: ' + staleFix.join(', ') + ')' : '';
   // RECONCILE THE TWO PARSERS. The counts come from REVIEW.md's frontmatter; the rows come from
@@ -686,20 +662,21 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
     .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
-  // TITLES ARE FLATTENED TO ONE LINE. A '###' heading is one line by construction, so this cannot
-  // fire on real input -- it is here because the value is interpolated into a line-oriented record
-  // that a regex re-reads, and a newline reaching it would silently truncate the entry on the next
-  // parse. Cheap, and it fails toward a readable title rather than a broken frontmatter.
+  // Flattened to one line. A '###' heading cannot contain a newline, but the value feeds a
+  // line-oriented record a regex re-reads, where one would truncate the entry on the next parse.
   const oneLine = (t) => String(t === undefined || t === null ? '' : t).replace(/[\r\n]+/g, ' ').trim();
+  // JSON.stringify, not a bare scalar: YAML 1.2 is a JSON superset, so this survives a colon, a
+  // quote, a leading '#' or '-'. The bare form emitted 'title: Parser: loses data', which a real
+  // YAML reader rejects (driven). Read back with JSON.parse above.
+  const yv = (t) => JSON.stringify(oneLine(t));
   const head = ['---', 'phase: ' + process.env.PADDED, 'review: ' + path.basename(process.env.REVIEW_FILE), 'findings:']
     .concat(rows.map((r) => '  - id: ' + r.id + '\n    severity: ' + r.sev + '\n    disposition: ' + r.d
-                          + (oneLine(r.t) ? '\n    title: ' + oneLine(r.t) : '')))
+                          + (oneLine(r.t) ? '\n    title: ' + yv(r.t) : '')))
     .concat(['open: ' + open, 'total: ' + rows.length])
-    // Emitted only when a decision was actually superseded, so an ordinary ledger gains no key and
-    // the unchanged-run check below is unaffected. One line per record, in the shape the parser
-    // above reads back, so the record survives every subsequent run rather than one.
+    // Emitted only when something was superseded, so an ordinary ledger gains no key. Re-read by
+    // the parser above, so the record survives every subsequent run rather than one.
     .concat(superseded.length ? ['superseded:'].concat(superseded.map((x) =>
-      '  - id: ' + x.id + ' | disposition: ' + x.d + ' | title: ' + oneLine(x.t) + ' | source: ' + oneLine(x.src))) : [])
+      '  - id: ' + x.id + '\n    disposition: ' + x.d + '\n    title: ' + yv(x.t) + '\n    source: ' + yv(x.src))) : [])
     // Emitted only when there IS a shortfall, so an ordinary ledger gains no noise key and the
     // unchanged-run check below is unaffected on every review that parses cleanly.
     .concat(unparsed ? ['unparsed: ' + unparsed] : []).join('\n');

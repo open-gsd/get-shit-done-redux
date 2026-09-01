@@ -16,7 +16,21 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { runNode } = require('./helpers/process-seam.cjs');
+const { runNode, runHook } = require('./helpers/process-seam.cjs');
+const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+// Same gate the shipped fences carry everywhere in this suite: bash is not assumed on win32.
+const HAS_BASH = process.platform !== 'win32';
+
+// Extract the bash fence out of a named <step>, so a test can RUN it rather than grep it.
+function stepFence(src, name) {
+  const open = src.indexOf(`<step name="${name}">`);
+  assert.notStrictEqual(open, -1, `step "${name}" not found`);
+  const close = src.indexOf('</step>', open);
+  const region = src.slice(open, close);
+  const m = region.match(/```bash\n([\s\S]*?)\n```/);
+  assert.ok(m, `step "${name}" carries no bash fence`);
+  return m[1];
+}
 const { createTempDir, cleanup } = require('./helpers.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -192,18 +206,58 @@ describe('#3190 — code-review-fix --auto REVIEW.md commit + FIX_REPORT_PATH en
       /rm -f[\s\S]*?\.iter[\s\S]*?\*[\s\S]*?\.md/.test(cleanup),
       'cleanup_iteration_backups must remove spent .iterN.md backups (rm -f … .iter*.md)',
     );
-    assert.match(
-      cleanup, /FINAL_STATUS/,
-      'convergence must still be decided, re-derived from the final review status',
-    );
-    assert.match(
-      cleanup, /retained/i,
-      'and degradation must still retain the backups for post-mortem',
-    );
+    // The token greps that stood here PASSED with the branch INVERTED — the round's own review drove
+    // it by flipping `= "clean"` to `!=` and watching the test stay green. Checking that FINAL_STATUS,
+    // rm and "retained" occur SOMEWHERE says nothing about which branch each sits in. Execute it.
+    assert.match(cleanup, /FINAL_STATUS/, 'convergence must still be re-derived from the review status');
     // Ordering is the whole point of the move.
     const recordAt = src.indexOf('<step name="record_disposition">');
     const cleanupAt = src.indexOf('<step name="cleanup_iteration_backups">');
     assert.ok(recordAt > -1 && cleanupAt > -1, 'both steps must exist');
     assert.ok(recordAt < cleanupAt, 'the ledger reads the backups BEFORE they are removed');
+  });
+
+  test('T6b — the cleanup fence, EXECUTED: removes on clean, retains on anything else', { skip: !HAS_BASH }, () => {
+    // The behavioural half of T6, and the one that survives a branch inversion. Drives the shipped
+    // fence in both directions against real files, so an inverted condition fails here rather than
+    // passing a token grep — which is exactly what the round's review demonstrated of the first cut.
+    const src = fs.readFileSync(WORKFLOW_PATH, 'utf8');
+    const fence = stepFence(src, 'cleanup_iteration_backups');
+
+    const drive = (status) => {
+      const dir = createTempDir('gsd-3861-cleanup-');
+      try {
+        fs.writeFileSync(path.join(dir, '01-REVIEW.md'), ['---', 'status: ' + status, '---'].join('\n'));
+        fs.writeFileSync(path.join(dir, '01-REVIEW.iter2.md'), 'scratch');
+        fs.writeFileSync(path.join(dir, '01-REVIEW-FIX.iter2.md'), 'scratch');
+        const script = [
+          'set -euo pipefail',
+          'AUTO_MODE=true',
+          'REVIEW_PATH="' + path.join(dir, '01-REVIEW.md') + '"',
+          'FIX_REPORT_PATH="' + path.join(dir, '01-REVIEW-FIX.md') + '"',
+          fence,
+        ].join('\n');
+        const res = runHook('-c', [script], { interpreter: 'bash', timeoutMs: PROBE_TIMEOUT_MS });
+        assert.strictEqual(res.exitCode, 0, 'the cleanup step must never abort: ' + res.stderr);
+        return {
+          review: fs.existsSync(path.join(dir, '01-REVIEW.iter2.md')),
+          fix: fs.existsSync(path.join(dir, '01-REVIEW-FIX.iter2.md')),
+          stdout: res.stdout,
+        };
+      } finally { cleanup(dir); }
+    };
+
+    const converged = drive('clean');
+    assert.strictEqual(converged.review, false, 'a converged run removes the REVIEW backup');
+    assert.strictEqual(converged.fix, false, 'and the FIX-REPORT backup');
+
+    const degraded = drive('issues_found');
+    assert.strictEqual(degraded.review, true, 'a degraded run RETAINS the REVIEW backup');
+    assert.strictEqual(degraded.fix, true, 'and the FIX-REPORT backup');
+    assert.match(degraded.stdout, /retained/i, 'and says so, so the trail is discoverable');
+
+    // An unreadable or unparseable review is not evidence of convergence — retain.
+    const unknown = drive('');
+    assert.strictEqual(unknown.review, true, 'an unparseable status must retain, never remove');
   });
 });

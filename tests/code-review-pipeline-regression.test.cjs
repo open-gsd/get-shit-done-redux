@@ -3332,7 +3332,7 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
       fixText: ['## Fixed Issues', '', '### CR-01: the original finding'].join('\n'),
     });
     assert.strictEqual(ledgerRows(first.ledger).find((r) => r.id === 'CR-01').disposition, 'fixed');
-    assert.match(first.ledger, /title: the original finding/, 'the title must be recorded to make reuse detectable');
+    assert.match(first.ledger, /title: "the original finding"/, 'the title must be recorded to make reuse detectable');
 
     const second = runShippedDisposition({
       reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
@@ -3355,8 +3355,10 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
       priorText: first.ledger,
     });
     assert.match(second.ledger, /^superseded:/m, 'the superseded decision must be recorded in the ledger');
-    assert.match(second.ledger, /id: CR-01 \| disposition: deferred \| title: the original finding \| source: waiting on the vendor/,
-      'with its disposition, the finding it belonged to, and the reason');
+    const supFm = require('js-yaml').load(second.ledger.split('---')[1]);
+    assert.deepStrictEqual(supFm.superseded, [{
+      id: 'CR-01', disposition: 'deferred', title: 'the original finding', source: 'waiting on the vendor',
+    }], 'with its disposition, the finding it belonged to, and the reason');
     assert.match(second.stdout, /superseded by a REUSED finding id/, 'and stated on the console');
   });
 
@@ -3373,10 +3375,10 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
       reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
       priorText: second.ledger,
     });
-    assert.match(third.ledger, /id: CR-01 \| disposition: deferred \| title: the original finding/,
-      'rebuilding the frontmatter from rows must not drop the carried record');
-    // And it must not accumulate: the same record twice is a growing file and a never-unchanged run.
-    assert.strictEqual((third.ledger.match(/ \| disposition: deferred \| /g) || []).length, 1);
+    const thirdFm = require('js-yaml').load(third.ledger.split('---')[1]);
+    const carried = (thirdFm.superseded || []).filter((x) => x.id === 'CR-01' && x.title === 'the original finding');
+    assert.strictEqual(carried.length, 1, 'rebuilding the frontmatter must carry it, exactly once');
+    assert.strictEqual(carried[0].disposition, 'deferred');
   });
 
   test('a prior ledger with NO recorded title still inherits its decision (back-compat)', () => {
@@ -3402,6 +3404,88 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
     const cr = ledgerRows(out.ledger).find((r) => r.id === 'CR-01');
     assert.strictEqual(cr.disposition, 'fixed');
     assert.match(cr.source, /01-REVIEW-FIX\.iter2\.md/, 'the cited report must be the one that decided it');
+  });
+
+  // ── #3861 round 5, second rework pass — four defects the review drove out of the FIRST fix ──
+
+  test('an iteration-only decision records the title it was decided under', () => {
+    // Without this the row was written with NO title -- the current review does not report the
+    // finding, so nothing else knows one -- and the next review reusing that id then hit the
+    // title-ABSENT back-compat exception and inherited the old `fixed`. The very defect the title
+    // machinery exists to close, surviving through the hole opened for legacy ledgers.
+    const first = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### IN-07: unrelated'].join('\n'),
+      iterFixText: { 2: ['## Fixed Issues', '', '### CR-01: the original finding'].join('\n') },
+    });
+    assert.match(first.ledger, /title: "the original finding"/, 'the deciding title must be recorded');
+
+    const second = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: first.ledger,
+    });
+    assert.strictEqual(ledgerRows(second.ledger).find((r) => r.id === 'CR-01').disposition, 'open',
+      'a reused id must not inherit a decision recorded for a different finding');
+  });
+
+  test('a CHANGED decision replaces an earlier superseded record rather than being dropped', () => {
+    // A has()-guard skipped the newer decision and left the obsolete one standing as the record —
+    // the ledger then asserting something that had since been decided differently.
+    const seed = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: finding A'].join('\n'),
+      priorText: '| CR-01 | critical | fixed | somewhere |\n',
+    });
+    const supersededOnce = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: finding B'].join('\n'),
+      priorText: seed.ledger,
+    });
+    assert.match(supersededOnce.ledger, /disposition: fixed/);
+    // Now finding A is decided differently and superseded again.
+    const reseed = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: finding A'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | changed my mind |\n',
+    });
+    const supersededTwice = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: finding B'].join('\n'),
+      priorText: reseed.ledger,
+    });
+    const yaml = require('js-yaml');
+    const fm = yaml.load(supersededTwice.ledger.split('---')[1]);
+    const recs = (fm.superseded || []).filter((x) => x.id === 'CR-01' && x.title === 'finding A');
+    assert.strictEqual(recs.length, 1, 'one record per (id, finding), not two');
+    assert.strictEqual(recs[0].disposition, 'deferred', 'and it must be the NEWER decision');
+  });
+
+  test('whitespace-equivalent titles collapse to ONE superseded record', () => {
+    // sameTitle() already treats a re-spaced title as identical; the dedupe key must agree with it,
+    // or the same decision accumulates a record per spacing variant.
+    const seed = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: spaced   out   title'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | r |\n',
+    });
+    const a = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: something else'].join('\n'),
+      priorText: seed.ledger,
+    });
+    const yaml = require('js-yaml');
+    const fm = yaml.load(a.ledger.split('---')[1]);
+    assert.strictEqual((fm.superseded || []).length, 1);
+  });
+
+  test('the ledger frontmatter is valid YAML even when a title contains a colon', () => {
+    // `title: Parser: loses data` is not YAML — a real reader returns 'bad indentation of a mapping
+    // entry'. The values are emitted as JSON scalars, which YAML 1.2 reads as double-quoted strings.
+    const yaml = require('js-yaml');
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: Parser: loses data'].join('\n'),
+    });
+    const fm = yaml.load(out.ledger.split('---')[1]);
+    assert.strictEqual(fm.findings[0].title, 'Parser: loses data', 'the colon must survive the round trip');
+    // And the title still round-trips through the parser as an identity, so a re-run is unchanged.
+    const again = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: Parser: loses data'].join('\n'),
+      priorText: out.ledger,
+    });
+    assert.strictEqual(again.wroteNothing, true, 'a second run must still report unchanged');
   });
 
   test('a carried human reason ending in the marker is preserved, and not doubled', () => {
