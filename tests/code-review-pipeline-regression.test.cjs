@@ -42,7 +42,8 @@ const ROOT = path.resolve(__dirname, '..');
 // AND NOT A PROBE — but the honest reason is narrower than the first draft of this comment claimed,
 // and the correction is worth keeping. Round 5 flagged that every test exercising the shipped bash
 // fences is `{ skip: !HAS_BASH }`, so block 1's severity-reporting path has no Windows-lane coverage.
-// The gap is real and the count is 22.
+// The gap is real and the count is 37 — 22 was the number of `{ skip: !HAS_BASH }` CALL SITES, and a
+// skip on a `describe` cancels its subtests.
 //
 // This comment first justified the skip by citing `local/no-unguarded-nonportable-exec` as REQUIRING
 // this exact guard. That was checked and is wrong on both halves: the rule only fires on a file that
@@ -50,13 +51,25 @@ const ROOT = path.resolve(__dirname, '..');
 // `eslint-rules/lib/platform-guard.cjs` accepts four guard shapes plus `os.platform()`, not one. A
 // constraint that exists is not a constraint that applies.
 //
-// What actually holds: whether these fences PASS on the repo's Windows lane is UNVERIFIED. The
-// evidence points at divergence rather than absence — the rule's own subject line is that `bash -c`
-// constructs "fail on Windows Git Bash", and this PR already measured `mkfifo` existing on that
-// runner, exiting 0, and not creating a FIFO. So a runtime probe would not reveal a clean win; it
-// would light 22 tests on a lane whose shell semantics are known to differ and unknown in detail,
-// speculatively, in a review round. That is a measurement to make deliberately, not a change to make
-// in passing — and until it is made, the platform assumption is the legible form of a real gap.
+// What holds — and this is now MEASURED, not assumed. The measurement the previous version of this
+// comment deferred has been made, on native Windows (not WSL) with Git Bash 5.2.37 / MINGW64 first on
+// PATH, node v25.2.1 — the same shell family the repo's `windows-latest` lane runs:
+//
+//     HAS_BASH left alone:  179 tests, 127 pass,   0 fail, 52 skipped
+//     HAS_BASH forced true: 179 tests, 140 pass,  24 fail, 15 skipped
+//
+// So 37 of the skips are this guard's (52 - 15; the other 15 skip for unrelated reasons), and
+// unskipping them does NOT reveal a clean win: 13 pass and 24 fail. The failures cluster on exactly
+// the divergence the eslint rule's subject line names — `bash -c` quoting (one surfaces as
+// `unexpected EOF while looking for matching '"'`), empty captured output, and two outright
+// `spawn_failed`. Flipping this constant to a runtime probe today would red the Windows lane with 24
+// failures, so the guard STAYS; what changes is that it now documents a measured gap instead of an
+// assumed one. Closing it means porting the fences themselves, which is a change of its own, not a
+// line in a review round.
+//
+// NOTE for anyone re-running this: on a WSL host `bash` on the Windows PATH resolves to
+// C:\Windows\system32\bash.exe, the WSL bridge — measuring through that runs real Linux bash and
+// reports a false clean. Put `C:\Program Files\Git\bin` first.
 const HAS_BASH = process.platform !== 'win32';
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
 const PRE_PASS_STEP_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review', 'steps', 'structural-pre-pass.md');
@@ -3331,13 +3344,39 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
     // an intentional drop for a reused id — shipped, user-facing text asserting something false.
     // And the console must not point at git: committing is gated on commit_docs and a failed commit
     // is swallowed, so under commit_docs=false the overwritten decision may exist nowhere.
-    const out = runShippedDisposition({
-      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n'),
+    // Round 5 found this test VACUOUS: it ran with no prior ledger, so no reuse ever occurred and
+    // the `is in git` assertion could not have failed however the console was worded. Driven through
+    // a real drop now, so the negative assertion is made against a console line that actually exists.
+    const seed = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: the original finding'].join('\n'),
+      priorText: '| CR-01 | critical | deferred | waiting on the vendor |\n',
     });
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: seed.ledger,
+    });
+    assert.match(out.stdout, /decision\(s\) DROPPED/, 'precondition: this run must actually drop a decision');
     assert.doesNotMatch(out.ledger, /preserves every row and every disposition/,
       'the unqualified preservation promise must not return');
     assert.match(out.ledger, /id is REUSED/, 'and the one exception must be stated where a reader meets it');
     assert.doesNotMatch(out.stdout, /is in git/, 'the console must not assert a recovery path that may not exist');
+  });
+
+  test('an `open` prior is replaced SILENTLY, and the shipped text says so', () => {
+    // Round 5: the legend and both feature docs claimed the drop is named on the console
+    // unconditionally. It is not — `row()` reports only a RECORDED decision (`was.d !== 'open'`).
+    // The behaviour is deliberate (an `open` row records no decision to lose); the text was wrong.
+    const seed = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: the original finding'].join('\n'),
+    });
+    assert.strictEqual(ledgerRows(seed.ledger).find((r) => r.id === 'CR-01').disposition, 'open');
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n'),
+      priorText: seed.ledger,
+    });
+    assert.doesNotMatch(out.stdout, /DROPPED/, 'an untriaged prior row is replaced without a report');
+    assert.match(out.ledger, /a row still at `open` is replaced silently/,
+      'and the legend must state that exception rather than promising an unconditional report');
   });
 
   test('a dropped decision is REPORTED on the console, not lost quietly', () => {

@@ -38,8 +38,9 @@ and REVIEW.md has a single writer, `gsd-code-reviewer`, which this step is not.
 # Carrying an unusable value verbatim was the first draft and it was worse than the bug it
 # replaced: PHASE_NUMBER is interpolated into a file path, so `../../etc/passwd` produced
 # `${PHASE_DIR}/../../etc/passwd-REVIEW.md`, where the old `printf "%02d"` had at least
-# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$`
-# (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
+# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$` against their own
+# PADDED_PHASE (code-review.md:60, code-review-fix.md:36) -- the padded form, not the raw
+# PHASE_NUMBER this step is handed; this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
 # PHASE_DIR is checked for NON-EMPTINESS ONLY. Both inputs come from the caller's init query, so
@@ -203,8 +204,9 @@ the step — never blocks:
 # Carrying an unusable value verbatim was the first draft and it was worse than the bug it
 # replaced: PHASE_NUMBER is interpolated into a file path, so `../../etc/passwd` produced
 # `${PHASE_DIR}/../../etc/passwd-REVIEW.md`, where the old `printf "%02d"` had at least
-# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$`
-# (code-review.md:60, code-review-fix.md:36); this step has two call sites and validates for
+# mangled it to `00`. Both callers already validate `^[0-9]+(\.[0-9]+)?$` against their own
+# PADDED_PHASE (code-review.md:60, code-review-fix.md:36) -- the padded form, not the raw
+# PHASE_NUMBER this step is handed; this step has two call sites and validates for
 # itself rather than trusting either. Anything else yields an EMPTY PADDED and the blocks
 # below refuse to build a path from it.
 # PHASE_DIR is checked for NON-EMPTINESS ONLY. Both inputs come from the caller's init query, so
@@ -613,7 +615,7 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   const escapePipes = (t) => t.replace(/\\\\.|\|/g, (m) => (m === '|' ? '\\\\|' : m));
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
-    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate keeps every row it can. A row the current review no longer reports is kept and its Source cell flagged, so a finding does not leave this record silently. ONE exception: when a finding id is REUSED by a different finding, the earlier decision cannot keep a row — the id is taken — and it is dropped, named on the console when it happens.', '']).join('\n');
+    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate keeps every row it can. A row the current review no longer reports is kept and its Source cell flagged, so a finding does not leave this record silently. ONE exception: when a finding id is REUSED by a different finding, the earlier decision cannot keep a row — the id is taken — and it is dropped. A RECORDED decision (anything but \`open\`) is named on the console when that happens; a row still at \`open\` is replaced silently, because \`open\` records no decision to lose.', '']).join('\n');
   // One line: the value feeds a line-oriented record a regex re-reads.
   const oneLine = (t) => String(t === undefined || t === null ? '' : t).replace(/[\r\n]+/g, ' ').trim();
   // JSON.stringify: YAML 1.2 is a JSON superset, so a colon, quote or leading '#' survives. The
