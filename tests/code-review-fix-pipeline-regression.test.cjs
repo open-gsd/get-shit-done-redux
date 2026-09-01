@@ -165,21 +165,45 @@ describe('#3190 — code-review-fix --auto REVIEW.md commit + FIX_REPORT_PATH en
   // backups are removed so the phase directory is clean. Backup CREATION is
   // unchanged (out of scope); they are retained when the loop degrades.
   // -------------------------------------------------------------------------
-  test('T6 — auto_iteration_loop removes spent .iterN.md backups on convergence', () => {
+  test('T6 — spent .iterN.md backups are removed on convergence, AFTER the ledger reads them', () => {
+    // #3190's SEMANTICS are unchanged and still asserted here: removed on convergence, retained on
+    // degradation, creation intact. What moved is the PLACEMENT, and it had to. This workflow keeps
+    // one final version of REVIEW.md and REVIEW-FIX.md rather than per-iteration copies, and the
+    // re-review drops a finding once it is fixed — so the backups are the only surviving record of
+    // what an early --auto iteration closed. Removing them at the end of the loop erased that record
+    // before `record_disposition` could read it, and the ledger then reported those findings as
+    // `open (not in the current review)`: indistinguishable from never triaged (#3861 round 5).
     const src = fs.readFileSync(WORKFLOW_PATH, 'utf8');
-    const region = stepRegion(src, 'auto_iteration_loop');
-    assert.ok(
-      region.includes('CONVERGED'),
-      'auto_iteration_loop must track a CONVERGED flag distinguishing convergence from degradation',
-    );
-    assert.ok(
-      /rm -f[\s\S]*?\.iter[\s\S]*?\*[\s\S]*?\.md/.test(region),
-      'on convergence the loop must remove spent .iterN.md backups (rm -f … .iter*.md)',
-    );
+    const loop = stepRegion(src, 'auto_iteration_loop');
+    const cleanup = stepRegion(src, 'cleanup_iteration_backups');
+
     // Backups are still CREATED before each overwrite (the unchanged mechanism).
     assert.ok(
-      region.includes('.iter${ITERATION}.md'),
+      loop.includes('.iter${ITERATION}.md'),
       'backup creation (cp … .iter${ITERATION}.md) must remain intact',
     );
+    // And no longer removed inside the loop — that is the regression this test now guards.
+    assert.ok(
+      !/rm -f[\s\S]*?\.iter[\s\S]*?\*[\s\S]*?\.md/.test(loop),
+      'the loop must NOT remove the backups it wrote; the ledger has not read them yet',
+    );
+    // Removal lives in its own step, still gated on convergence.
+    assert.ok(
+      /rm -f[\s\S]*?\.iter[\s\S]*?\*[\s\S]*?\.md/.test(cleanup),
+      'cleanup_iteration_backups must remove spent .iterN.md backups (rm -f … .iter*.md)',
+    );
+    assert.match(
+      cleanup, /FINAL_STATUS/,
+      'convergence must still be decided, re-derived from the final review status',
+    );
+    assert.match(
+      cleanup, /retained/i,
+      'and degradation must still retain the backups for post-mortem',
+    );
+    // Ordering is the whole point of the move.
+    const recordAt = src.indexOf('<step name="record_disposition">');
+    const cleanupAt = src.indexOf('<step name="cleanup_iteration_backups">');
+    assert.ok(recordAt > -1 && cleanupAt > -1, 'both steps must exist');
+    assert.ok(recordAt < cleanupAt, 'the ledger reads the backups BEFORE they are removed');
   });
 });

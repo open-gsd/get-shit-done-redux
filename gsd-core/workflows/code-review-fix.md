@@ -258,10 +258,11 @@ if [ "$AUTO_MODE" = "true" ]; then
   # Total fix passes = MAX_ITERATIONS. Loop uses -lt (not -le) intentionally.
   ITERATION=1
   MAX_ITERATIONS=3
-  # #3190: track whether the loop converged (re-review came back clean) vs
-  # degraded (hit the cap). Convergence determines whether the .iterN.md backups
-  # are spent scratch (cleaned below) or retained for post-mortem analysis.
-  CONVERGED=false
+  # #3190's convergence-vs-degradation distinction still governs whether the .iterN.md backups are
+  # spent scratch or a post-mortem trail — but the removal moved to `cleanup_iteration_backups`,
+  # after `record_disposition` has read them, so nothing in THIS loop consumes the flag any more.
+  # It is re-derived there from the final REVIEW.md's status, which is exactly the condition the
+  # `break` below fires on. A variable set here and read nowhere would just be a decoy.
 
   while [ $ITERATION -lt $MAX_ITERATIONS ]; do
     ITERATION=$((ITERATION + 1))
@@ -321,7 +322,8 @@ ${AGENT_SKILLS_REVIEWER}")
     " 2>/dev/null)
     
     if [ "$NEW_STATUS" = "clean" ]; then
-      CONVERGED=true
+      # Convergence: the re-review came back clean. This leaves REVIEW.md at `status: clean`, which
+      # is what `cleanup_iteration_backups` re-derives the decision from.
       echo ""
       echo "✓ All issues resolved after iteration ${ITERATION}."
       break
@@ -355,10 +357,28 @@ ${AGENT_SKILLS_FIXER}")
     fi
   done
   
-  # After loop completes
+  # After loop completes. The iteration COUNTER alone does not distinguish degradation from success:
+  # a loop that converges on the final iteration exits with ITERATION == MAX_ITERATIONS and printed
+  # "Reached maximum iterations. Remaining issues documented in REVIEW-FIX.md" over a run in which
+  # every finding was fixed — telling the operator the opposite of what happened, on the one path
+  # where the cap and convergence coincide. Convergence is re-derived from the review the loop left
+  # behind, the same signal cleanup_iteration_backups reads, so the two cannot disagree.
   if [ $ITERATION -ge $MAX_ITERATIONS ]; then
-    echo ""
-    echo "⚠ Reached maximum iterations (${MAX_ITERATIONS}). Remaining issues documented in REVIEW-FIX.md."
+    LOOP_END_STATUS=$(REVIEW_PATH="${REVIEW_PATH}" node -e "
+      const fs = require('fs');
+      try {
+        const content = fs.readFileSync(process.env.REVIEW_PATH, 'utf-8');
+        const match = content.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---/);
+        console.log(match && /status:\s*(\S+)/.test(match[1]) ? match[1].match(/status:\s*(\S+)/)[1] : 'unknown');
+      } catch (e) { console.log('unknown'); }
+    " 2>/dev/null)
+    if [ "$LOOP_END_STATUS" = "clean" ]; then
+      echo ""
+      echo "✓ All issues resolved on the final iteration (${MAX_ITERATIONS}/${MAX_ITERATIONS})."
+    else
+      echo ""
+      echo "⚠ Reached maximum iterations (${MAX_ITERATIONS}). Remaining issues documented in REVIEW-FIX.md."
+    fi
   fi
 
   # #3190's cleanup of the .iterN.md backups now runs in `cleanup_iteration_backups`, AFTER
@@ -458,9 +478,12 @@ meant the disposition ledger reached a converged `--auto` run with every early f
 recorded those findings as `open (not in the current review)`: indistinguishable from never triaged,
 which is the one distinction #3829 exists to make.
 
-`CONVERGED` does not survive the loop's shell, and is re-derived rather than carried: the loop sets it
-exactly when a re-review came back clean, so a final `REVIEW.md` reading `status: clean` IS the
-converged case. Hitting `MAX_ITERATIONS` leaves the last re-review non-clean, and the backups are kept.
+Convergence is re-derived here rather than carried. Shell state does not survive the loop's fence, so
+a flag set there would be gone by this step — and once nothing in the loop consumed it, keeping it
+would have left a variable set in one place and read in none. The loop breaks on exactly one
+condition, a re-review returning clean, and that leaves `REVIEW.md` at `status: clean`: the final
+review's status IS the converged case. Hitting `MAX_ITERATIONS` leaves the last re-review non-clean,
+and the backups are kept.
 
 ```bash
 if [ "$AUTO_MODE" = "true" ]; then
