@@ -3326,6 +3326,20 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
   // 'CR-01 fixed' against a review reporting a brand-new CR-01 rendered the NEW finding `fixed` — a
   // false decision in the artifact whose entire purpose is telling triaged from forgotten.
 
+  test('the ledger does not promise a preservation it no longer makes', () => {
+    // The rendered text said "preserves every row and every disposition" while the step had gained
+    // an intentional drop for a reused id — shipped, user-facing text asserting something false.
+    // And the console must not point at git: committing is gated on commit_docs and a failed commit
+    // is swallowed, so under commit_docs=false the overwritten decision may exist nowhere.
+    const out = runShippedDisposition({
+      reviewText: ['---', 'status: issues_found', '---', '', '### CR-01: a finding'].join('\n'),
+    });
+    assert.doesNotMatch(out.ledger, /preserves every row and every disposition/,
+      'the unqualified preservation promise must not return');
+    assert.match(out.ledger, /id is REUSED/, 'and the one exception must be stated where a reader meets it');
+    assert.doesNotMatch(out.stdout, /is in git/, 'the console must not assert a recovery path that may not exist');
+  });
+
   test('a dropped decision is REPORTED on the console, not lost quietly', () => {
     // The `superseded:` block that preserved these was tried and withdrawn — it produced a fresh
     // defect on each of three review passes. What survives is the guard (no false `fixed`) plus an

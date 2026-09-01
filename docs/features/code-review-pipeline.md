@@ -107,9 +107,16 @@ artifact whose purpose is telling triaged from forgotten.
 **The limitation that follows, stated rather than hidden.** When an ID *is* reused, the new finding
 is recorded `open` (nobody decided anything about it) and the earlier decision **loses its row** —
 the ledger keys rows on the finding ID, and two rows under one ID is an ambiguity, not a record. The
-drop is reported on the console, naming the ID and what had been decided, and the previous ledger is
-committed, so the superseded row remains in git. Preserving it in the file was tried and withdrawn:
-it needed a second identity scheme and produced a fresh defect on each of three review passes.
+drop is reported on the console, naming the ID and what had been decided. Preserving it in the file
+was tried and withdrawn: it needed a second identity scheme and produced a fresh defect on each of
+three review passes. Recovery is the ledger's own git history where `commit_docs` is on — which is
+why the console reports the drop rather than pointing at a commit that may not exist.
+
+**Two residuals, since (ID, title) is not proof of identity.** A ledger written before titles were
+recorded carries none, so its decisions are inherited on the ID alone — refusing there would reset
+every decision in every existing ledger, which is the loss the guard exists to prevent. And two
+genuinely distinct findings that share both an ID and a title are indistinguishable to this key.
+Separating them needs a second identity scheme, which is the thing that was just withdrawn.
 
 Reconciliation applies an outcome only when the fix report names the **same** finding, because
 finding IDs are reused across re-reviews and a stale report would otherwise declare a brand-new

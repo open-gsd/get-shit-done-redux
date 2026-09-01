@@ -453,6 +453,9 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // and a second free-text column doubles that surface for nothing.
   const priorTitle = new Map();
   // Ids whose recorded decision could not be carried because the id now names a DIFFERENT finding.
+  // The note deliberately does NOT promise the old row 'is in git': committing this ledger is gated
+  // on commit_docs and a failed commit is swallowed below, so under commit_docs=false the overwritten
+  // decision may exist nowhere. Report the drop; do not assert a recovery path that may not be there.
   // REPORTED, not re-homed: the ledger keys rows on the finding id, and two rows under one id is an
   // ambiguity rather than a record. Machinery that kept the orphaned decision in the file was tried
   // and withdrawn -- it produced a fresh defect on each of three review passes. The decision is not
@@ -612,7 +615,7 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   // finding under a reused id, and a fixer that re-titled the same one -- and the step cannot tell
   // them apart, so it reports the observation rather than a conclusion it has not earned.
   // On the console too: a reader who never opens the ledger still has to learn a decision lost its row.
-  const reusedNote = reused.length ? ' (' + reused.length + ' recorded decision(s) DROPPED -- the id now names a different finding, so the decision no longer has a row: ' + reused.join(', ') + '; the previous ledger is in git)' : '';
+  const reusedNote = reused.length ? ' (' + reused.length + ' recorded decision(s) DROPPED -- the id now names a different finding, so the decision no longer has a row: ' + reused.join(', ') + ')' : '';
   const staleNote = staleFix.length ? ' (' + staleFix.length + ' fix-report entr' + (staleFix.length === 1 ? 'y titles its' : 'ies title their') + ' finding differently from the review, so ' + (staleFix.length === 1 ? 'it was' : 'they were') + ' not reconciled -- a stale report, or a re-titled one: ' + staleFix.join(', ') + ')' : '';
   // RECONCILE THE TWO PARSERS. The counts come from REVIEW.md's frontmatter; the rows come from
   // heading matches against a CLOSED CR|BL|WR|IN alternation. A finding the heading parser cannot
@@ -642,7 +645,7 @@ FIX_REPORT_FILE="${FIX_REPORT_FILE}" node -e "
   const escapePipes = (t) => t.replace(/\\\\.|\|/g, (m) => (m === '|' ? '\\\\|' : m));
   const body = ['# Phase ' + process.env.PADDED + ': Code Review Disposition', '', '| Finding | Severity | Disposition | Source |', '|---------|----------|-------------|--------|']
     .concat(rows.map((r) => { const src = escapePipes(r.src || '-'); const mark = r.carried && !/\(not in the current review\)\s*\$/.test(src) ? ' (not in the current review)' : ''; return '| ' + r.id + ' | ' + r.sev + ' | ' + r.d + ' | ' + src + mark + ' |'; }))
-    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate preserves every row and every disposition. A row the current review no longer reports is kept, and its Source cell is flagged, so a finding never leaves this record without a trace.', '']).join('\n');
+    .concat(['', 'Dispositions: \`open\` (recorded, not yet triaged), \`fixed\`, \`skipped\`, \`deferred\`.', 'Set \`deferred\` by hand and put the reason in the Source cell; both are preserved. A \`|\` in the reason is kept as prose and escaped on the next run.', 'Re-running the gate keeps every row it can. A row the current review no longer reports is kept and its Source cell flagged, so a finding does not leave this record silently. ONE exception: when a finding id is REUSED by a different finding, the earlier decision cannot keep a row — the id is taken — and it is dropped, named on the console when it happens.', '']).join('\n');
   // Flattened to one line. A '###' heading cannot contain a newline, but the value feeds a
   // line-oriented record a regex re-reads, where one would truncate the entry on the next parse.
   const oneLine = (t) => String(t === undefined || t === null ? '' : t).replace(/[\r\n]+/g, ' ').trim();
