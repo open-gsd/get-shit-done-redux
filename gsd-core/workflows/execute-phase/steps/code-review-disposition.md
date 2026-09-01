@@ -265,18 +265,28 @@ if [ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]; then
   REVIEW_TOTAL=$(echo "$_FM" | awk '/^findings:[[:space:]]*$/{f=1; next} f&&/^[^[:space:]]/{exit} f' | grep -E -m1 "^[[:space:]]*total:" | cut -d: -f2 | tr -d ' ' || true)
   case "$REVIEW_TOTAL" in ''|*[!0-9]*) REVIEW_TOTAL="" ;; ?????????*) REVIEW_TOTAL="" ;; esac
 fi
-# Skip a clean/skipped/absent review ONLY when there is no ledger to reconcile. An EXISTING
+# Skip a clean/skipped/absent review ONLY when there is nothing to reconcile AT ALL. An EXISTING
 # ledger still has to be brought up to date — its decided rows are carried and its untriaged
 # `open` rows dropped — because freezing it would leave findings showing as open that the
 # review no longer reports. A guard that skipped unconditionally would make the script's own
 # reconciliation path unreachable on exactly the run that needs it.
+# A FIX REPORT IS THE SECOND REASON TO PROCEED, and its absence from this condition was a live gap:
+# a direct `/gsd-code-review N --auto` writes no gate ledger, and when its loop CONVERGES the final
+# review reads `status: clean` — so a fully successful multi-iteration run, every finding fixed and
+# committed, hit `[ ! -f "$DISPOSITION_FILE" ]` and recorded NOTHING. Zero rows for a phase whose
+# findings were all triaged is the exact state #3829 was filed to make impossible.
+_fix_any=0
+[ -f "${_pd}/${PADDED}-REVIEW-FIX.md" ] && _fix_any=1
+# The per-iteration backups count too — the converged loop's earlier iterations live only there.
+# An unmatched glob expands to the literal pattern, which `-f` then rejects; no nullglob needed.
+for _f in "${_pd}/${PADDED}-REVIEW-FIX.iter"*.md; do [ -f "$_f" ] && _fix_any=1; done
 case "$REVIEW_STATUS" in
   ''|clean|skipped)
-    if [ ! -f "$DISPOSITION_FILE" ]; then
+    if [ ! -f "$DISPOSITION_FILE" ] && [ "$_fix_any" = "0" ]; then
       echo "Code review disposition skipped (status: ${REVIEW_STATUS:-none})"
       return 0 2>/dev/null || exit 0
     fi
-    echo "Code review ${REVIEW_STATUS:-unreported}; reconciling the existing disposition ledger."
+    echo "Code review ${REVIEW_STATUS:-unreported}; reconciling the fix report and any existing disposition ledger."
     ;;
 esac
 _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
@@ -379,10 +389,42 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
       if (curSection) sectionSev.set(h.id, curSection);
     }
   }
+  // THE FIX REPORTS THIS RUN MAY RECONCILE AGAINST -- built here, above the guard below, because
+  // that guard has to know whether any of them exists.
+  // The --auto loop OVERWRITES REVIEW-FIX.md on every iteration ('one final version of each
+  // artifact, not per-iteration copies' -- code-review-fix.md), so the final report carries only the
+  // LAST iteration's scope. A finding fixed in iteration 1 is absent from it AND from the final
+  // REVIEW.md -- it was fixed, so the re-review stops reporting it -- and the row then fell back to
+  // the gate's 'open' and rendered 'open ... (not in the current review)', byte-for-byte the same as
+  // a finding that vanished for an unrelated reason. That is the 'was this ever seen' ambiguity
+  // #3829 exists to close, reproduced by the artifact built to close it.
+  // The loop already writes per-iteration backups ('<NN>-REVIEW-FIX.iterN.md'); read them.
+  // NEWEST FIRST, so the most recent statement about an id wins -- the same precedence
+  // first-occurrence-wins already applies to a duplicate id WITHIN one report.
+  const FIX_FINAL = process.env.FIX_REPORT_FILE;
+  const fixStem = path.basename(FIX_FINAL).slice(0, -3);        // '<NN>-REVIEW-FIX'
+  const iterMarker = fixStem + '.iter';
+  // Parsed with string ops, not a built RegExp: this script lives inside a double-quoted bash
+  // argument, where every added backslash is one more thing bash rewrites before Node sees it.
+  const iterOf = (n) => {
+    if (n.indexOf(iterMarker) !== 0 || n.slice(-3) !== '.md') return null;
+    const d = n.slice(iterMarker.length, -3);
+    return /^[0-9]+\$/.test(d) ? Number(d) : null;
+  };
+  const fixReports = [];
+  if (fs.existsSync(FIX_FINAL)) fixReports.push(FIX_FINAL);
+  let iterFiles = [];
+  // Guarded: the phase directory is not guaranteed readable, and this step never aborts.
+  try { iterFiles = fs.readdirSync(path.dirname(FIX_FINAL)).map((n) => [iterOf(n), n]).filter((e) => e[0] !== null); } catch (e) { iterFiles = []; }
+  iterFiles.sort((a, b) => b[0] - a[0]);
+  for (const e of iterFiles) fixReports.push(path.join(path.dirname(FIX_FINAL), e[1]));
   // A review that reports nothing still has to reconcile an EXISTING ledger: its decided rows
   // and its untriaged rows are BOTH carried, marked. Exiting here would freeze a stale ledger
   // showing findings as open that the review no longer reports.
-  if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE)) return;
+  // And a fix report with no ledger is ALSO something to record -- a direct '--auto' run that
+  // converges to 'status: clean' has no prior ledger, and exiting here left a fully successful
+  // multi-iteration run with zero disposition record at all.
+  if (order.length === 0 && !fs.existsSync(process.env.DISPOSITION_FILE) && fixReports.length === 0) return;
   // Prior rows: keep the disposition AND its source cell — the source is where a human writes
   // the reason a finding was deferred, and rewriting it would discard the very thing the
   // 'set deferred by hand, with the reason' instruction asks for. The Source cell is the LAST
@@ -447,9 +489,9 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   // Section headings are matched WHOLE: a prefix match would let '## Fixed Issues Verification'
   // classify every finding under it as fixed.
   const applied = new Map(), staleFix = [];
-  if (fs.existsSync(process.env.FIX_REPORT_FILE)) {
+  for (const fixPath of fixReports) {
     let sect = null;
-    for (const h of headings(fs.readFileSync(process.env.FIX_REPORT_FILE, 'utf-8'))) {
+    for (const h of headings(fs.readFileSync(fixPath, 'utf-8'))) {
       if (h.fence || h.skip) continue;
       if (/^##\s+Fixed Issues\s*\$/.test(h.line)) { sect = 'fixed'; continue; }
       if (/^##\s+Skipped Issues\s*\$/.test(h.line)) { sect = 'skipped'; continue; }
@@ -461,8 +503,20 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
       // reused, the finding is not, and a reader who sees the row stay 'open' has no way to
       // tell that from 'the fix report never mentioned it'. Record it and say so below.
       if (h.id && sect && !applied.has(h.id)) {
-        if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, sect);
-        else if (title.has(h.id) && staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
+        // THREE ARMS, and the first one is the fix. When the current review does not report this id
+        // AT ALL there is no title to disagree with, so this is NOT the stale-report case -- it is
+        // the shape a finding takes once it has been ACTED ON, because the re-review stops reporting
+        // what the fixer closed. The old two-arm form asked 'sameTitle(undefined, h.title)', which is
+        // false, and then 'title.has(h.id)', which is also false -- so the entry entered NEITHER
+        // 'applied' NOR 'staleFix' and was dropped in silence. The row fell back to the gate's 'open'
+        // and rendered 'open ... (not in the current review)': a genuinely fixed, committed finding
+        // made indistinguishable from one that vanished for an unrelated reason.
+        // The id-reuse hazard this ordering could raise is already closed by the arm below: when the
+        // review DOES report the id, a title mismatch still goes to 'staleFix' and is never applied,
+        // so a renumbered finding cannot inherit an earlier iteration's 'fixed'.
+        if (!title.has(h.id)) applied.set(h.id, sect);
+        else if (sameTitle(title.get(h.id), h.title)) applied.set(h.id, sect);
+        else if (staleFix.indexOf(h.id) === -1) staleFix.push(h.id);
       }
     }
   }
@@ -489,10 +543,19 @@ FIX_REPORT_FILE="${_pd}/${PADDED}-REVIEW-FIX.md" node -e "
   // it is real: a RENUMBERED finding appears twice until someone triages the old row, and a
   // carried untriaged row persists across runs until decided. Both are bounded by the phase's own
   // findings, both are legible from the marker, and both are strictly better than a silent delete.
-  for (const [id, was] of prior) {
-    if (order.indexOf(id) === -1) {
-      rows.push({ id, sev: sev(id), d: was.d, src: was.src || (was.d === 'open' ? '-' : 'recorded'), carried: true });
-    }
+  // The carried set is prior rows UNION ids a fix report decided that the current review no longer
+  // reports. The second half is what renders the arm added above: an applied outcome is a decision,
+  // and a decision the ledger cannot render is a decision LOST -- the same silent drop this loop
+  // already refuses for prior rows, one source over. Precedence matches row() exactly: an applied
+  // outcome is evidence of an action on code and beats a recorded one.
+  const carriedIds = [];
+  for (const id of prior.keys()) if (order.indexOf(id) === -1 && carriedIds.indexOf(id) === -1) carriedIds.push(id);
+  for (const id of applied.keys()) if (order.indexOf(id) === -1 && carriedIds.indexOf(id) === -1) carriedIds.push(id);
+  for (const id of carriedIds) {
+    const act = applied.get(id), was = prior.get(id);
+    const d = act || (was ? was.d : 'open');
+    const src = act ? process.env.PADDED + '-REVIEW-FIX.md' : (was && was.src) || (d === 'open' ? '-' : 'recorded');
+    rows.push({ id, sev: sev(id), d: d, src: src, carried: true });
   }
   const open = rows.filter((r) => r.d === 'open').length;
   // Surfaced, not thrown: the gate is advisory. But a fix report naming a finding whose title

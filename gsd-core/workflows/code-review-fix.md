@@ -361,22 +361,16 @@ ${AGENT_SKILLS_FIXER}")
     echo "⚠ Reached maximum iterations (${MAX_ITERATIONS}). Remaining issues documented in REVIEW-FIX.md."
   fi
 
-  # #3190: on convergence the .iterN.md backups are spent scratch — their
-  # stated purpose is post-mortem analysis "if iterations degrade", and
-  # convergence means no degradation. Remove them so the phase directory is
-  # clean (no dirty REVIEW.md or backup files after the run). They are RETAINED
-  # when the loop degraded (hit MAX_ITERATIONS / fixer failure) so the
-  # post-mortem trail survives. Backup CREATION (cp … .iterN.md) is unchanged.
-  if [ "$CONVERGED" = "true" ]; then
-    rm -f "${REVIEW_PATH%.md}.iter"*.md "${FIX_REPORT_PATH%.md}.iter"*.md 2>/dev/null || true
-  fi
+  # #3190's cleanup of the .iterN.md backups now runs in `cleanup_iteration_backups`, AFTER
+  # `record_disposition` — see that step for why. Removing them here deleted the only record of
+  # what the earlier iterations fixed before anything had read it.
 fi
 ```
 
 Key design decisions for --auto (addresses ALL review HIGH concerns):
 1. **Re-review scope**: Uses REVIEW_FILES_ARRAY from original REVIEW.md frontmatter, falling back to full phase scope. Scope is NOT lost between iterations. Uses portable while-read loop (bash 3.2+ compatible, handles spaces in paths).
 2. **Artifact semantics**: REVIEW.md is overwritten by each re-review (latest review state). REVIEW-FIX.md is overwritten by each fixer iteration (latest fix state with iteration count). There is ONE final version of each artifact, not per-iteration copies.
-   Backup files (.iterN.md) preserve history for post-mortem analysis if iterations degrade. On successful convergence (#3190) the backups are spent scratch and removed; on degradation (hit MAX_ITERATIONS / fixer failure) they are retained for post-mortem.
+   Backup files (.iterN.md) preserve history for post-mortem analysis if iterations degrade. On successful convergence (#3190) the backups are spent scratch and removed; on degradation (hit MAX_ITERATIONS / fixer failure) they are retained for post-mortem. The removal happens in `cleanup_iteration_backups`, after `record_disposition` has read them — they are the only surviving record of what an earlier iteration fixed, since this artifact keeps one final version rather than per-iteration copies.
 3. **Commit timing**: Fix commits happen per-finding inside the agent. REVIEW-FIX.md is NOT committed until step 7 (after ALL iterations complete). Only ONE docs commit, not one per iteration. In --auto that single commit also stages the converged REVIEW.md alongside REVIEW-FIX.md (#3190), so the two committed artifacts agree — the initial code-review commit held iteration-1 REVIEW.md content, and the --auto re-review loop overwrote it each iteration.
 </step>
 
@@ -449,6 +443,45 @@ the ledger claims anything about it, and the step's own reconciliation reads
 Safe to run twice. The step is idempotent — a re-render that changes nothing reports `unchanged` and
 rewrites no file — so a phase that reaches the gate and then a fix run ends with one ledger reflecting
 both, not two competing ones.
+</step>
+
+<step name="cleanup_iteration_backups">
+Only runs if AUTO_MODE is true. If AUTO_MODE is false, skip this step entirely.
+
+**Removes the `.iterN.md` scratch — deliberately AFTER `record_disposition`, not at the end of the
+loop.** #3190's rule is unchanged: on convergence the backups are spent scratch and go; on degradation
+they are retained for post-mortem. What changed is the timing, and it was load-bearing. This workflow
+keeps ONE final version of `REVIEW.md` and `REVIEW-FIX.md` rather than per-iteration copies, so the
+backups are the only surviving record of what an earlier iteration fixed — and the re-review drops a
+finding once it is fixed, so the final review does not carry it either. Deleting them inside the loop
+meant the disposition ledger reached a converged `--auto` run with every early fix already erased, and
+recorded those findings as `open (not in the current review)`: indistinguishable from never triaged,
+which is the one distinction #3829 exists to make.
+
+`CONVERGED` does not survive the loop's shell, and is re-derived rather than carried: the loop sets it
+exactly when a re-review came back clean, so a final `REVIEW.md` reading `status: clean` IS the
+converged case. Hitting `MAX_ITERATIONS` leaves the last re-review non-clean, and the backups are kept.
+
+```bash
+if [ "$AUTO_MODE" = "true" ]; then
+  FINAL_STATUS=$(REVIEW_PATH="${REVIEW_PATH}" node -e "
+    const fs = require('fs');
+    try {
+      const content = fs.readFileSync(process.env.REVIEW_PATH, 'utf-8');
+      const match = content.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---/);
+      console.log(match && /status:\s*(\S+)/.test(match[1]) ? match[1].match(/status:\s*(\S+)/)[1] : 'unknown');
+    } catch (e) { console.log('unknown'); }
+  " 2>/dev/null)
+  # Anything but a proven-clean final review RETAINS the backups. An unreadable or unparseable
+  # review is not evidence of convergence, and retaining costs a few scratch files where deleting
+  # costs the post-mortem trail the retention rule exists for.
+  if [ "$FINAL_STATUS" = "clean" ]; then
+    rm -f "${REVIEW_PATH%.md}.iter"*.md "${FIX_REPORT_PATH%.md}.iter"*.md 2>/dev/null || true
+  else
+    echo "Iteration backups retained (final review status: ${FINAL_STATUS}) — post-mortem trail."
+  fi
+fi
+```
 </step>
 
 <step name="present_results">

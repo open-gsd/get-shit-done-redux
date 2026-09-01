@@ -1446,7 +1446,7 @@ function shippedDispositionScript() {
 }
 
 // Run the shipped script against a temp phase dir and return the ledger it wrote (or null).
-function runShippedDisposition({ reviewText, priorText, fixText, padded = '01', reviewTotal }) {
+function runShippedDisposition({ reviewText, priorText, fixText, iterFixText, padded = '01', reviewTotal }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3829-'));
   try {
     const reviewPath = path.join(dir, padded + '-REVIEW.md');
@@ -1455,6 +1455,11 @@ function runShippedDisposition({ reviewText, priorText, fixText, padded = '01', 
     fs.writeFileSync(reviewPath, reviewText);
     if (priorText !== undefined) fs.writeFileSync(dispPath, priorText);
     if (fixText !== undefined) fs.writeFileSync(fixPath, fixText);
+    // The --auto loop's per-iteration backups (<NN>-REVIEW-FIX.iterN.md). Keyed by iteration
+    // number so a test can drive the ordering the script relies on (newest wins).
+    for (const [n, text] of Object.entries(iterFixText || {})) {
+      fs.writeFileSync(path.join(dir, padded + '-REVIEW-FIX.iter' + n + '.md'), text);
+    }
     // Bounded by construction via the process seam — an unbounded spawn is an indefinite hang.
     const res = runNode(['-e', shippedDispositionScript()], {
       timeoutMs: PROBE_TIMEOUT_MS,
@@ -1889,6 +1894,24 @@ describe('#3861 round 2 — the disposition ledger is reachable in a shipped pat
     assert.ok(commitAt > -1 && recordAt > -1 && presentAt > -1, 'all three steps must exist');
     assert.ok(commitAt < recordAt, 'the ledger is reconciled AFTER the fix report is written');
     assert.ok(recordAt < presentAt, 'and before results are presented');
+  });
+
+  test('the iteration backups are removed AFTER the ledger has read them, not inside the loop', () => {
+    // #3861 round 5. The .iterN.md backups are the only surviving record of what an earlier --auto
+    // iteration fixed -- this workflow keeps ONE final version of each artifact, and the re-review
+    // drops a finding once it is fixed, so neither final artifact carries it. Deleting them at the
+    // end of the loop meant record_disposition reached a CONVERGED run with every early fix already
+    // erased and recorded those findings as open.
+    const src = fs.readFileSync(FIX_WORKFLOW, 'utf8');
+    const recordAt = src.indexOf('<step name="record_disposition">');
+    const cleanupAt = src.indexOf('<step name="cleanup_iteration_backups">');
+    assert.ok(cleanupAt > -1, 'the backups must be removed by a named step, not inline in the loop');
+    assert.ok(recordAt < cleanupAt, 'the ledger reads the backups BEFORE they are removed');
+    // And the removal must not have been left behind in the loop as well.
+    const loopAt = src.indexOf('<step name="auto_iteration_loop">');
+    const loopBody = src.slice(loopAt, src.indexOf('<step name="commit_fix_report">'));
+    assert.ok(!/rm -f "\$\{REVIEW_PATH%\.md\}\.iter"/.test(loopBody),
+      'the loop must no longer delete the backups it just wrote');
   });
 
   test('the reconciliation is reachable: gate writes all-open, the fix path resolves it', () => {
@@ -3120,11 +3143,13 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
   // preamble. runShippedDisposition drives the node script directly and never sees this shell at
   // all, so a test written against it says nothing about the guard: it passed unchanged with the
   // guard made unconditional, which is exactly the vacuity this helper exists to remove.
-  function runDispositionGuard({ reviewText, withLedger }) {
+  function runDispositionGuard({ reviewText, withLedger, withFix, withIterFix }) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-grd-'));
     try {
       fs.writeFileSync(path.join(dir, '01-REVIEW.md'), reviewText);
       if (withLedger) fs.writeFileSync(path.join(dir, '01-REVIEW-DISPOSITION.md'), '| CR-01 | critical | deferred | x |\n');
+      if (withFix) fs.writeFileSync(path.join(dir, '01-REVIEW-FIX.md'), '## Fixed Issues\n\n### CR-01: a thing\n');
+      if (withIterFix) fs.writeFileSync(path.join(dir, '01-REVIEW-FIX.iter2.md'), '## Fixed Issues\n\n### CR-01: a thing\n');
       const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[1];
       const cut = fence.indexOf('_GSD_SHIM_NAME=');
       assert.ok(cut > 0, 'the disposition block must still open with its guard, then the shim');
@@ -3153,12 +3178,93 @@ describe('#3861 round 1 — the tests must run what BASH would run', () => {
     // that skipped unconditionally would make that path unreachable on exactly the run needing it.
     const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n'), withLedger: true });
     assert.strictEqual(out.proceeded, true, 'an existing ledger must still be reconciled');
-    assert.match(out.stdout, /reconciling the existing disposition ledger/);
+    assert.match(out.stdout, /reconciling the fix report and any existing disposition ledger/);
   });
 
   test('a review reporting issues always proceeds', { skip: !HAS_BASH }, () => {
     const out = runDispositionGuard({ reviewText: ['---', 'status: issues_found', '---'].join('\n') });
     assert.strictEqual(out.proceeded, true);
+  });
+
+  // #3861 round 5 — a converged `--auto` run reaches the guard with a CLEAN review and, on a direct
+  // /gsd-code-review invocation, no gate-written ledger. Keying the skip on the ledger alone meant a
+  // fully successful multi-iteration run — every finding fixed and committed — recorded nothing at all.
+  test('a clean review with NO ledger but a fix report still proceeds', { skip: !HAS_BASH }, () => {
+    const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n'), withFix: true });
+    assert.strictEqual(out.proceeded, true, 'a fix report is a decision to record, ledger or not');
+    assert.match(out.stdout, /reconciling the fix report/);
+  });
+
+  test('a clean review with NO ledger but only an ITERATION fix report still proceeds', { skip: !HAS_BASH }, () => {
+    // The converged loop's earlier iterations survive only as <NN>-REVIEW-FIX.iterN.md, so the
+    // backups have to count toward the guard exactly as the final report does.
+    const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n'), withIterFix: true });
+    assert.strictEqual(out.proceeded, true, 'an iteration backup is a decision to record too');
+  });
+
+  test('a clean review with neither a ledger nor any fix report is still skipped', { skip: !HAS_BASH }, () => {
+    // The widening must not become "always proceed" — the original skip is still correct when
+    // there is genuinely nothing to record.
+    const out = runDispositionGuard({ reviewText: ['---', 'status: clean', '---'].join('\n') });
+    assert.strictEqual(out.proceeded, false);
+    assert.match(out.stdout, /skipped \(status: clean\)/);
+  });
+
+  // ── #3861 round 5 — the --auto multi-iteration reconciliation gap ──────────────────────────
+  //
+  // code-review-fix.md overwrites REVIEW-FIX.md on every iteration and DELETES the .iterN.md
+  // backups on convergence, so a finding fixed in iteration 1 was absent from the final fix report
+  // AND from the final review (it was fixed, so the re-review stopped reporting it). The step then
+  // fell back to the gate's `open` row and rendered `open ... (not in the current review)` — the
+  // same bytes a finding that vanished for an unrelated reason produces.
+
+  test('a fix report naming a finding the review no longer reports records it FIXED, not open', () => {
+    // The precise site: sameTitle(undefined, h.title) is false and title.has(id) is false too, so
+    // the entry entered NEITHER applied NOR staleFix and was dropped in silence.
+    const review = ['---', 'status: issues_found', '---', '', '### WR-09: something else'].join('\n');
+    const fix = ['## Fixed Issues', '', '### CR-01: the one fixed earlier'].join('\n');
+    const out = runShippedDisposition({ reviewText: review, fixText: fix });
+    const rows = ledgerRows(out.ledger);
+    const cr = rows.find((r) => r.id === 'CR-01');
+    assert.ok(cr, 'the fixed finding must have a row at all');
+    assert.strictEqual(cr.disposition, 'fixed', 'a committed fix must not render as open');
+    assert.match(cr.source, /not in the current review/, 'and it must be marked as no longer reported');
+  });
+
+  test('an ITERATION fix report is reconciled even when the final report has moved on', () => {
+    // The reviewer's scenario end to end: iteration 1 fixed CR-01, iteration 3 fixed WR-09, and the
+    // final REVIEW-FIX.md carries only the last iteration's scope.
+    const review = ['---', 'status: issues_found', '---', '', '### IN-07: still open'].join('\n');
+    const fix = ['## Fixed Issues', '', '### WR-09: fixed last'].join('\n');
+    const iter = { 2: ['## Fixed Issues', '', '### CR-01: fixed in iteration one'].join('\n') };
+    const out = runShippedDisposition({ reviewText: review, fixText: fix, iterFixText: iter });
+    const rows = ledgerRows(out.ledger);
+    assert.strictEqual(rows.find((r) => r.id === 'CR-01').disposition, 'fixed');
+    assert.strictEqual(rows.find((r) => r.id === 'WR-09').disposition, 'fixed');
+    assert.strictEqual(rows.find((r) => r.id === 'IN-07').disposition, 'open');
+  });
+
+  test('the NEWEST fix report wins when two iterations decide the same id differently', () => {
+    // Reports are read newest-first, so first-occurrence-wins gives the most recent statement —
+    // the same precedence a duplicate id already gets WITHIN one report.
+    const review = ['---', 'status: issues_found', '---', '', '### IN-07: unrelated'].join('\n');
+    const fix = ['## Skipped Issues', '', '### CR-01: contested'].join('\n');
+    const iter = { 2: ['## Fixed Issues', '', '### CR-01: contested'].join('\n') };
+    const out = runShippedDisposition({ reviewText: review, fixText: fix, iterFixText: iter });
+    assert.strictEqual(ledgerRows(out.ledger).find((r) => r.id === 'CR-01').disposition, 'skipped');
+  });
+
+  test('a REUSED id whose title differs is NOT inherited as fixed — the stale-report arm still rules', () => {
+    // The negative control for the arm added above. Re-review renumbers, so an earlier iteration's
+    // CR-01 and the current review's CR-01 can be different findings; carrying the decision across
+    // that boundary would render a false `fixed`, which is worse than the `open` it replaced.
+    const review = ['---', 'status: issues_found', '---', '', '### CR-01: a brand new finding'].join('\n');
+    const iter = { 2: ['## Fixed Issues', '', '### CR-01: an older, different finding'].join('\n') };
+    const out = runShippedDisposition({ reviewText: review, iterFixText: iter });
+    const cr = ledgerRows(out.ledger).find((r) => r.id === 'CR-01');
+    assert.strictEqual(cr.disposition, 'open', 'a different finding under a reused id must stay open');
+    assert.match(out.stdout, /title their finding differently|titles its finding differently/,
+      'and the mismatch must be stated, not swallowed');
   });
 
   test('a carried human reason ending in the marker is preserved, and not doubled', () => {
