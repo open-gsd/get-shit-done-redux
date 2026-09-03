@@ -2930,16 +2930,23 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
 
 const REVIEWER_AGENT_PATH = path.join(ROOT, 'agents', 'gsd-code-reviewer.md');
 
-// The alternations the shipped script uses to recognise a finding id. There are
-// three copies of one set, and adding a prefix to only two of them is silent.
+// The alternations the shipped script uses to recognise a finding id. There are three —
+// the heading matcher, the ledger row re-parser, and the frontmatter `- id:` matcher —
+// and adding a prefix to only some of them is silent. The severity map below is a fourth
+// copy of the same set; it is not an alternation, so it is extracted separately.
+// This scan is by PATTERN, never a fixed list of sites, which is why round 5's new
+// matcher was absorbed with no edit here. Do not convert it to an enumeration.
 function idAlternations() {
   const script = shippedDispositionScript();
   return [...script.matchAll(/\(\?:((?:[A-Z]{2}\|)+[A-Z]{2})\)-/g)].map((m) => m[1].split('|').sort().join('|'));
 }
 
-// The THIRD copy: the severity map's keys. It is not an alternation, so the extractor above cannot
-// see it — and a set that agrees in the two regexes while mis-tiering in the map is the drift the
+// The FOURTH copy: the severity map's keys. It is not an alternation, so the extractor above cannot
+// see it — and a set that agrees in the three regexes while mis-tiering in the map is the drift the
 // guard would otherwise miss entirely.
+// (Said THIRD until round 6. The extractor finds three alternations — round 5's frontmatter `- id:`
+// matcher is the third — so the map has been the fourth copy since then. The count is prose only;
+// nothing below reads it.)
 function severityMapKeys() {
   const script = shippedDispositionScript();
   const m = script.match(/\{([^}]*?)\}\[id\.split/);
