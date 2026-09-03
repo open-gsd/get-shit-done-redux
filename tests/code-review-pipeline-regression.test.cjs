@@ -1909,7 +1909,7 @@ describe('#3861 round 2 — the disposition ledger is reachable in a shipped pat
 
   test('code-review-fix.md reads and executes the disposition step after committing the fix report', () => {
     // Without this the reconciliation logic -- the bulk of the step and nearly all of its test
-    // surface -- is reachable only on a RE-EXECUTION of the phase, and REQ-REVIEW-09 is unmet in
+    // surface -- is reachable only on a RE-EXECUTION of the phase, and REQ-REVIEW-10 is unmet in
     // every shipped path. execute-phase.md's gate invokes review with neither --fix nor --auto,
     // so REVIEW-FIX.md cannot exist there and every row it writes is `open` by construction.
     const src = fs.readFileSync(FIX_WORKFLOW, 'utf8');

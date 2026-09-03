@@ -449,7 +449,7 @@ This commit happens ONCE at the end of the workflow, after all iterations (if --
 `gsd-core/workflows/execute-phase/steps/code-review-disposition.md`. It consumes `PHASE_DIR` and
 `PHASE_NUMBER` and derives everything else, and it is advisory throughout: it never blocks.
 
-This is the step's second and final call site, and without it REQ-REVIEW-09 is unreachable in every
+This is the step's second and final call site, and without it REQ-REVIEW-10 is unreachable in every
 shipped path. `execute-phase.md`'s `code_review_gate` runs the same step immediately after review,
 where `<NN>-REVIEW-FIX.md` cannot yet exist — the gate invokes review with neither `--fix` nor
 `--auto` — so every row it writes is `open` by construction. The reconciliation logic that turns
