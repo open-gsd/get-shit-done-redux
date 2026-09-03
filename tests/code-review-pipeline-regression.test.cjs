@@ -3044,9 +3044,9 @@ describe('#3861 round 1 — finding-id prefix census', () => {
     const alts = idAlternations();
     assert.ok(alts.length >= 2, 'the script must still enumerate finding-id prefixes');
     assert.strictEqual(new Set(alts).size, 1, 'the prefix enumerations have drifted apart: ' + alts.join(' vs '));
-    // And the third copy, which is not an alternation: every prefix the regexes admit must either
+    // And the fourth copy, which is not an alternation: every prefix the regexes admit must either
     // carry an explicit tier in the severity map or fall to `info` by the documented default.
-    // Without this, both regexes can gain a prefix while the map silently mis-tiers it.
+    // Without this, the three regexes can gain a prefix while the map silently mis-tiers it.
     const mapped = new Set(severityMapKeys());
     const admitted = alts[0].split('|');
     const unmapped = admitted.filter((p) => !mapped.has(p));
