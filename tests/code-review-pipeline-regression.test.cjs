@@ -3025,9 +3025,15 @@ describe('#3861 round 1 — stale fix reports are stated, not silently ignored',
 
 describe('#3861 round 1 — finding-id prefix census', () => {
   test('every copy of the prefix set agrees with every other', () => {
-    // The set is written out three times in one script — the heading matcher, the
-    // ledger re-parser, and (by its keys) the severity map. Adding a prefix to two
-    // of the three does not error; it drops carried rows on the next run.
+    // The set is written out FOUR times in one script — the heading matcher, the ledger
+    // row re-parser, the frontmatter `- id:` matcher the title tracking added, and (by its
+    // keys) the severity map. Adding a prefix to some of them does not error; it drops
+    // carried rows on the next run.
+    // The count is stated for the reader; nothing below depends on it. idAlternations()
+    // scans the script by PATTERN rather than walking a fixed site list, which is why the
+    // fourth site was absorbed without a change here — this comment is the only thing that
+    // fell behind, and a guard whose population is hand-listed is the defect it would have
+    // been. Do not convert this to an enumeration.
     const alts = idAlternations();
     assert.ok(alts.length >= 2, 'the script must still enumerate finding-id prefixes');
     assert.strictEqual(new Set(alts).size, 1, 'the prefix enumerations have drifted apart: ' + alts.join(' vs '));
