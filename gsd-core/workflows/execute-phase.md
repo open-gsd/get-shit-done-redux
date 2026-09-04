@@ -1410,7 +1410,15 @@ for TODO_FILE in "$PENDING_DIR"/*.md; do
 done
 
 if [ ${#CLOSED[@]} -gt 0 ]; then
-  gsd_run query commit "docs(phase-${PHASE_NUMBER}): close ${#CLOSED[@]} resolved todo(s)" --files .planning/todos/completed/ .planning/todos/pending/ .planning/STATE.md|| true
+  # #4208: name the moved todos on both sides. A directory entry here would
+  # also commit any unrelated todo another session dropped into pending/ or
+  # completed/ while this phase was closing.
+  ADDED=(); REMOVED=()
+  for f in "${CLOSED[@]}"; do
+    ADDED+=("$COMPLETED_DIR/$f")
+    REMOVED+=("$PENDING_DIR/$f")
+  done
+  gsd_run query commit "docs(phase-${PHASE_NUMBER}): close ${#CLOSED[@]} resolved todo(s)" --files "${ADDED[@]}" .planning/STATE.md --files-removed "${REMOVED[@]}" || true
   echo "◆ Closed ${#CLOSED[@]} todo(s) resolved by Phase ${PHASE_NUMBER}:"
   for f in "${CLOSED[@]}"; do echo "  ✓ $f"; done
 fi

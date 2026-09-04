@@ -950,15 +950,30 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
   function routeCommit({ args, cwd, raw, error }) {
     const amend = args.includes('--amend');
           const noVerify = args.includes('--no-verify');
-          const filesIndex = args.indexOf('--files');
+          // #4208: `--files` and `--files-removed` are two path lists, each
+          // running from its flag to the next `--` token. The previous
+          // slice-to-end collection folded every later non-flag token into
+          // `--files`, so a second list flag could not exist at all.
+          const collectList = (flag) => {
+            const at = args.indexOf(flag);
+            if (at === -1) return [];
+            const values = [];
+            for (const a of args.slice(at + 1)) {
+              if (a.startsWith('--')) break;
+              values.push(a);
+            }
+            return values;
+          };
+          const firstListFlag = args.findIndex((a, i) => i > 0 && (a === '--files' || a === '--files-removed'));
           // Collect all positional args between command name and first flag,
           // then join them — handles both quoted ("multi word msg") and
           // unquoted (multi word msg) invocations from different shells
-          const endIndex = filesIndex !== -1 ? filesIndex : args.length;
+          const endIndex = firstListFlag !== -1 ? firstListFlag : args.length;
           const messageArgs = args.slice(1, endIndex).filter(a => !a.startsWith('--'));
           const message = messageArgs.join(' ') || undefined;
-          const files = filesIndex !== -1 ? args.slice(filesIndex + 1).filter(a => !a.startsWith('--')) : [];
-          commands.cmdCommit(cwd, message, files, raw, amend, noVerify);
+          const files = collectList('--files');
+          const filesRemoved = collectList('--files-removed');
+          commands.cmdCommit(cwd, message, files, raw, amend, noVerify, filesRemoved);
   }
 
   function routeCheckCommit({ args, cwd, raw, error }) {
