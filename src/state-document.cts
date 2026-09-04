@@ -795,12 +795,17 @@ export function computeProgressPercent(
     // excluded from the shouldPreserveExistingProgress ratchet, so the plan
     // fraction fell and min() selected it). Each phase instead owns one slot
     // of 1/total_phases: a closed phase fills its slot, an open phase fills
-    // it by its own summarized/plans fraction, and a declared phase with no
-    // plan files on disk (0/0 — or no directory at all, so no sample) fills
+    // it by its own summarized/plans fraction, and an OPEN phase with no plan
+    // files on disk (0/0 — or no directory at all, so no sample) fills
     // nothing. That last zero is what keeps ROADMAP-declared-but-unrealized
     // future phases from producing a false 100% — the requirement the cap
     // served, kept without the cap's loss of every plan-level step inside the
-    // current phase.
+    // current phase. Note the `complete` branch is checked FIRST and does not
+    // consult planCount: a zero-plan phase carrying a passing
+    // *-VERIFICATION.md IS complete (#3168 — `complete` is exactly
+    // `verification.status === 'passed'`) and fills its slot. That is correct
+    // and does not weaken the guarantee, because an unrealized future phase
+    // has no verification and so is never `complete`.
     const denominator = totalPhases ?? 1;
     let credit = 0;
     let closed = 0;

@@ -1217,8 +1217,8 @@ describe('bug #2770 — bare-int depends_on values parse as preserved strings', 
 // phases than have dirs on disk, all plans being summarised gives percent: 100
 // even though half the phases are unrealised. The formula must credit
 // unrealised phases with nothing: since #4210 the percent composes per phase
-// slot, and a ROADMAP-declared phase holding no plan files fills none of its
-// own slot — the guarantee the earlier min(plan_fraction, phase_fraction)
+// slot, and an OPEN ROADMAP-declared phase holding no plan files fills none
+// of its own slot — the guarantee the earlier min(plan_fraction, phase_fraction)
 // composition provided, kept without capping away plan progress inside the
 // in-flight phase.
 

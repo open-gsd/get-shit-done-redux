@@ -2602,13 +2602,25 @@ describe('computeProgressPercent — per-phase-slot composition (regressions, #4
     assert.strictEqual(pct(34, 39, 2, 3, [closed(11), closed(12), open(16, 11)]), 90);
   });
 
-  test('control: a declared phase with no plan files contributes nothing — no false 100% from plan-only coverage', () => {
+  test('control: an OPEN declared phase with no plan files contributes nothing — no false 100% from plan-only coverage', () => {
     // Phase 1 closed (11/11), phases 2-3 declared in the ROADMAP.
     // No directory on disk (no sample at all) and an empty directory
     // (0/0 sample) must both read as the phase-count-only 33 — the
     // guarantee the pre-#4210 min() cap existed to provide.
     assert.strictEqual(pct(11, 11, 1, 3, [closed(11)]), 33);
     assert.strictEqual(pct(11, 11, 1, 3, [closed(11), open(0, 0), open(0, 0)]), 33);
+  });
+
+  test('a CLOSED zero-plan phase fills its slot — #3168 completeness is verification, not plan count', () => {
+    // The `complete` branch is checked before planCount, deliberately: per
+    // #3168 `complete` is exactly `verification.status === 'passed'`, and a
+    // phase with zero plans and a passing *-VERIFICATION.md IS complete. It
+    // therefore fills its slot even at 0/0. This does NOT weaken the
+    // no-false-100% control above, because an unrealized future phase carries
+    // no verification and so is never `complete` — the control's phases are
+    // open, this one is closed, and that is the whole difference.
+    assert.strictEqual(pct(0, 0, 1, 1, [closed(0)]), 100);
+    assert.strictEqual(pct(0, 0, 1, 2, [closed(0), open(0, 0)]), 50);
   });
 
   test('a 0-of-0 phase contributes 0 to its slot — never NaN, null, or a full slot', () => {

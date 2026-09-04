@@ -3144,7 +3144,9 @@ function buildStateFrontmatter(
   // Derive percent from disk counts when available (ground truth).
   // #4210: composes per phase slot via computeProgressPercent — a closed
   // phase fills its slot, an open one fills it by its own summarized/plans
-  // fraction, and a ROADMAP-declared phase with no plan files fills nothing,
+  // fraction, and an OPEN ROADMAP-declared phase with no plan files fills
+  // nothing (a zero-plan phase with a passing *-VERIFICATION.md is complete
+  // per #3168 and fills its slot),
   // which is what keeps unrealized future phases from producing a false 100%
   // from plan-only coverage (#3242 Bug B). Before #4210 that guarantee came
   // from min(plan_fraction, phase_fraction), which also discarded every
