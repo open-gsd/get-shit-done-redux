@@ -106,6 +106,77 @@ describe('normalizePhaseName', () => {
 
 // ─── comparePhaseNum ──────────────────────────────────────────────────────────
 
+describe('renderPhaseBranchName (#4126)', () => {
+  const T = 'gsd/phase-{phase}-{slug}';
+
+  test('substitutes a real slug and normalizes the phase number (negative control)', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '1', 'setup'), 'gsd/phase-01-setup');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, 'CK-3', 'auth'), 'gsd/phase-03-auth');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '45.14', 'golden-capture'), 'gsd/phase-45.14-golden-capture');
+  });
+
+  test('empty-string slug (name outside the transliterator) drops {slug} and the separator before it', () => {
+    // Route 2 of #4126: phase_name resolved (e.g. CJK) but generateSlugInternal
+    // returned '' — the tool must not fabricate a name it is not displaying.
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', ''), 'gsd/phase-08');
+  });
+
+  test('null / undefined slug (no name segment) renders the same way as the empty-string route', () => {
+    // Route 1 of #4126: a `07` directory — phase_name and phase_slug both null.
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '7', null), 'gsd/phase-07');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '7', undefined), 'gsd/phase-07');
+  });
+
+  test('never substitutes the literal placeholder "phase", and stays distinguishable from a phase named "Phase"', () => {
+    const empty = phaseId.renderPhaseBranchName(T, '8', '');
+    assert.strictEqual(empty, 'gsd/phase-08');
+    assert.notStrictEqual(empty, phaseId.renderPhaseBranchName(T, '8', 'phase'),
+      'an empty slug must not collide with a phase genuinely slugged "phase"');
+  });
+
+  test('a leading {slug} drops the separator AFTER it instead', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}-{phase}', '4', ''), '04');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/{slug}/{phase}', '4', ''), 'gsd/04');
+  });
+
+  test('a slash separator is dropped too, so no trailing slash survives (invalid ref otherwise)', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}/{slug}', '8', ''), 'gsd/phase-08');
+  });
+
+  test('a preceding "/" is kept when a non-slash separator follows — hierarchy survives, the joiner goes', () => {
+    // Adversarial review finding: `feature/{slug}-phase-{phase}` must not collapse
+    // to `feature-phase-08`; `/` is a ref-hierarchy boundary, not a word joiner.
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}-phase-{phase}', '8', ''), 'feature/phase-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/{slug}_{phase}', '8', ''), 'gsd/08');
+  });
+
+  test('a slash run left behind by the drop is collapsed — "//" is not a valid ref component', () => {
+    // Adversarial review finding (round 2): `feature/{slug}-/{phase}` dropped the
+    // following `-` and left `feature//08`, which `git check-ref-format` rejects.
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}-/{phase}', '8', ''), 'feature/08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}_/{phase}', '8', ''), 'feature/08');
+  });
+
+  test('a truthy number slug is stringified, matching the prior .replace semantics', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}-{phase}', '8', 1), '1-08');
+  });
+
+  test('a template without {slug} is unaffected by an empty slug', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}', '8', ''), 'gsd/phase-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}', '8', 'ignored'), 'gsd/phase-08');
+  });
+
+  test('returns null only when nothing is left to name', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}', '8', ''), null);
+    assert.strictEqual(phaseId.renderPhaseBranchName('', '8', 'x'), null);
+  });
+
+  test('substitutes only the FIRST {slug}, matching the prior .replace(string) semantics at both call sites', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', 'x'), 'x/02-{slug}');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', ''), '02-{slug}');
+  });
+});
+
 describe('comparePhaseNum', () => {
   test('sorts numeric phases in ascending order', () => {
     const phases = ['03', '01', '10', '02'];
