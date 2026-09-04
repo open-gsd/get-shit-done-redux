@@ -2623,7 +2623,7 @@ describe('computeProgressPercent — per-phase-slot composition (regressions, #4
     assert.strictEqual(pct(0, 0, 1, 2, [closed(0), open(0, 0)]), 50);
   });
 
-  test('a 0-of-0 phase contributes 0 to its slot — never NaN, null, or a full slot', () => {
+  test('an OPEN 0-of-0 phase contributes 0 to its slot — never NaN, null, or a full slot', () => {
     const value = pct(0, 0, 0, 2, [open(0, 0), open(0, 0)]);
     assert.strictEqual(value, 0);
     assert.ok(Number.isFinite(value));
