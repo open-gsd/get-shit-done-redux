@@ -644,6 +644,43 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.strictEqual(git(['ls-files', '-s', '--', PENDING], fresh), before, 'gone.md is back in the index, same mode and blob');
   });
 
+  test('a file that reappears between the absence check and the rm is refused, and the rollback restores its entry', () => {
+    // The window this PR's own headline scenario names: a concurrent session
+    // recreates the path after this call judged it absent. Driven
+    // deterministically with a post-index-change hook, which git fires the
+    // moment `rm --cached` writes the index -- the hook puts the file back
+    // exactly then, so the re-check after the mutation must catch it.
+    seedMove();
+    const hooksDir = path.join(tmpDir, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(hooksDir, 'post-index-change'),
+      '#!/bin/sh\n'
+      + 'git ls-files --error-unmatch -- .planning/todos/pending/mine.md >/dev/null 2>&1 '
+      + '|| cp .planning/todos/completed/mine.md .planning/todos/pending/mine.md\n',
+      { mode: 0o755 },
+    );
+    // Pin the hook location against a host core.hooksPath (#3901 shape).
+    const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
+    fs.writeFileSync(emptyConfig, '');
+    const head = git(['rev-parse', 'HEAD']);
+
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files', '.planning/todos/completed/mine.md', '--files-removed', '.planning/todos/pending/mine.md'],
+      tmpDir,
+      { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, false, result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed');
+    assert.strictEqual(parsed.file, '.planning/todos/pending/mine.md');
+    assert.match(parsed.error, /reappeared on disk/);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head, 'nothing may be committed under a message that declared the path removed');
+    assert.strictEqual(git(['diff', '--cached', '--name-only']), '', 'the addition is unstaged and the removed entry is back');
+    assert.ok(fs.existsSync(path.join(tmpDir, PENDING, 'mine.md')), 'the hook did put the file back (the window was exercised)');
+    assert.match(git(['ls-files', '--', PENDING]), /mine\.md/, 'the index entry this call removed is restored');
+  });
+
   test('the rollback restores a caller-pre-staged blob at a removed path exactly, not HEAD\'s version', () => {
     seedMove();
     fs.writeFileSync(path.join(tmpDir, PENDING, 'present.md'), 'present\n');
