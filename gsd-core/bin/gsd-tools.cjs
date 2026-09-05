@@ -951,20 +951,30 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
     const amend = args.includes('--amend');
           const noVerify = args.includes('--no-verify');
           // #4208: `--files` and `--files-removed` are two path lists, each
-          // running from its flag to the next `--` token. The previous
-          // slice-to-end collection folded every later non-flag token into
-          // `--files`, so a second list flag could not exist at all.
+          // running from its flag to the NEXT LIST FLAG. A boolean flag
+          // inside a list (`--files a --amend b`) is skipped, not a
+          // terminator: that is what the previous slice-to-end collection
+          // did (it filtered `--` tokens and kept everything else), and a
+          // list that stopped at any `--` token silently dropped `b`
+          // (review of #4253). The previous form could not carry a second
+          // list flag at all, which is the only thing that changed.
+          // A REPEATED list flag (`--files a --files b`) merges, as the old
+          // slice-to-end parse merged it: every occurrence contributes its
+          // run, and none of them ends another's silently.
+          const LIST_FLAGS = new Set(['--files', '--files-removed']);
           const collectList = (flag) => {
-            const at = args.indexOf(flag);
-            if (at === -1) return [];
             const values = [];
-            for (const a of args.slice(at + 1)) {
-              if (a.startsWith('--')) break;
-              values.push(a);
-            }
+            args.forEach((a, i) => {
+              if (a !== flag) return;
+              for (const b of args.slice(i + 1)) {
+                if (LIST_FLAGS.has(b)) break;
+                if (b.startsWith('--')) continue;
+                values.push(b);
+              }
+            });
             return values;
           };
-          const firstListFlag = args.findIndex((a, i) => i > 0 && (a === '--files' || a === '--files-removed'));
+          const firstListFlag = args.findIndex((a, i) => i > 0 && LIST_FLAGS.has(a));
           // Collect all positional args between command name and first flag,
           // then join them — handles both quoted ("multi word msg") and
           // unquoted (multi word msg) invocations from different shells

@@ -373,6 +373,44 @@ describe('commit --files-removed: caller-declared deletions record a move (#4208
     assert.strictEqual(gitOrThrow(['diff', '--cached', '--name-only'], { cwd: fresh, timeoutMs: GIT_TIMEOUT_MS }).trim(), '');
   });
 
+  test('a boolean flag inside a list does not end it: the positional after it stays in that list', () => {
+    // `--files a --no-verify b --files-removed c`: before #4208 the single
+    // slice-to-end list swept `b` into --files; a list that stops at ANY
+    // `--` token silently drops it instead (review of #4253). A list runs to
+    // the next LIST flag and skips boolean flags on the way.
+    const result = runGsdTools(
+      ['commit', 'docs(phase-5): close 1 resolved todo(s)',
+        '--files', '.planning/todos/completed/mine.md', '--no-verify', '.planning/STATE.md',
+        '--files-removed', '.planning/todos/pending/mine.md'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).committed, true, result.output);
+    assert.deepStrictEqual(
+      nameStatus(),
+      ['A\t.planning/todos/completed/mine.md', 'D\t.planning/todos/pending/mine.md', 'M\t.planning/STATE.md'],
+      'STATE.md, wedged between --no-verify and --files-removed, must still be in the --files list',
+    );
+  });
+
+  test('a repeated list flag merges its runs, as the old parser did', () => {
+    // `--files a --files b`: the pre-#4208 slice-to-end parse yielded [a, b];
+    // a parser that stops at the next list flag — including a repeat of the
+    // same one — silently dropped b (found by the round's comment audit).
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), '# Roadmap\n');
+    const result = runGsdTools(
+      ['commit', 'docs(phase-5): close 1 resolved todo(s)',
+        '--files', '.planning/todos/completed/mine.md', '--files', '.planning/ROADMAP.md',
+        '--files-removed', '.planning/todos/pending/mine.md'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).committed, true, result.output);
+    assert.deepStrictEqual(
+      nameStatus(),
+      ['A\t.planning/ROADMAP.md', 'A\t.planning/todos/completed/mine.md', 'D\t.planning/todos/pending/mine.md'],
+      'both --files runs must reach the commit',
+    );
+  });
+
   test('--files-removed before --files parses both lists and the message', () => {
     const result = runGsdTools(
       ['commit', 'docs(phase-5): close 1 resolved todo(s)',
