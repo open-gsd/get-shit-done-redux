@@ -1134,11 +1134,11 @@ If no active code-review step hook exists: display "Code review skipped (code-re
 Skill(skill="gsd-${ref.skill}", args="${PHASE_NUMBER}")
 ```
 
-**Report the review, and record what happened to each finding.** Read and execute
-`gsd-core/workflows/execute-phase/steps/code-review-disposition.md`. It parses REVIEW.md's
-frontmatter, states the per-severity counts, and writes `<NN>-REVIEW-DISPOSITION.md` — one row per
-finding, defaulting to `open` — so a triaged finding is distinguishable downstream from a forgotten
-one. It consumes `PHASE_DIR` and `PHASE_NUMBER`, and is advisory throughout: it never blocks.
+**Report the review, and record what happened to each finding.** Read and execute `gsd-core/workflows/execute-phase/steps/code-review-disposition.md`.
+It parses REVIEW.md's frontmatter, states the per-severity counts, and writes
+`<NN>-REVIEW-DISPOSITION.md` — one row per finding, defaulting to `open` — so a triaged finding is
+distinguishable downstream from a forgotten one. It consumes `PHASE_DIR` and `PHASE_NUMBER`, and is
+advisory throughout: it never blocks.
 
 **Error handling:** If the Skill invocation fails or throws, catch the error, display "Code review encountered an error (non-blocking): {error}" and proceed to gate dispatch. Review failures must never block execution.
 
