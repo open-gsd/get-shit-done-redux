@@ -175,6 +175,37 @@ describe('renderPhaseBranchName (#4126)', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', 'x'), 'x/02-{slug}');
     assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', ''), '02-{slug}');
   });
+
+  // Review nit (#4252, round 1): the truthy-slug path performs NO validation,
+  // exactly preserving the `.replace(string, …)` semantics both call sites had.
+  // Unreachable through either real call site — `phase_slug` is null or
+  // `generateSlugInternal`'s output, which can never be whitespace-only or
+  // all-separator — but the helper is exported and reusable, so the preserved
+  // behavior is pinned here rather than left to be rediscovered as a regression.
+  test('a pathological truthy slug is substituted verbatim — no validation, prior behavior preserved', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', ' '), 'gsd/phase-08- ');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', '-'), 'gsd/phase-08--');
+  });
+
+  // Same nit, second half: the `//` collapse runs ONLY in the empty-slug branch.
+  // The asymmetry is deliberate — collapsing on the truthy path would change
+  // behavior #4126 is not scoped to touch, and no template in this repo reaches
+  // it. Pinned so that it reads as a decision rather than an oversight.
+  test('the double-slash collapse is empty-slug-only — a truthy slug leaves the template\'s own "//" alone', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', 'x'), 'feature//x');
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature/');
+  });
+
+  // Same nit, third half: `phaseSlug` is typed `unknown`, so every shape that is
+  // neither a string nor a truthy number must take the empty-slug route rather
+  // than stringifying into the branch name. `0` and `NaN` are the interesting
+  // pair — both are numbers and both are falsy, so both mean "no slug", never
+  // "the slug 0".
+  test('a non-string, non-truthy-number slug takes the empty-slug route, never String(value)', () => {
+    for (const [label, shape] of [['{}', {}], ['[]', []], ['true', true], ['false', false], ['0', 0], ['NaN', NaN]]) {
+      assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', shape), 'gsd/phase-08', label);
+    }
+  });
 });
 
 describe('comparePhaseNum', () => {
