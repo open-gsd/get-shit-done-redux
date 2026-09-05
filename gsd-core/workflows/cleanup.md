@@ -228,9 +228,6 @@ gsd_run query commit "chore: archive phase directories from completed milestones
 
 `.planning/phases/` and `.planning/quick/` go under `--files-removed`, not `--files` (#4208): a `--files` directory entry stages everything under it, so it would also commit any in-flight phase or quick-task file a concurrent session had written there. `--files-removed` stages only the tracked files under those directories that the archival `mv` moved away, and leaves everything still present untouched.
 
-```bash
-```
-
 </step>
 
 <step name="report">
