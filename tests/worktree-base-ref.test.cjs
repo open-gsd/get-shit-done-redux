@@ -1587,3 +1587,38 @@ describe('execute-plan Pattern A: pre-dispatch worktree base-check (#2649)', () 
 
   });
 }
+
+// ─── #4090: the docs reason table must name BOTH baseref-head paths ─────────
+//
+// Round-1 review finding on PR #4233: the `baseref-head` row of the
+// `reason`-value reference table in docs/CLI-TOOLS.md described only the
+// `--mode orchestrator-worktree` path, while evaluateWorktreeBaseDegrade also
+// suppresses on a user/global-layer `"head"` in the default harness-worktree
+// mode. The prose above the table and the sibling
+// `baseref-head-ignored-by-harness` row were both re-scoped for #4090; this
+// row was missed, so a reader consulting only the table — its purpose — would
+// conclude `baseref-head` cannot occur outside orchestrator mode.
+//
+// Asserts the two DISJUNCTS the mechanism actually has, by token rather than
+// by wording, so the guard survives a rewrite of the row but not a dropped
+// path.
+describe('docs/CLI-TOOLS.md reason table — baseref-head names both suppress paths (#4090)', () => {
+  const CLI_TOOLS_DOC = path.join(__dirname, '..', 'docs', 'CLI-TOOLS.md');
+
+  function reasonRow(reason) {
+    const doc = fs.readFileSync(CLI_TOOLS_DOC, 'utf8');
+    const rows = doc.split('\n').filter((line) => line.startsWith(`| \`${reason}\` |`));
+    assert.strictEqual(rows.length, 1, `expected exactly one \`${reason}\` row in the reason table`);
+    return rows[0];
+  }
+
+  test('the baseref-head row names the orchestrator-worktree path (#3659)', () => {
+    assert.match(reasonRow('baseref-head'), /orchestrator-worktree/);
+  });
+
+  test('the baseref-head row names the user/global layer honored in harness mode (#4090)', () => {
+    const row = reasonRow('baseref-head');
+    assert.match(row, /user\/global/, 'the row must state that a user/global-layer "head" also yields baseref-head');
+    assert.match(row, /harness-worktree/, 'the row must state that this path applies in harness-worktree (default) mode');
+  });
+});
