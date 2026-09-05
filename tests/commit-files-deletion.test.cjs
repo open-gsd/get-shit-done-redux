@@ -389,3 +389,243 @@ describe('commit --files-removed: caller-declared deletions record a move (#4208
     assert.strictEqual(subject, 'docs(phase-5): close 1 resolved todo(s)');
   });
 });
+
+/**
+ * #4253 review: absence from the worktree is not removal. Some index entries
+ * are absent BY DESIGN — a submodule gitlink whose directory was deleted by
+ * hand, a skip-worktree path a sparse checkout never materialised, an
+ * assume-unchanged path — and `lstat` cannot tell them from a moved-away file.
+ * Under a directory entry they are left alone, exactly like a present file;
+ * named directly they contradict the declaration and fail closed. And a
+ * staging failure restores every index entry this call removed EXACTLY,
+ * including on an unborn HEAD, where `git reset` has nothing to restore from.
+ */
+describe('commit --files-removed: index states absent by design are never removals (#4208 review)', () => {
+  let tmpDir;
+  let stray;
+  const PENDING = path.join('.planning', 'todos', 'pending');
+  const COMPLETED = path.join('.planning', 'todos', 'completed');
+
+  function git(args, cwd = tmpDir) {
+    return gitOrThrow(args, { cwd, timeoutMs: GIT_TIMEOUT_MS }).trim();
+  }
+  function nameStatus() {
+    return git(['diff', '--no-renames', 'HEAD~1', 'HEAD', '--name-status']).split('\n').filter(Boolean).sort();
+  }
+  // Untrimmed: porcelain's leading column is significant (` D` = unstaged deletion).
+  function porcelain(...pathspec) {
+    return gitOrThrow(['status', '--porcelain', '--', ...pathspec], { cwd: tmpDir, timeoutMs: GIT_TIMEOUT_MS });
+  }
+  // Seed the standard move: pending/mine.md -> completed/mine.md, committed at pending/.
+  function seedMove() {
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, COMPLETED), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'mine.md'), 'mine\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed todo']);
+    fs.renameSync(path.join(tmpDir, PENDING, 'mine.md'), path.join(tmpDir, COMPLETED, 'mine.md'));
+  }
+  // A submodule at pending/sub whose directory is then deleted by hand — the
+  // one gitlink shape that reads as absent (an uninitialised submodule leaves
+  // an empty directory behind, which lstat sees as present).
+  function addSubmoduleThenDeleteDir() {
+    const subSrc = path.join(tmpDir, '..', path.basename(tmpDir) + '-sub');
+    stray = subSrc;
+    fs.mkdirSync(subSrc, { recursive: true });
+    git(['init', '-q', '.'], subSrc);
+    git(['config', 'user.email', 't@t'], subSrc);
+    git(['config', 'user.name', 't'], subSrc);
+    fs.writeFileSync(path.join(subSrc, 'f.txt'), 'v1\n');
+    git(['add', 'f.txt'], subSrc);
+    git(['commit', '-q', '-m', 'v1'], subSrc);
+    git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, '.planning/todos/pending/sub']);
+    git(['commit', '-q', '-m', 'add submodule']);
+    cleanup(path.join(tmpDir, PENDING, 'sub'));
+    assert.match(porcelain(PENDING), /^ D \.planning\/todos\/pending\/sub$/m, 'git itself reads the gitlink as deleted');
+  }
+
+  beforeEach(() => { tmpDir = createTempGitProject(); stray = null; });
+  afterEach(() => { cleanup(tmpDir); if (stray) cleanup(stray); });
+
+  test('a directory entry leaves a hand-deleted submodule gitlink in the index and records only the file move', () => {
+    seedMove();
+    addSubmoduleThenDeleteDir();
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files', '.planning/todos/completed/mine.md', '--files-removed', '.planning/todos/pending/'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).committed, true, result.output);
+    assert.deepStrictEqual(nameStatus(), ['A\t.planning/todos/completed/mine.md', 'D\t.planning/todos/pending/mine.md']);
+    // The gitlink is still tracked, at mode 160000, and git still reports the
+    // hand-deletion as the caller's unstaged business — not this call's.
+    assert.match(git(['ls-files', '-s', '--', PENDING]), /^160000 [0-9a-f]+ 0\t\.planning\/todos\/pending\/sub$/m);
+    assert.match(porcelain(PENDING), /^ D \.planning\/todos\/pending\/sub$/m);
+  });
+
+  test('a submodule gitlink named directly under --files-removed fails closed, naming the state', () => {
+    seedMove();
+    addSubmoduleThenDeleteDir();
+    const head = git(['rev-parse', 'HEAD']);
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration', '--files', '.planning/todos/completed/mine.md', '--files-removed', '.planning/todos/pending/sub'],
+      tmpDir,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, false, result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed');
+    assert.strictEqual(parsed.file, '.planning/todos/pending/sub');
+    assert.match(parsed.error, /submodule gitlink/);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head);
+    assert.strictEqual(git(['diff', '--cached', '--name-only']), '', 'the addition this call staged is rolled back');
+    assert.match(git(['ls-files', '-s', '--', PENDING]), /^160000 /m, 'the gitlink is untouched');
+  });
+
+  test('a skip-worktree path is absent by checkout, not removed: skipped under a directory entry, refused when named', () => {
+    seedMove();
+    // A second tracked todo that a sparse checkout would not materialise.
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'sparse.md'), 'sparse\n');
+    git(['add', path.join(PENDING, 'sparse.md')]);
+    git(['commit', '-q', '-m', 'seed sparse']);
+    git(['update-index', '--skip-worktree', '--', '.planning/todos/pending/sparse.md']);
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'sparse.md'));
+    assert.strictEqual(porcelain(path.join(PENDING, 'sparse.md')), '', 'git itself does not report a skip-worktree path as deleted');
+
+    const dirForm = runGsdTools(
+      ['commit', 'docs: close a todo', '--files', '.planning/todos/completed/mine.md', '--files-removed', '.planning/todos/pending/'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(dirForm.output).committed, true, dirForm.output);
+    assert.deepStrictEqual(nameStatus(), ['A\t.planning/todos/completed/mine.md', 'D\t.planning/todos/pending/mine.md']);
+    assert.match(git(['ls-files', '-v', '--', PENDING]), /^S \.planning\/todos\/pending\/sparse\.md$/m, 'the sparse entry stays in the index, still skip-worktree');
+
+    const head = git(['rev-parse', 'HEAD']);
+    const named = runGsdTools(['commit', 'docs: bad declaration', '--files-removed', '.planning/todos/pending/sparse.md'], tmpDir);
+    const parsed = JSON.parse(named.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', named.output);
+    assert.strictEqual(parsed.file, '.planning/todos/pending/sparse.md');
+    assert.match(parsed.error, /skip-worktree/);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head);
+    assert.match(git(['ls-files', '-v', '--', PENDING]), /^S \.planning\/todos\/pending\/sparse\.md$/m);
+  });
+
+  test('a directly named path is recognised by any spelling that resolves to it (absolute path)', () => {
+    // The direct-vs-directory decision is made on resolved paths. A string
+    // compare against git's cwd-relative output silently took the directory
+    // polarity for an absolute path, so a named gitlink SKIPPED instead of
+    // refusing (found by review, driven).
+    seedMove();
+    addSubmoduleThenDeleteDir();
+    const head = git(['rev-parse', 'HEAD']);
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration', '--files', '.planning/todos/completed/mine.md', '--files-removed', path.join(tmpDir, PENDING, 'sub')],
+      tmpDir,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.match(parsed.error, /submodule gitlink/);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head);
+    assert.match(git(['ls-files', '-s', '--', PENDING]), /^160000 /m, 'the gitlink is untouched');
+
+    // And through a SYMLINKED spelling of the same directory — the macOS
+    // `/var` → `/private/var` shape, where `process.cwd()` is the real path
+    // and the caller's absolute path is not (CI, first push of this round).
+    const alias = tmpDir + '-alias';
+    fs.symlinkSync(tmpDir, alias, 'dir');
+    try {
+      const viaLink = runGsdTools(
+        ['commit', 'docs: bad declaration', '--files', '.planning/todos/completed/mine.md', '--files-removed', path.join(alias, PENDING, 'sub')],
+        tmpDir,
+      );
+      const p2 = JSON.parse(viaLink.output);
+      assert.strictEqual(p2.reason, 'staging_failed', viaLink.output);
+      assert.match(p2.error, /submodule gitlink/);
+      assert.strictEqual(git(['rev-parse', 'HEAD']), head);
+    } finally {
+      fs.unlinkSync(alias);
+    }
+  });
+
+  test('an intent-to-add entry is not tracked content: skipped under a directory entry, refused when named', () => {
+    // `git add -N` renders as a plain `H 100644 <empty blob>` entry, yet there
+    // is nothing committed to remove and a cacheinfo rollback cannot restore
+    // the flag (found by review, driven).
+    seedMove();
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'planned.md'), 'planned\n');
+    git(['add', '-N', path.join(PENDING, 'planned.md')]);
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'planned.md'));
+    const before = git(['ls-files', '-s', '--', path.join(PENDING, 'planned.md')]);
+    assert.match(before, /^100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0/, 'fixture: intent-to-add entry present');
+
+    const dirForm = runGsdTools(
+      ['commit', 'docs: close a todo', '--files', '.planning/todos/completed/mine.md', '--files-removed', '.planning/todos/pending/'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(dirForm.output).committed, true, dirForm.output);
+    assert.deepStrictEqual(nameStatus(), ['A\t.planning/todos/completed/mine.md', 'D\t.planning/todos/pending/mine.md']);
+    assert.strictEqual(git(['ls-files', '-s', '--', path.join(PENDING, 'planned.md')]), before, 'the intent-to-add entry is left alone');
+
+    const named = runGsdTools(['commit', 'docs: bad declaration', '--files-removed', '.planning/todos/pending/planned.md'], tmpDir);
+    const parsed = JSON.parse(named.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', named.output);
+    assert.match(parsed.error, /intent-to-add/);
+    assert.strictEqual(git(['ls-files', '-s', '--', path.join(PENDING, 'planned.md')]), before);
+  });
+
+  test('an assume-unchanged path named directly fails closed and stays in the index', () => {
+    seedMove();
+    git(['update-index', '--assume-unchanged', '--', '.planning/todos/pending/mine.md']);
+    const result = runGsdTools(['commit', 'docs: drop a todo', '--files-removed', '.planning/todos/pending/mine.md'], tmpDir);
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.match(parsed.error, /assume-unchanged/);
+    assert.match(git(['ls-files', '-v', '--', PENDING]), /^h \.planning\/todos\/pending\/mine\.md$/m);
+  });
+
+  test('on an unborn HEAD a removal staged by this call is restored when a later entry fails', (t) => {
+    // The rollback cannot `git reset` to a HEAD that does not exist; the
+    // entry is put back from the record this call kept of it.
+    const fresh = createTempGitProject();
+    t.after(() => cleanup(fresh));
+    git(['checkout', '-q', '--orphan', 'unborn'], fresh);
+    git(['rm', '-rfq', '--cached', '.'], fresh);
+    fs.mkdirSync(path.join(fresh, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(fresh, PENDING, 'gone.md'), 'gone\n');
+    fs.writeFileSync(path.join(fresh, PENDING, 'stays.md'), 'stays\n');
+    git(['add', PENDING], fresh);
+    const before = git(['ls-files', '-s', '--', PENDING], fresh);
+    fs.unlinkSync(path.join(fresh, PENDING, 'gone.md'));
+
+    const result = runGsdTools(
+      ['commit', 'docs: root commit', '--files-removed', '.planning/todos/pending/gone.md', '.planning/todos/pending/stays.md'],
+      fresh,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.strictEqual(parsed.file, '.planning/todos/pending/stays.md');
+    assert.throws(() => git(['rev-parse', '-q', '--verify', 'HEAD'], fresh), 'nothing may be committed');
+    assert.strictEqual(git(['ls-files', '-s', '--', PENDING], fresh), before, 'gone.md is back in the index, same mode and blob');
+  });
+
+  test('the rollback restores a caller-pre-staged blob at a removed path exactly, not HEAD\'s version', () => {
+    seedMove();
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'present.md'), 'present\n');
+    git(['add', path.join(PENDING, 'present.md')]);
+    git(['commit', '-q', '-m', 'seed a present todo']);
+    // The caller staged an edit to mine.md at its OLD path (index only, HEAD
+    // still holds the seed blob), then moved the file and declared the old
+    // path removed; a `git reset` rollback would put HEAD's blob back,
+    // silently discarding the staged edit.
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'mine.md'), 'mine, edited and staged\n');
+    git(['add', path.join(PENDING, 'mine.md')]);
+    const staged = git(['ls-files', '-s', '--', path.join(PENDING, 'mine.md')]);
+    assert.notEqual(staged, git(['ls-tree', 'HEAD', '--', path.join(PENDING, 'mine.md')]).replace(/\t/, ' '), 'fixture: the staged blob must differ from HEAD');
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'mine.md'));
+
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration', '--files-removed', '.planning/todos/pending/mine.md', '.planning/todos/pending/present.md'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).reason, 'staging_failed', result.output);
+    assert.strictEqual(git(['ls-files', '-s', '--', path.join(PENDING, 'mine.md')]), staged, 'the pre-staged blob survives the rollback');
+  });
+});
