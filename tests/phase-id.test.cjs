@@ -1578,3 +1578,183 @@ describe('phaseKeyFrom* — one key space for directories and prose', () => {
     );
   });
 });
+
+// ─── #4126 branch-name renderer property tests (fast-check) ──────────────────
+
+// A WELL-FORMED phase-branch template: word segments joined by exactly one
+// separator, with exactly one `{slug}` token and at most one `{phase}`.
+// "Well-formed" is load-bearing rather than convenient. A template that already
+// carries a doubled or trailing separator (`feature//{slug}`) keeps that
+// artifact across the drop, so the containment property below is a statement
+// about what the DROP introduces, never about what the template brought with it.
+const branchWord = fc.constantFrom('gsd', 'feature', 'fix', 'phase', 'wip', 'team');
+const branchSep = fc.constantFrom('-', '_', '.', '/');
+
+// `{phase}` goes at an ARBITRARY position among the parts, not just at an end.
+// Restricting it to the two ends was a measured blind spot: the corpus then
+// never generated the repo's OWN default arrangement, `gsd/phase-{phase}-{slug}`,
+// where `{phase}` is internal and precedes `{slug}`. A location-sensitive
+// regression that renders that template as the invalid `gsd/phase-08-` passed
+// the edge-separator property against the ends-only corpus.
+const assemble = (before, after, withPhase, phaseAt, joins) => {
+  const parts = [...before, '{slug}', ...after];
+  if (withPhase) parts.splice(phaseAt % (parts.length + 1), 0, '{phase}');
+  return parts.reduce((acc, part, i) => `${acc}${joins[i % joins.length]}${part}`);
+};
+
+// Known real-world arrangements, seeded into the corpus directly rather than
+// left to generation. Only the first is a SHIPPED default (`git.phase_branch_template`,
+// docs/CONFIGURATION.md); the rest are supported custom shapes this file already
+// characterizes. Seeding raises the odds these arrangements are exercised — it does
+// NOT guarantee any single one is drawn, which is why the default template is also
+// asserted deterministically inside the edge-separator property below.
+const knownTemplate = fc.constantFrom(
+  'gsd/phase-{phase}-{slug}',
+  'gsd/phase-{phase}',
+  'feature/{slug}-phase-{phase}',
+  'gsd/phase-{phase}/{slug}',
+);
+
+const wellFormedTemplate = fc.oneof(
+  knownTemplate,
+  fc
+    .record({
+      before: fc.array(branchWord, { maxLength: 2 }),
+      after: fc.array(branchWord, { maxLength: 2 }),
+      withPhase: fc.boolean(),
+      phaseAt: fc.nat({ max: 8 }),
+      seps: fc.array(branchSep, { minLength: 6, maxLength: 6 }),
+    })
+    .map(({ before, after, withPhase, phaseAt, seps }) =>
+      assemble(before, after, withPhase, phaseAt, seps),
+    ),
+);
+
+// A template whose joins may be a RUN of two separators. This is the shape that
+// actually reaches the `/\\/{2,}/g` collapse — `feature/{slug}-/{phase}` drops the
+// `-` and leaves `feature//08` — and it is kept separate from the well-formed
+// generator on purpose: a run can also leave a legitimately trailing separator
+// (`a--{slug}` renders `a-`), so only the no-`//` clause is true of it.
+const runSeparatorTemplate = fc
+  .record({
+    before: fc.array(branchWord, { maxLength: 2 }),
+    after: fc.array(branchWord, { maxLength: 2 }),
+    withPhase: fc.boolean(),
+    phaseAt: fc.nat({ max: 8 }),
+    seps: fc.array(fc.array(branchSep, { minLength: 1, maxLength: 2 }), {
+      minLength: 6,
+      maxLength: 6,
+    }),
+  })
+  .map(({ before, after, withPhase, phaseAt, seps }) =>
+    assemble(
+      before,
+      after,
+      withPhase,
+      phaseAt,
+      seps.map((run) => run.join('')),
+    ),
+  );
+
+// The alphabet `generateSlugInternal` can actually emit: lowercase alphanumeric
+// runs joined by single hyphens, never empty and never edge-hyphenated.
+const realSlug = fc
+  .array(fc.stringMatching(/^[a-z0-9]{1,6}$/), { minLength: 1, maxLength: 3 })
+  .map((words) => words.join('-'));
+
+describe('#4126 renderPhaseBranchName — properties', () => {
+  // The reported defect itself, stated as an invariant rather than as the one
+  // hand-picked example above: whatever the template, a phase with no derivable
+  // slug must never render the branch name a phase genuinely slugged "phase"
+  // would get. That collision is precisely what `|| 'phase'` produced.
+  test('an empty slug never collides with a phase genuinely slugged "phase"', () => {
+    fc.assert(
+      fc.property(wellFormedTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        // Precondition: a template carrying no `{slug}` renders identically for
+        // every slug — `gsd/phase-{phase}` is a supported shape (not the shipped
+        // default) and the example block already pins it. Nothing to collide.
+        if (!template.includes('{slug}')) return true;
+        const nameless = phaseId.renderPhaseBranchName(template, String(num), '');
+        return nameless !== phaseId.renderPhaseBranchName(template, String(num), 'phase');
+      }),
+    );
+  });
+
+  // Boundary containment. Deliberately scoped to SINGLE-`{slug}` templates:
+  // only the first `{slug}` is substituted (pinned by the example test above),
+  // so a two-token template legitimately renders a literal `{slug}` and a
+  // blanket "the output never contains {slug}" invariant would be false against
+  // this function's own documented contract.
+  test('the drop leaves no {slug} token and no edge separator behind', () => {
+    // DETERMINISTIC first, sampled second. `fc.oneof` makes the shipped default
+    // statistically reachable, never guaranteed to be drawn on any given run —
+    // so the one arrangement that must never be missed is asserted outright.
+    // This is the shape the ends-only corpus could not generate at all.
+    for (const num of ['0', '8', '45.14', '999']) {
+      const out = phaseId.renderPhaseBranchName('gsd/phase-{phase}-{slug}', num, '');
+      assert.ok(
+        out && !out.includes('{slug}') && !/^[-_./]/.test(out) && !/[-_./]$/.test(out),
+        `default template with an empty slug rendered ${JSON.stringify(out)}`,
+      );
+    }
+    fc.assert(
+      fc.property(wellFormedTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        if (out === null) return true; // `{slug}` alone — the documented "nothing left to name" case
+        return !out.includes('{slug}') && !/^[-_./]/.test(out) && !/[-_./]$/.test(out);
+      }),
+    );
+  });
+
+  // The collapse's own invariant, and it needs the run-separator generator to be
+  // reachable at all: a single-separator template can never leave a slash run
+  // behind, so asserting no-`//` over that corpus would pass vacuously. `//` is
+  // not a valid ref component, so this one holds for ANY template shape.
+  test('a slash run left by the drop is always collapsed, whatever the template', () => {
+    fc.assert(
+      fc.property(runSeparatorTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        return out === null || !out.includes('//');
+      }),
+    );
+  });
+
+  // Containment, not round-trip: this asserts the slug SURVIVES into the output,
+  // which is weaker than reconstructing an input from an output. Named for what
+  // it checks rather than for the nearest invariant category.
+  test('a real slug always survives into the rendered name', () => {
+    fc.assert(
+      fc.property(
+        wellFormedTemplate,
+        fc.integer({ min: 0, max: 999 }),
+        realSlug,
+        (template, num, slug) => {
+          if (!template.includes('{slug}')) return true; // nothing to survive into
+          const out = phaseId.renderPhaseBranchName(template, String(num), slug);
+          return out !== null && out.includes(slug);
+        },
+      ),
+    );
+  });
+
+  // Monotonicity — the formal statement of "the empty-slug arm removes, and
+  // never adds". The placeholder substitution #4126 removed did the opposite:
+  // it made the nameless render LONGER than some real-slug renders, which is
+  // how `gsd/phase-08-phase` came to out-name an honestly slugged phase.
+  test('the empty-slug render is strictly shorter than any real-slug render', () => {
+    fc.assert(
+      fc.property(
+        wellFormedTemplate,
+        fc.integer({ min: 0, max: 999 }),
+        realSlug,
+        (template, num, slug) => {
+          if (!template.includes('{slug}')) return true; // no token to drop, so no shortening
+          const nameless = phaseId.renderPhaseBranchName(template, String(num), '');
+          const named = phaseId.renderPhaseBranchName(template, String(num), slug);
+          if (nameless === null) return true; // `{slug}` alone — no nameless render to compare
+          return named !== null && nameless.length < named.length;
+        },
+      ),
+    );
+  });
+});
