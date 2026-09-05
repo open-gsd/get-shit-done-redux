@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { makeFaultyGit } = require('./helpers/faulty-deps.cjs');
+const { splitLines } = require('../gsd-core/bin/lib/text-lines.cjs');
 
 const MODULE_PATH = path.join(
   __dirname, '..', 'gsd-core', 'bin', 'lib', 'worktree-base-ref.cjs'
@@ -1607,7 +1608,7 @@ describe('docs/CLI-TOOLS.md reason table — baseref-head names both suppress pa
 
   function reasonRow(reason) {
     const doc = fs.readFileSync(CLI_TOOLS_DOC, 'utf8');
-    const rows = doc.split('\n').filter((line) => line.startsWith(`| \`${reason}\` |`));
+    const rows = splitLines(doc).filter((line) => line.startsWith(`| \`${reason}\` |`));
     assert.strictEqual(rows.length, 1, `expected exactly one \`${reason}\` row in the reason table`);
     return rows[0];
   }
