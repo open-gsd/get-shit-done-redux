@@ -1270,7 +1270,7 @@ node gsd-tools.cjs worktree set-baseref
 
 | `reason` | `shouldDegrade` | Meaning |
 |---|---|---|
-| `baseref-head` | `false` | `worktree.baseRef:"head"` is set and `--mode orchestrator-worktree` declares GSD-managed worktrees — the fork base is the orchestrator HEAD by construction |
+| `baseref-head` | `false` | `worktree.baseRef:"head"` is set **and** either `--mode orchestrator-worktree` declares GSD-managed worktrees — the fork base is the orchestrator HEAD by construction, so `"head"` is honored from any layer — **or** the `"head"` came from the user/global layer, which the harness's own worktree creation reads (#1013), so it suppresses in `harness-worktree` (default) mode too (#4090) |
 | `baseref-head-ignored-by-harness` | `true` | `worktree.baseRef:"head"` is set in **project** settings but HEAD differs from `origin/HEAD` in harness (default) mode — the harness does not read project-settings `baseRef` (#48), so the run degrades to sequential (#3659). A user/global-layer `"head"` never reaches this reason; it resolves to `baseref-head` (#4090) |
 | `head-matches-fork` | `false` | HEAD and `origin/HEAD` are the same commit |
 | `head-diverged-from-fork` | `true` | Branch is ahead of or diverged from `origin/HEAD` |
