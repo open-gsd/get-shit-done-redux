@@ -2577,7 +2577,7 @@ describe('#4186: normalizeStateStatus anchored status vocabulary — documented 
 // from plan-only coverage — is pinned here too, and must keep passing.
 // ═════════════════════════════════════════════════════════════════════════
 describe('computeProgressPercent — per-phase-slot composition (regressions, #4210)', () => {
-  const closed = (plans) => ({ complete: true, planCount: plans, summaryCount: plans });
+  const closed = (plans, summaries = plans) => ({ complete: true, planCount: plans, summaryCount: summaries });
   const open = (plans, summaries) => ({ complete: false, planCount: plans, summaryCount: summaries });
   const pct = (completedPlans, totalPlans, completedPhases, totalPhases, phases) =>
     computeProgressPercent(completedPlans, totalPlans, completedPhases, totalPhases, SCOPE.COMPLETE, phases);
@@ -2621,6 +2621,37 @@ describe('computeProgressPercent — per-phase-slot composition (regressions, #4
     // open, this one is closed, and that is the whole difference.
     assert.strictEqual(pct(0, 0, 1, 1, [closed(0)]), 100);
     assert.strictEqual(pct(0, 0, 1, 2, [closed(0), open(0, 0)]), 50);
+  });
+
+  test('a CLOSED under-summarized phase fills its slot — the `complete` branch precedes the plan/summary ratio', () => {
+    // The general case of the precedence the zero-plan test above pins only at
+    // the 0/0 boundary. `complete` is checked BEFORE planCount/summaryCount are
+    // consulted at all, so a phase whose verification passed while its summaries
+    // still lag its plans fills its WHOLE slot rather than 1/3 of it. The state
+    // is reachable, not hypothetical: `complete` is exactly
+    // `verification.status === 'passed'` (#3168) and the plan/summary counts come
+    // from an independent disk scan, so the two can legitimately disagree.
+    assert.strictEqual(pct(1, 3, 1, 1, [closed(3, 1)]), 100);
+  });
+
+  test('an under-summarized closed phase composes to a raw 100 and is still withheld at the ceiling', () => {
+    // The slot credit above is not a false-100% vector. This fixture composes to
+    // a RAW 100 — the closed phase contributes its whole slot and the open one is
+    // fully summarized — and is reported as 99 because the milestone is not
+    // closed, so the ceiling is genuinely load-bearing here rather than a no-op
+    // clamp on an already-lower number.
+    //
+    // It does NOT isolate `anyOpen`: `milestoneClosed` is
+    // `!anyOpen && closed >= totalPhases`, and BOTH conjuncts fail for this
+    // fixture (one phase is open, and one closed phase does not cover a declared
+    // total of two). What is unique about it is the under-summarized closed
+    // phase — the block's other ceiling assertions reach 99 either from
+    // summary-complete closed phases or from open phases alone.
+    //
+    // Kept as its own test rather than a second assertion on the one above, so
+    // that a mutation of the `complete` branch is demonstrated to fail this case
+    // independently instead of being short-circuited by the earlier assertion.
+    assert.strictEqual(pct(3, 5, 1, 2, [closed(3, 1), open(2, 2)]), 99);
   });
 
   test('an OPEN 0-of-0 phase contributes 0 to its slot — never NaN, null, or a full slot', () => {
