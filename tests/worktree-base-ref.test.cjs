@@ -18,6 +18,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { makeFaultyGit } = require('./helpers/faulty-deps.cjs');
+const { gitOrThrow } = require('./helpers/git-fixture.cjs');
+const { createTempDir, createTempGitProject, cleanup, scrubConfigLocationEnv } = require('./helpers.cjs');
 
 const MODULE_PATH = path.join(
   __dirname, '..', 'gsd-core', 'bin', 'lib', 'worktree-base-ref.cjs'
@@ -29,6 +31,7 @@ const {
   applyWorktreeBaseRef,
   resolveEffectiveBaseRef,
   evaluateWorktreeBaseDegrade,
+  evaluateWorktreeBaseDegradeForCwd,
   cmdWorktreeBaseCheck,
   cmdWorktreeSetBaseRef,
 } = require(MODULE_PATH);
@@ -1203,6 +1206,269 @@ describe('cmdWorktreeBaseCheck — user/global cascade (#1013)', () => {
     assert.strictEqual(result.shouldDegrade, true,
       'without user/global head, a phase lane must degrade');
     assert.strictEqual(result.reason, 'fork-ref-unknown');
+  });
+});
+
+// ─── evaluateWorktreeBaseDegradeForCwd — the extracted derivation (#4222) ────
+//
+// `routeDispatchIsolation` (gsd-core/bin/gsd-tools.cjs) re-derives the #683
+// base-check degrade through this export before it records the dispatch
+// decision (#4222), and `cmdWorktreeBaseCheck` above is now a thin wrapper
+// over it (the `--mode` argv parse plus the stdout emit). The two can only
+// "never disagree about what the fork base is" if the shared derivation is
+// pinned on its own terms — not transitively through either caller. Two
+// halves: the seam-injected rows mirror the `cmdWorktreeBaseCheck` blocks
+// above (settings cascade, mode default, `userClaudeDir` override semantics,
+// and parity with the wrapper); the real-git rows drive the DEFAULT execGit
+// seam against a fixture with a real `origin`, which is the shape the
+// resolver evaluates in production and the one no stub can stand in for.
+
+describe('evaluateWorktreeBaseDegradeForCwd (#4222)', () => {
+  const HERMETIC_USER_DIR = '/nonexistent-hermetic-user-dir';
+  const HEAD_SHA = 'dead4222aaaa111122223333dead4222aaaa1111';
+  const FORK_SHA = 'beef4222bbbb111122223333beef4222bbbb1111';
+  const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', signal: null, error: null });
+
+  function makeExecGit(responses, seen) {
+    return function stubExecGit(args, opts) {
+      if (seen) seen.push({ args, opts });
+      const key = args.join(' ');
+      if (Object.prototype.hasOwnProperty.call(responses, key)) {
+        return responses[key];
+      }
+      throw new Error(`Unexpected execGit call: ${JSON.stringify(args)}`);
+    };
+  }
+  const divergedExecGit = (seen) => makeExecGit({
+    'rev-parse HEAD': ok(HEAD_SHA),
+    'rev-parse --verify --quiet origin/HEAD': ok(FORK_SHA),
+  }, seen);
+  // A readFile answering `head` for exactly one settings file and null elsewhere.
+  function headAt(file, seen) {
+    return (p) => {
+      if (seen) seen.push(p);
+      return p === file ? JSON.stringify({ worktree: { baseRef: 'head' } }) : null;
+    };
+  }
+
+  describe('seam-injected (mirrors the cmdWorktreeBaseCheck rows above)', () => {
+    const cwd = '/repo';
+    const claudeDir = path.join(cwd, '.claude');
+    const localSettings = path.join(claudeDir, 'settings.local.json');
+    const sharedSettings = path.join(claudeDir, 'settings.json');
+
+    test('parity: returns exactly what cmdWorktreeBaseCheck returns for the same deps, in both modes', () => {
+      for (const mode of ['harness-worktree', 'orchestrator-worktree']) {
+        const deps = () => ({
+          readFile: headAt(localSettings),
+          execGit: divergedExecGit(),
+          userClaudeDir: HERMETIC_USER_DIR,
+        });
+        const direct = evaluateWorktreeBaseDegradeForCwd(cwd, mode, deps());
+        const viaCli = cmdWorktreeBaseCheck(cwd, ['--mode', mode], { ...deps(), write: () => {} });
+        assert.deepStrictEqual(direct, viaCli,
+          `${mode}: the CLI subcommand must be a pure wrapper over the extracted derivation (#4222)`);
+      }
+    });
+
+    test('mode defaults to harness-worktree: baseRef "head" + diverged, no mode argument → degrade, reason baseref-head-ignored-by-harness (#3659)', () => {
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, undefined, {
+        readFile: headAt(localSettings),
+        execGit: divergedExecGit(),
+        userClaudeDir: HERMETIC_USER_DIR,
+      });
+      assert.strictEqual(result.shouldDegrade, true,
+        'the default mode must be the harness one, where settings head cannot suppress the comparison');
+      assert.strictEqual(result.reason, 'baseref-head-ignored-by-harness');
+    });
+
+    test('orchestrator-worktree + baseRef "head" → no degrade, reason baseref-head, execGit never called', () => {
+      const seen = [];
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'orchestrator-worktree', {
+        readFile: headAt(localSettings),
+        execGit: divergedExecGit(seen),
+        userClaudeDir: HERMETIC_USER_DIR,
+      });
+      assert.strictEqual(result.shouldDegrade, false);
+      assert.strictEqual(result.reason, 'baseref-head');
+      assert.strictEqual(seen.length, 0, 'the suppress must short-circuit before any git call');
+    });
+
+    test('no baseRef in any layer + diverged → degrade, reason head-diverged-from-fork (the row the resolver records as none)', () => {
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'harness-worktree', {
+        readFile: () => null,
+        execGit: divergedExecGit(),
+        userClaudeDir: HERMETIC_USER_DIR,
+      });
+      assert.strictEqual(result.shouldDegrade, true);
+      assert.strictEqual(result.reason, 'head-diverged-from-fork');
+      assert.strictEqual(result.headSha, HEAD_SHA);
+      assert.strictEqual(result.forkSha, FORK_SHA);
+      assert.strictEqual(result.forkRef, 'origin/HEAD');
+    });
+
+    test('cascade: baseRef "head" in the project shared layer (settings.json) is honoured', () => {
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'orchestrator-worktree', {
+        readFile: headAt(sharedSettings),
+        execGit: divergedExecGit(),
+        userClaudeDir: HERMETIC_USER_DIR,
+      });
+      assert.strictEqual(result.reason, 'baseref-head');
+    });
+
+    test('cascade: baseRef "head" in the user/global layer named by deps.userClaudeDir is honoured (#1013)', () => {
+      const USER_DIR = '/home/user/.claude';
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'orchestrator-worktree', {
+        readFile: headAt(path.join(USER_DIR, 'settings.json')),
+        execGit: divergedExecGit(),
+        userClaudeDir: USER_DIR,
+      });
+      assert.strictEqual(result.reason, 'baseref-head');
+    });
+
+    test('deps.userClaudeDir: null (an OWN key) skips the user/global layer — it is not the same as omitting it', () => {
+      // An explicit null must not fall back to getGlobalConfigDir: the caller
+      // is saying "there is no user layer", and a `??`-style default would
+      // silently re-read the live ~/.claude here.
+      const seen = [];
+      const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'orchestrator-worktree', {
+        readFile: headAt(path.join(HERMETIC_USER_DIR, 'settings.json'), seen),
+        execGit: divergedExecGit(),
+        userClaudeDir: null,
+      });
+      assert.deepStrictEqual(seen, [localSettings, sharedSettings],
+        'only the two project layers may be read when userClaudeDir is explicitly null');
+      assert.strictEqual(result.reason, 'head-diverged-from-fork');
+    });
+
+    test('deps WITHOUT a userClaudeDir key falls back to getGlobalConfigDir, which honours CLAUDE_CONFIG_DIR', () => {
+      const restore = scrubConfigLocationEnv();
+      const configDir = '/hermetic-claude-config-dir';
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      try {
+        const seen = [];
+        const result = evaluateWorktreeBaseDegradeForCwd(cwd, 'orchestrator-worktree', {
+          readFile: headAt(path.join(configDir, 'settings.json'), seen),
+          execGit: divergedExecGit(),
+        });
+        assert.deepStrictEqual(seen, [localSettings, sharedSettings, path.join(configDir, 'settings.json')],
+          'the default user layer must be the CLAUDE_CONFIG_DIR one, read after both project layers');
+        assert.strictEqual(result.reason, 'baseref-head');
+      } finally {
+        restore();
+      }
+    });
+
+    test('cwd is threaded to every execGit call and anchors the settings paths', () => {
+      const other = '/elsewhere/project';
+      const seenGit = [];
+      const seenReads = [];
+      evaluateWorktreeBaseDegradeForCwd(other, 'harness-worktree', {
+        readFile: (p) => { seenReads.push(p); return null; },
+        execGit: divergedExecGit(seenGit),
+        userClaudeDir: HERMETIC_USER_DIR,
+      });
+      assert.ok(seenGit.length >= 2, 'expected the HEAD and origin/HEAD probes');
+      for (const { opts } of seenGit) {
+        assert.strictEqual(opts.cwd, other, 'every git probe must run in the project directory');
+      }
+      for (const p of seenReads.slice(0, 2)) {
+        assert.ok(p.startsWith(path.join(other, '.claude')), `settings read outside <cwd>/.claude: ${p}`);
+      }
+    });
+  });
+
+  describe('real git — the DEFAULT execGit seam against a fixture with a real origin', () => {
+    // Real git, real `origin`: a bare repo stands in for the remote so
+    // origin/HEAD resolves the same way the harness's fork base does. No
+    // mocked execGit, no stubbed readFile — the derivation the resolver runs
+    // in production, with only the user/global layer pointed at a hermetic
+    // path so the live ~/.claude is never consulted.
+    function git(args, cwd) {
+      return gitOrThrow(args, { cwd });
+    }
+
+    /** A git project whose HEAD is pushed to a local bare `origin`, with origin/HEAD set. */
+    function projectWithOrigin(t) {
+      const dir = createTempGitProject('gsd-4222-evaluate-for-cwd-');
+      const bare = createTempDir('gsd-4222-evaluate-for-cwd-origin-');
+      t.after(() => {
+        cleanup(dir);
+        cleanup(bare);
+      });
+      git(['init', '--bare'], bare);
+      git(['remote', 'add', 'origin', bare], dir);
+      const branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], dir).trim();
+      git(['push', '-u', 'origin', branch], dir);
+      git(['symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${branch}`], dir);
+      return { dir, branch };
+    }
+
+    /** Advance local HEAD one commit past origin/HEAD — the #683 divergence. */
+    function diverge(dir) {
+      fs.writeFileSync(path.join(dir, 'local-divergence.txt'), 'local divergence\n');
+      git(['add', '-A'], dir);
+      git(['commit', '-m', 'local commit not on origin'], dir);
+      assert.notEqual(
+        git(['rev-parse', 'HEAD'], dir).trim(),
+        git(['rev-parse', 'origin/HEAD'], dir).trim(),
+        'precondition: HEAD must differ from origin/HEAD',
+      );
+    }
+
+    test('HEAD == origin/HEAD → no degrade, reason head-matches-fork; shas are what git reports', (t) => {
+      const { dir } = projectWithOrigin(t);
+      const result = evaluateWorktreeBaseDegradeForCwd(dir, 'harness-worktree', { userClaudeDir: HERMETIC_USER_DIR });
+      assert.strictEqual(result.shouldDegrade, false);
+      assert.strictEqual(result.reason, 'head-matches-fork');
+      assert.strictEqual(result.headSha, git(['rev-parse', 'HEAD'], dir).trim());
+      assert.strictEqual(result.forkSha, git(['rev-parse', 'origin/HEAD'], dir).trim());
+      assert.strictEqual(result.forkRef, 'origin/HEAD');
+    });
+
+    test('HEAD diverged from origin/HEAD → degrade, reason head-diverged-from-fork; shas are what git reports', (t) => {
+      const { dir } = projectWithOrigin(t);
+      diverge(dir);
+      const result = evaluateWorktreeBaseDegradeForCwd(dir, 'harness-worktree', { userClaudeDir: HERMETIC_USER_DIR });
+      assert.strictEqual(result.shouldDegrade, true);
+      assert.strictEqual(result.reason, 'head-diverged-from-fork');
+      assert.strictEqual(result.headSha, git(['rev-parse', 'HEAD'], dir).trim());
+      assert.strictEqual(result.forkSha, git(['rev-parse', 'origin/HEAD'], dir).trim());
+      assert.strictEqual(result.forkRef, 'origin/HEAD');
+      assert.ok(result.message && result.message.length > 0, 'a degrade must carry the user-visible message');
+    });
+
+    test('diverged + worktree.baseRef "head" in <cwd>/.claude/settings.local.json (default readFile) → harness degrades, orchestrator suppresses (#3659)', (t) => {
+      const { dir } = projectWithOrigin(t);
+      diverge(dir);
+      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ worktree: { baseRef: 'head' } }));
+      const harness = evaluateWorktreeBaseDegradeForCwd(dir, 'harness-worktree', { userClaudeDir: HERMETIC_USER_DIR });
+      assert.strictEqual(harness.shouldDegrade, true, 'settings head must not suppress the harness-mode comparison');
+      assert.strictEqual(harness.reason, 'baseref-head-ignored-by-harness');
+      const orchestrator = evaluateWorktreeBaseDegradeForCwd(dir, 'orchestrator-worktree', { userClaudeDir: HERMETIC_USER_DIR });
+      assert.strictEqual(orchestrator.shouldDegrade, false);
+      assert.strictEqual(orchestrator.reason, 'baseref-head');
+    });
+
+    test('fully default deps (none passed): the resolver call shape — diverged → degrade, with the user layer hermetic via CLAUDE_CONFIG_DIR', (t) => {
+      // `baseCheckDegrades` (gsd-tools.cjs) calls with (cwd, mode) and NO deps
+      // object: default git seam, default settings reader, default user layer.
+      // Point the default user layer at an empty directory so the live profile
+      // cannot leak a baseRef into this verdict.
+      const { dir } = projectWithOrigin(t);
+      diverge(dir);
+      const configDir = createTempDir('gsd-4222-evaluate-for-cwd-config-');
+      const restore = scrubConfigLocationEnv();
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      t.after(() => {
+        restore();
+        cleanup(configDir);
+      });
+      const result = evaluateWorktreeBaseDegradeForCwd(dir, 'harness-worktree');
+      assert.strictEqual(result.shouldDegrade, true);
+      assert.strictEqual(result.reason, 'head-diverged-from-fork');
+    });
   });
 });
 
