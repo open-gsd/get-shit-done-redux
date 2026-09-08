@@ -497,6 +497,7 @@
       "review-lane-invocation.cjs",
       "review-lane-runner.cjs",
       "review-reviewer-selection.cjs",
+      "reviewer-step-dispatch.cjs",
       "roadmap-command-router.cjs",
       "roadmap-parser.cjs",
       "roadmap-upgrade.cjs",
@@ -671,7 +672,12 @@
       "verify-work/steps/mvp-uat-framing.md"
     ],
     "workflow_detail": [
-      "plan-phase/detail/elaboration.md"
+      "complete-milestone/detail/elaboration.md",
+      "docs-update/detail/elaboration.md",
+      "execute-phase/detail/elaboration.md",
+      "new-project/detail/elaboration.md",
+      "plan-phase/detail/elaboration.md",
+      "verify-work/detail/elaboration.md"
     ],
     "workflow_templates": [
       "discuss-phase/templates/context.md",
