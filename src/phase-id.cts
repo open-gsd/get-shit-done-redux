@@ -469,10 +469,14 @@ function renderPhaseBranchName(template: string, phaseNumber: unknown, phaseSlug
   // objection is that `.lock` is one of several juxtaposition rules git enforces
   // (`..`, `@{`, a leading `.` per component, and more), so patching the one
   // instance an adversarial pass happened to construct is an enumeration that
-  // silently falls behind the rules it mirrors. The principled fix is a
-  // junction-validity check returning null — now safe, since both consumers
-  // handle null as of this round — and that is a scope call for the maintainer,
-  // not something to slip into an empty-slug fix. Disclosed and characterized.
+  // silently falls behind the rules it mirrors. The principled fix is to detect
+  // the junction and raise an explicit INVALID-NAME error at both consumers —
+  // NOT to return null: `cmdCommit` reads null as "no branch wanted" and skips
+  // the whole branch block, so it would suppress even the warning an invalid
+  // name produces today (commands.cts, the failed-`checkout -b` arm). That
+  // changes error semantics at both call sites, which is a scope call for the
+  // maintainer rather than something to slip into an empty-slug fix. Disclosed
+  // and characterized.
   return (before + after).replace(/\/{2,}/g, '/').replace(/^[./]+|[./]+$/g, '') || null;
 }
 

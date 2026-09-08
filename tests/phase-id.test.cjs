@@ -234,6 +234,11 @@ describe('renderPhaseBranchName (#4126)', () => {
   test('a ref-LEGAL edge separator is preserved — the trim fixes validity, not aesthetics', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('-{phase}-{slug}', '8', ''), '-08');
     assert.strictEqual(phaseId.renderPhaseBranchName('{phase}--{slug}', '8', ''), '08-');
+    // BOTH ref-legal separators, not just the hyphen. Pinning `-` alone left the
+    // underscore unheld: widening the trim class to `[._/]` kept all 161 tests
+    // green, so the claim that `_` is preserved was asserted by nothing.
+    assert.strictEqual(phaseId.renderPhaseBranchName('_{phase}_{slug}', '8', ''), '_08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}__{slug}', '8', ''), '08_');
   });
 
   // The bound on the test above, pinned so the edge-trim is not mistaken for
