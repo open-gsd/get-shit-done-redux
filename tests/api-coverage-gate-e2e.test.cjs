@@ -31,14 +31,14 @@ const { escapeRegex } = require('../gsd-core/bin/lib/pattern.cjs');
 
 const TOOLS_PATH = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
 
-function runTools(args, cwd) {
+function runTools(args, cwd, env = {}) {
   const argv = Array.isArray(args)
     ? args
     : (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [])
         .map((t) => t.replace(/"([^"]*)"/g, '$1').replace(/'([^']*)'/g, '$1'));
   const r = runNode([TOOLS_PATH, ...argv], {
     cwd,
-    env: { ...process.env, ...TEST_ENV_BASE },
+    env: { ...process.env, ...TEST_ENV_BASE, ...env },
     timeoutMs: 60000,
   });
   if (r.outcome === OUTCOME.EXITED && r.exitCode === 0) {
@@ -139,6 +139,44 @@ describe('api-coverage.verify-pre — seal contract (#1562 acceptance #1,#2,#4,#
     phaseDir = makePhaseDir(tmpDir, '01-pay');
     return phaseDir;
   }
+
+  test('#4498 a qualified directory wins over the active workstream phase with the same number', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const activePhase = path.join(tmpDir, '.planning', 'workstreams', 'active', 'phases', '14-api');
+    const requestedPhase = path.join(tmpDir, '.planning', 'workstreams', 'requested', 'phases', '14-api');
+    fs.mkdirSync(activePhase, { recursive: true });
+    fs.mkdirSync(requestedPhase, { recursive: true });
+    writePlan(activePhase, '14-PLAN.md', '# Plan\nIntegrate the Stripe API.');
+    writePlan(requestedPhase, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runTools(
+      ['check', 'api-coverage.verify-pre', requestedPhase, '--raw'],
+      tmpDir,
+      { GSD_WORKSTREAM: 'active' },
+    );
+    assert.ok(r.success, r.error);
+    const result = JSON.parse(r.output);
+    assert.strictEqual(result.block, false, 'the exact requested phase is non-API');
+    assert.strictEqual(result.detected, false);
+  });
+
+  test('#4498 a bare token honors an explicit --ws scope', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const activePhase = path.join(tmpDir, '.planning', 'workstreams', 'active', 'phases', '14-api');
+    const requestedPhase = path.join(tmpDir, '.planning', 'workstreams', 'requested', 'phases', '14-api');
+    fs.mkdirSync(activePhase, { recursive: true });
+    fs.mkdirSync(requestedPhase, { recursive: true });
+    writePlan(activePhase, '14-PLAN.md', '# Plan\nIntegrate the Stripe API.');
+    writePlan(requestedPhase, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runTools(
+      ['check', 'api-coverage.verify-pre', '14', '--ws', 'requested', '--raw'],
+      tmpDir,
+      { GSD_WORKSTREAM: 'active' },
+    );
+    assert.ok(r.success, r.error);
+    assert.strictEqual(JSON.parse(r.output).block, false);
+  });
 
   test('#1 API phase without a matrix → BLOCKS the seal', () => {
     fresh();

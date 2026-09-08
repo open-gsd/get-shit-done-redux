@@ -17,7 +17,7 @@ import planningWorkspaceMod = require('./planning-workspace.cjs');
 const { planningDir } = planningWorkspaceMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseLocatorMod = require('./phase-locator.cjs');
-const { findPhaseInternal } = phaseLocatorMod;
+const { findPhaseInternal, searchPhaseInDir, getArchivedPhaseDirs } = phaseLocatorMod;
 import { extractDecisions } from './decisions.cjs';
 import type { Decision } from './decisions.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1404,7 +1404,8 @@ function cmdCheckPredicate(projectDir: string, args: string[], raw: boolean): vo
  * Emits the uniform gate contract: { block, passed, message, ...details }.
  */
 function cmdApiCoverageVerifyPre(projectDir: string, args: string[], raw: boolean): void {
-  const phaseArg = typeof args[2] === 'string' ? args[2] : '';
+  const { flags, positionals } = partitionPredicateArgs(args.slice(2));
+  const phaseArg = typeof positionals[0] === 'string' ? positionals[0] : '';
   if (!phaseArg) {
     error(
       'api-coverage.verify-pre requires a phase argument: check api-coverage.verify-pre <phase-dir-or-token>',
@@ -1413,27 +1414,38 @@ function cmdApiCoverageVerifyPre(projectDir: string, args: string[], raw: boolea
     return;
   }
 
-  const pDir = planningDir(projectDir);
+  const workstream = typeof flags.ws === 'string' ? flags.ws : undefined;
+  let pDir: string;
+  try {
+    pDir = planningDir(projectDir, workstream);
+  } catch (e) {
+    error(`api-coverage: invalid --ws value: ${(e as Error).message}`, ERROR_REASON.USAGE);
+    return;
+  }
   const phasesRoot = path.join(pDir, 'phases');
 
-  // SECURITY (path traversal): the phase argument is taken ONLY as a phase
-  // token — its basename — and resolved by findPhaseInternal strictly under
-  // .planning/phases/ (or a milestone archive). The raw arg is never used as a
-  // path, so `..`, absolute paths, and arbitrary directories cannot reach a
-  // file read. Mirrors cmdVerifySchemaDrift's token-match approach.
+  // A qualified phase directory is authoritative: verify-work already resolved
+  // it in the requested workstream. Bare tokens retain the canonical scoped
+  // lookup below. Qualified inputs are accepted only when validatePath keeps
+  // them inside .planning and their shape names a real phase/archive root.
   let token = posixNormalize(phaseArg).split('/').filter(Boolean).pop() || '';
   // A token like ".." or "." carries no phase identity → unresolvable.
   if (token === '.' || token === '..') token = '';
 
-  // Not a GSD project (no phases tree at all) → fail-open: nothing to gate.
-  if (!fs.existsSync(phasesRoot)) {
+  const qualified = path.isAbsolute(phaseArg) || path.win32.isAbsolute(phaseArg) || /[/\\]/.test(phaseArg);
+  const planningRoot = path.join(projectDir, '.planning');
+
+  // Not a GSD project/scope → fail-open: nothing to gate. A qualified path is
+  // allowed to name a different workstream than the ambient one, so only that
+  // form can proceed when the ambient scoped phases root is absent.
+  if (!fs.existsSync(planningRoot) || (!qualified && !fs.existsSync(phasesRoot))) {
     output(
       {
         block: false,
         passed: true,
         coverage_present: false,
         detected: false,
-        message: 'api-coverage: no .planning/phases directory; gate skipped (not a GSD project layout)',
+        message: 'api-coverage: no scoped .planning/phases directory; gate skipped (not a GSD project layout)',
       },
       raw,
       undefined,
@@ -1444,7 +1456,35 @@ function cmdApiCoverageVerifyPre(projectDir: string, args: string[], raw: boolea
   // Resolve the phase dir under the contained phases root.
   let resolvedDir: string | null = null;
   let phaseNumber = '';
-  if (token) {
+  if (qualified) {
+    const checked = validatePath(phaseArg, projectDir, { allowAbsolute: true });
+    if (checked.safe && fs.existsSync(checked.resolved) && fs.statSync(checked.resolved).isDirectory()) {
+      const rel = posixNormalize(path.relative(planningRoot, checked.resolved));
+      const isLivePhase = /^(?:workstreams\/[^/]+\/)?phases\/[^/]+$/.test(rel);
+      const isArchivedPhase = /^(?:workstreams\/[^/]+\/)?milestones\/(?:v[\d.]+-phases\/[^/]+|ws-[^/]+\/phases\/[^/]+)$/.test(rel);
+      if (isLivePhase || isArchivedPhase) {
+        resolvedDir = checked.resolved;
+        phaseNumber = path.basename(resolvedDir).match(/^(\d+(?:\.\d+)?)/)?.[1] || token;
+      }
+    }
+  } else if (token && workstream !== undefined) {
+    const relPhasesRoot = posixNormalize(path.relative(projectDir, phasesRoot));
+    const found = searchPhaseInDir(phasesRoot, relPhasesRoot, token);
+    if (found?.directory) {
+      resolvedDir = found.directory;
+      phaseNumber = found.phase_number || '';
+    } else {
+      const archiveRoots = new Set(getArchivedPhaseDirs(projectDir, workstream).map((entry) => entry.basePath));
+      for (const relArchiveRoot of archiveRoots) {
+        const foundArchived = searchPhaseInDir(path.join(projectDir, relArchiveRoot), relArchiveRoot, token);
+        if (foundArchived?.directory) {
+          resolvedDir = foundArchived.directory;
+          phaseNumber = foundArchived.phase_number || '';
+          break;
+        }
+      }
+    }
+  } else if (token) {
     const found = findPhaseInternal(projectDir, token);
     if (found && found.directory) {
       resolvedDir = found.directory;
@@ -1477,7 +1517,7 @@ function cmdApiCoverageVerifyPre(projectDir: string, args: string[], raw: boolea
   // Defense-in-depth: the resolved dir must be inside the phases root (or a
   // milestone archive under .planning/milestones).
   const milestonesRoot = path.join(pDir, 'milestones');
-  if (!isInsideRoot(resolvedDir, phasesRoot) && !isInsideRoot(resolvedDir, milestonesRoot)) {
+  if (!qualified && !isInsideRoot(resolvedDir, phasesRoot) && !isInsideRoot(resolvedDir, milestonesRoot)) {
     output(
       {
         block: true,
