@@ -13,23 +13,40 @@
  * under `--files`, since Tier 1 fills it), so it silently appended the
  * whole phase diff onto an explicit user-supplied file list.
  *
- * Mirrors the issue's own verified reproduction methodology: extract the
- * Tier 1 and Tier 3 fences VERBATIM from code-review.md (never
- * reimplemented), set only the prerequisite variables, run against a real
- * constructed git fixture.
+ * Only Tier 3's own fence is extracted-and-executed VERBATIM from
+ * code-review.md (never reimplemented) against a real constructed git
+ * fixture. Tiers 1 and 2 are NOT sourced — both are seeded instead,
+ * mimicking each tier's real successful output rather than running its
+ * actual fence:
  *
- * Tier 2's own fence is DELIBERATELY NOT extracted-and-executed here — a
- * code-review pass on this fix found it is not currently parseable bash at
- * all (two unescaped `"` characters inside its embedded `node -e "..."`
- * regex literal terminate the outer double-quoted string early, breaking
- * bash's parse of the WHOLE script even though Tier 2's body never
- * executes under `--files`). That defect is real, already reported, and
- * already queued as its own issue (#4461, filed separately by #4460's own
- * reporter: "the Tier-2 SUMMARY-extraction fence is not parseable bash
- * (same file, different defect)") — fixing it here would be exactly the
- * scope creep the reporter took care to avoid. Until #4461 lands, the
- * "without --files" case below seeds the REVIEW_FILES state Tier 2 would
- * have produced directly, rather than sourcing Tier 2's broken fence.
+ * - Tier 2's fence is not currently parseable bash at all (two unescaped
+ *   `"` characters inside its embedded `node -e "..."` regex literal
+ *   terminate the outer double-quoted string early, breaking bash's parse
+ *   of the WHOLE script even though Tier 2's body never executes under
+ *   `--files`). Real, already reported, already queued as its own issue
+ *   (#4461, filed separately by #4460's own reporter) — fixing it here
+ *   would be exactly the scope creep the reporter took care to avoid.
+ * - Tier 1's fence IS parseable bash, but its REPO_ROOT-prefix containment
+ *   check is confirmed non-functional on Windows CI: `git rev-parse
+ *   --show-toplevel` there returns a mixed-format path (`C:/Users/...` —
+ *   drive letter, forward slashes) while GNU `realpath` (also bundled with
+ *   Git for Windows) returns a genuine POSIX path for the IDENTICAL
+ *   location (`/c/Users/...`) — confirmed via this test's own stderr
+ *   diagnostics captured on a live Windows CI run of PR #4552, after three
+ *   prior guesses at the same "--files widened to all 5 files" symptom
+ *   (stripping `-m`, then two rounds of Node-side realpath-expansion
+ *   fixes) each failed identically because none of them was the actual
+ *   cause. The two path forms can never share a string prefix, so Tier 1
+ *   misclassifies every `--files` entry as "outside the repository" on
+ *   every Windows run, unconditionally and deterministically — a real,
+ *   structural, pre-existing Tier 1 defect, not something introduced or
+ *   fixable by this test. Same out-of-scope bucket as #4461 (this file's
+ *   fences not being cross-platform-robust); not this fix's concern (see
+ *   cr-2 in #4460's review notes).
+ *
+ * Seeding REVIEW_FILES directly for both tiers isolates the test to Tier
+ * 3's own logic — the actual subject of #4460 — independent of either
+ * earlier tier's unrelated defects.
  */
 
 const { describe, test } = require('node:test');
@@ -94,65 +111,33 @@ function buildFixture(tmpDir) {
 }
 
 /**
- * Runs Tier 1 (verbatim) then Tier 3 (verbatim) in sequence. `seedReviewFiles`
- * stands in for what Tier 2 would have produced when `filesOverride` is unset
- * (Tier 2 itself is not sourced — see the module docblock for why) — an empty
- * array when omitted, matching Tier 2's own real behavior when no SUMMARY
- * yields anything.
+ * Runs ONLY Tier 3 (verbatim), seeded with the REVIEW_FILES state a working
+ * Tier 1 (`filesOverride` set) or Tier 2 (`filesOverride` empty) would have
+ * produced — see the module docblock for why neither earlier tier's own
+ * fence is sourced here.
  */
-function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
+function runTier3(tmpDir, { filesOverride, seedReviewFiles }) {
   const content = fs.readFileSync(WORKFLOW_PATH, 'utf-8');
-  // #4460 CI finding: Tier 1's `realpath -m` is a pre-existing, out-of-scope
-  // portability gap (BSD/macOS realpath has no -m; confirmed CI-reproducible
-  // on Windows too, where it likewise makes every --files entry look "outside
-  // the repository" and REVIEW_FILES stays empty, tripping the OUTER `if
-  // [ ${#REVIEW_FILES[@]} -eq 0 ]` fallback instead of exercising the gated
-  // elif this test targets). Not this fix's concern (see #4460's review
-  // notes) and every path in these fixtures already exists, so `-m` (which
-  // only changes behavior for a MISSING path) is a no-op here — stripped so
-  // this test exercises Tier 3's gate on every platform gsd-test runs on,
-  // not Tier 1's realpath compatibility.
-  const tier1 = extractFirstBashBlockAfter(content, '**Tier 1 — --files override', '**Tier 2 —')
-    .replace(/\brealpath -m\b/, 'realpath');
   const tier3 = extractFirstBashBlockAfter(content, '**Tier 3 — Git diff fallback', '**Post-processing');
 
-  const filesArrayInit = filesOverride
-    ? `FILES_ARRAY=(${filesOverride})`
-    : 'FILES_ARRAY=()';
-  const seedInit = seedReviewFiles.length
-    ? `REVIEW_FILES=(${seedReviewFiles.map((f) => `"${f}"`).join(' ')})`
-    : 'REVIEW_FILES=()';
+  const seedInit = `REVIEW_FILES=(${seedReviewFiles.map((f) => `"${f}"`).join(' ')})`;
 
   const script = [
     '#!/usr/bin/env bash',
     'set -uo pipefail',
     `FILES_OVERRIDE="${filesOverride || ''}"`,
-    filesArrayInit,
-    // Both tiers print diagnostic "File scope: ..." / "Warning: ..." lines to
-    // stdout as documentation for a human running code-review.md interactively
-    // — a brace group (not a subshell: variables set inside still persist to
-    // the enclosing shell) redirects that chatter to stderr (captured
-    // separately below) instead of discarding it, so a failure carries the
-    // actual reason Tier 1 accepted/rejected each path, rather than forcing
-    // another guess-and-push cycle (three of which have already failed
-    // identically on Windows CI — see the round-4/round-5 review notes).
-    '{',
-    tier1,
-    // Diagnostic-only: what Tier 1 actually decided, before Tier 3 runs.
-    // REPO_ROOT is only ever set inside Tier 1's own `if [ -n
-    // "$FILES_OVERRIDE" ]` body, so it is legitimately unset here whenever
-    // FILES_OVERRIDE is empty (the "without --files" case) -- default-expand
-    // it rather than referencing it bare, or `set -u` above kills the whole
-    // script with an unbound-variable exit before Tier 3 ever runs.
-    'echo "[diag] REPO_ROOT=${REPO_ROOT:-<unset, FILES_OVERRIDE empty>}"',
-    'for f in "${REVIEW_FILES[@]:-}"; do echo "[diag] REVIEW_FILES(post-tier1)+=$f"; done',
-    // Tier 1 unconditionally resets REVIEW_FILES=() when FILES_OVERRIDE is
-    // set; the seed only matters (and only applies) when it is not, exactly
-    // mirroring Tier 2 running in FILES_OVERRIDE's absence.
-    `if [ -z "$FILES_OVERRIDE" ]; then ${seedInit}; fi`,
+    seedInit,
     'PHASE_DIR=".planning/phases/03-demo"',
     'PADDED_PHASE="03"',
     'LAST_REVIEW_COMMIT=""',
+    // Tier 3 prints diagnostic "File scope: ... files from git diff" lines to
+    // stdout as documentation for a human running code-review.md interactively
+    // — a brace group (not a subshell: variables set inside still persist to
+    // the enclosing shell) redirects that chatter to stderr (captured
+    // separately below) instead of discarding it, so a failure carries
+    // Tier 3's own reasoning rather than requiring another guess-and-push
+    // cycle.
+    '{',
     tier3,
     '} 1>&2',
     'printf \'%s\\n\' "${REVIEW_FILES[@]}"',
@@ -179,7 +164,7 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
   // directly to the array (tried in an earlier revision of this fix) makes
   // `["src/alpha.js"]` fail deepEqual against a same-valued plain array
   // literal purely because of the decoration -- a self-inflicted false
-  // failure, not a Tier 1/3 behavior change.
+  // failure, not a Tier 3 behavior change.
   const files = result.stdout.split('\n').map((l) => l.trim()).filter(Boolean).sort();
   return { files, diagnostics: result.stderr };
 }
@@ -199,22 +184,17 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
   });
 
   test('real execution: --files=src/alpha.js stays scoped to exactly that file (issue #4460 repro)', () => {
-    // fs.realpathSync.native: tests/helpers.cjs's tmpRootCandidates() documents
-    // GitHub's Windows runners reporting os.tmpdir() in the 8.3 SHORT form and
-    // plain fs.realpathSync() not reliably expanding it. Applied as a
-    // plausible, evidence-grounded fix for the same widened-to-5-files
-    // Windows CI failure this test kept hitting -- but it did NOT resolve it
-    // (identical symptom recurred after this fix landed), so the true cause
-    // is still unconfirmed. Left in place because it's still a correct fix
-    // for its own documented bug class, but see runTiers()'s stderr
-    // diagnostics wiring below: rather than guess a fourth time, the next
-    // Windows CI failure carries Tier 1's own "[diag] REPO_ROOT=..." /
-    // "[diag] REVIEW_FILES(post-tier1)+=..." lines so the actual cause is
-    // read off the failure, not inferred.
+    // REVIEW_FILES is seeded to ['src/alpha.js'] directly here -- the value a
+    // WORKING Tier 1 would have produced for `--files src/alpha.js` -- rather
+    // than sourcing Tier 1's actual fence. See the module docblock: Tier 1's
+    // own REPO_ROOT-prefix containment check is confirmed non-functional on
+    // Windows CI (git rev-parse and realpath disagree on path FORMAT there,
+    // not just short-vs-long names), so this test isolates Tier 3 -- the
+    // actual subject of #4460 -- from that unrelated, pre-existing defect.
     const tmpDir = fs.realpathSync.native(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
-      const { files, diagnostics } = runTiers(tmpDir, { filesOverride: 'src/alpha.js' });
+      const { files, diagnostics } = runTier3(tmpDir, { filesOverride: 'src/alpha.js', seedReviewFiles: ['src/alpha.js'] });
       assert.deepEqual(
         files,
         ['src/alpha.js'],
@@ -231,8 +211,10 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
       buildFixture(tmpDir);
       // seedReviewFiles stands in for Tier 2's real output (["src/alpha.js"],
       // the file the fixture's SUMMARY lists) — see the module docblock for
-      // why Tier 2's own fence isn't sourced here.
-      const { files, diagnostics } = runTiers(tmpDir, { filesOverride: '', seedReviewFiles: ['src/alpha.js'] });
+      // why Tier 2's own fence isn't sourced here. Same seed value as the
+      // --files case above; only FILES_OVERRIDE differs, which is exactly
+      // the variable #4460's fix gates on.
+      const { files, diagnostics } = runTier3(tmpDir, { filesOverride: '', seedReviewFiles: ['src/alpha.js'] });
       assert.deepEqual(
         files,
         ['src/alpha.js', 'src/beta.js', 'src/delta.js', 'src/epsilon.js', 'src/gamma.js'],
