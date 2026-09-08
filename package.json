@@ -140,6 +140,7 @@
     "lint:hooks-runtime-build-seam": "node scripts/lint-hooks-runtime-build-seam.cjs",
     "ci:test-scope": "node scripts/ci-test-scope.cjs",
     "benchmark:compact-content": "node scripts/benchmark-compact-content.cjs --check",
+    "benchmark:compact-content-variants": "node scripts/benchmark-compact-content-variants.cjs --check",
     "changeset": "node scripts/changeset/new.cjs",
     "changelog:render": "node scripts/changeset/cli.cjs render",
     "test": "node scripts/run-tests.cjs",

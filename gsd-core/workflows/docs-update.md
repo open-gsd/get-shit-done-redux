@@ -288,7 +288,7 @@ Mode resolution:
 | architecture | docs/architecture/overview.md | create | new directory |
 | getting_started | docs/guides/getting-started.md | update | found, hand-written |
 | development | docs/guides/development.md | create | matched docs/guides/ |
-| testing | docs/guides/testing.md | create | matched docs/guides/ |
+| contributing | docs/guides/contributing.md | create | matched docs/guides/ |
 | configuration | docs/guides/configuration.md | create | matched docs/guides/ |
 | api | docs/api/reference.md | create | new directory |
 | deployment | docs/guides/deployment.md | update | found, hand-written |
