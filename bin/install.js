@@ -12940,8 +12940,11 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     persistActiveProfileMarker();
     // Callers index this result by `runtime` (installAllRuntimes' statusline
     // lookup), so every early exit must return the full shape — a bare return
-    // crashes the install rather than skipping one file.
-    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir };
+    // crashes the install rather than skipping one file. That includes
+    // configuredEntrypoints/rollbackInstallerMigrations: rollbackFinalizedInstallerMigrations
+    // reads result.rollbackInstallerMigrations unconditionally, and an omitted
+    // field there silently skips this runtime's rollback on a finalize-stage failure.
+    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints: [], rollbackInstallerMigrations };
   }
   const settings = validateHookFields(cleanupOrphanedHooks(rawSettings));
   // #3002 CR / #3662: rewrite legacy `node .../gsd-*.js` command strings (pre-
