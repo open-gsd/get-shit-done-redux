@@ -723,17 +723,24 @@ describe('commit --files-removed: index states absent by design are never remova
     fs.mkdirSync(hooksDir, { recursive: true });
     fs.writeFileSync(path.join(hooksDir, 'post-index-change'),
       '#!/bin/sh\nchmod a-w "$(git rev-parse --git-dir)"\n', { mode: 0o755 });
-    // Always give the dir back, or afterEach's cleanup cannot remove the fixture.
+    // Give the dir back in a FINALLY below, not only in `t.after`: t.after runs
+    // AFTER the parent afterEach, so a throw between the hook and the explicit
+    // chmod leaves afterEach unable to delete the fixture. t.after stays as a
+    // belt for the case where the finally itself is skipped.
     t.after(() => { try { fs.chmodSync(gitDir, 0o755); } catch { /* already writable */ } });
     const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
     fs.writeFileSync(emptyConfig, '');
 
-    const result = runGsdTools(
-      ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/gone.md'],
-      tmpDir,
-      { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
-    );
-    fs.chmodSync(gitDir, 0o755);
+    let result;
+    try {
+      result = runGsdTools(
+        ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/gone.md'],
+        tmpDir,
+        { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+      );
+    } finally {
+      fs.chmodSync(gitDir, 0o755);
+    }
     const parsed = JSON.parse(result.output);
     assert.strictEqual(parsed.committed, false, result.output);
     assert.notStrictEqual(parsed.reason, 'nothing_to_commit', 'a removal left staged must never be reported as no state change');
@@ -741,6 +748,52 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.match(parsed.error, /could not be restored/);
     assert.match(parsed.error, /gone\.md/);
   });
+
+  test('a rollback that cannot restore a removal discloses it, even when the reported failure is another entry', (t) => {
+    // The rollback exit reports the failure that CAUSED it -- here a
+    // contradictory declaration about a path still on disk -- so a caller
+    // reading `failures` would learn nothing about the removal this call had
+    // already staged and then could not put back. Both must be disclosed.
+    seedMove();
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'stays.md'), 'stays\n');
+    git(['add', path.join(PENDING, 'stays.md')]);
+    git(['commit', '-q', '-m', 'seed a present todo']);
+    const gitDir = path.join(tmpDir, '.git');
+    const hooksDir = path.join(gitDir, 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'post-index-change'),
+      '#!/bin/sh\nchmod a-w "$(git rev-parse --git-dir)"\n', { mode: 0o755 });
+    t.after(() => { try { fs.chmodSync(gitDir, 0o755); } catch { /* already writable */ } });
+    const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
+    fs.writeFileSync(emptyConfig, '');
+
+    let result;
+    try {
+      // mine.md was moved away (a real removal); stays.md is still on disk, so
+      // declaring it removed contradicts the declaration and fails the call.
+      result = runGsdTools(
+        ['commit', 'docs: bad declaration',
+          '--files-removed', '.planning/todos/pending/mine.md', '.planning/todos/pending/stays.md'],
+        tmpDir,
+        { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+      );
+    } finally {
+      fs.chmodSync(gitDir, 0o755);
+    }
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.strictEqual(parsed.file, '.planning/todos/pending/stays.md', 'the REPORTED failure is still the contradictory declaration');
+    const disclosed = parsed.failures.filter(f => /could NOT be restored/.test(f.error));
+    assert.ok(
+      disclosed.length > 0,
+      `a removal left staged by a failed rollback must be disclosed; failures were ${JSON.stringify(parsed.failures)}`,
+    );
+    assert.ok(
+      disclosed.some(f => f.file === '.planning/todos/pending/mine.md'),
+      `the disclosure must name the un-restored path; got ${JSON.stringify(disclosed)}`,
+    );
+  });
+
 
 
 

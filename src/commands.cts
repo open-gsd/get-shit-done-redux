@@ -2136,7 +2136,21 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // (no HEAD to reset to on an unborn branch; not the pre-staged blob when
     // the caller had one) — and unconditionally, since a removal this call
     // performed is this call's to undo whether or not the path was pre-staged.
-    restoreRemovedEntries();
+    // DISCLOSE a failed restore here too. The earlier reading -- that this exit
+    // is already reporting a failure, so the restore's result adds nothing --
+    // is wrong, and the counterexample is the ordinary one: the reported
+    // failure is usually a DIFFERENT cause (a contradictory declaration, a
+    // reappeared path), so a caller reading `failures` sees only that cause
+    // and learns nothing about the removal still sitting in its index. Append
+    // rather than replace: the original failure is still the reason.
+    const restored = restoreRemovedEntries();
+    const failures = restored
+      ? stagingFailures
+      : [...stagingFailures, ...removedEntries.map(e => ({
+          file: e.path,
+          error: 'staged removal could NOT be restored during rollback — it is still staged in the index',
+          timed_out: false,
+        }))];
     const first = stagingFailures[0];
     const result = {
       committed: false,
@@ -2144,7 +2158,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
       reason: first.timed_out ? 'staging_timeout' : 'staging_failed',
       file: first.file,
       error: first.error,
-      failures: stagingFailures,
+      failures,
     };
     output(result, raw, 'failed');
     return;
