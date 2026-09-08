@@ -300,6 +300,7 @@
   "gsd-core/templates/VALIDATION.md",
   "gsd-core/templates/config.json",
   "gsd-core/templates/context.md",
+  "gsd-core/templates/copilot-instructions.md",
   "gsd-core/templates/dev-preferences.md",
   "gsd-core/templates/discussion-log.md",
   "gsd-core/templates/milestone-archive.md",
