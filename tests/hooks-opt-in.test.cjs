@@ -1372,11 +1372,26 @@ EOF
     // Regexes require the `$(...)` command-substitution wrapper so this only
     // matches the actual dangerous CODE pattern, never the explanatory prose
     // comments left at the fix site (which quote the bare pipeline, without
-    // the `$(...)` wrapper, for documentation purposes).
-    assert.ok(!/\$\(echo "\$MSG" \| head -1\)/.test(hookSrc),
-      'the SIGPIPE-prone `$(echo "$MSG" | head -1)` subject extraction must not reappear');
-    assert.ok(!/\$\(printf '%s\\n' "\$CONFIG_OUT" \| head -1\)/.test(hookSrc),
-      'the SIGPIPE-prone `$(printf ... | head -1)` ENABLED extraction must not reappear');
+    // the `$(...)` wrapper, for documentation purposes). `\s+`/`\s*` tolerate
+    // incidental reformatting (extra spaces, an appended `2>/dev/null`, etc.)
+    // so a cosmetically-reworded reintroduction of the SAME dangerous shape
+    // does not silently escape this check (review finding: an exact-string
+    // match would).
+    // Requires the `$(...)` command-substitution wrapper (real CODE, never
+    // the explanatory prose comments left at the fix site, which quote the
+    // bare "$MSG" | head -1 / "$CONFIG_OUT" | head -1 shape WITHOUT a `$(`
+    // in front — an earlier, unwrapped version of this same regex matched
+    // those comments and false-failed). Content between `$(` and `"$MSG"`/
+    // `"$CONFIG_OUT"` and between the quote and `head -1` is a tolerant
+    // `[^)]*`, so a cosmetically-reworded reintroduction of the SAME
+    // dangerous shape (extra spaces, an appended `2>/dev/null`, a different
+    // command before the pipe) does not silently escape this check — only
+    // the presence of a real `$( ... "$MSG" ... | head -1 ... )` /
+    // `$( ... "$CONFIG_OUT" ... | head -1 ... )` substitution matters.
+    assert.ok(!/\$\([^)]{0,200}"\$MSG"[^)]{0,200}\|\s*head\s+-1[^)]{0,200}\)/.test(hookSrc),
+      'no $(...) command substitution may pipe "$MSG" into head -1 (SIGPIPE race under set -o pipefail)');
+    assert.ok(!/\$\([^)]{0,200}"\$CONFIG_OUT"[^)]{0,200}\|\s*head\s+-1[^)]{0,200}\)/.test(hookSrc),
+      'no $(...) command substitution may pipe "$CONFIG_OUT" into head -1 (SIGPIPE race under set -o pipefail)');
     assert.ok(hookSrc.includes('SUBJECT="${MSG%%$\'\\n\'*}"'),
       'subject extraction must use the pure parameter-expansion form');
     assert.ok(hookSrc.includes('ENABLED="${CONFIG_OUT%%$\'\\n\'*}"'),
