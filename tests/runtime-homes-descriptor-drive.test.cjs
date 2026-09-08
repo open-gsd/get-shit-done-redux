@@ -1302,7 +1302,9 @@ describe('bug #3126: runtime-homes getGlobalConfigDir — defaults', () => {
       'os.homedir() must follow the pinned fixture, not the developer\'s real home');
     assert.deepEqual(require('node:fs').readdirSync(fixtureHome), [],
       'the fixture home must be empty — a golden DEFAULT is what resolution returns with no probe candidate present');
-    assert.strictEqual(getGlobalConfigDir('antigravity'), path.join(fixtureHome, '.gemini', 'antigravity'));
+    withEnv('ANTIGRAVITY_CONFIG_DIR', undefined, () => {
+      assert.strictEqual(getGlobalConfigDir('antigravity'), path.join(fixtureHome, '.gemini', 'antigravity'));
+    });
   });
 
   // The other half of the same contract: the probe is real, and it is why the
@@ -1320,8 +1322,10 @@ describe('bug #3126: runtime-homes getGlobalConfigDir — defaults', () => {
       }
       cleanup(decoyHome);
     });
-    assert.strictEqual(getGlobalConfigDir('antigravity'), path.join(decoyHome, '.gemini', 'antigravity-cli'),
-      'the fs probe is documented behaviour — a default row asserting the real home is asserting this away');
+    withEnv('ANTIGRAVITY_CONFIG_DIR', undefined, () => {
+      assert.strictEqual(getGlobalConfigDir('antigravity'), path.join(decoyHome, '.gemini', 'antigravity-cli'),
+        'the fs probe is documented behaviour — a default row asserting the real home is asserting this away');
+    });
   });
 
   test('unknown runtime falls back to ~/.claude', () => {
