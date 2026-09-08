@@ -1675,6 +1675,17 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
   type IndexEntry = { tag: string; mode: string; sha: string; stage: string };
   // The empty blob under SHA-1 and SHA-256 object formats — intent-to-add's tell.
   const EMPTY_BLOBS = new Set(['e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', '473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813']);
+  // A PATH FROM THE INDEX IS NOT A PATHSPEC. `git rm`, `ls-files` and friends
+  // parse their operands as pathspecs, so a tracked file literally named
+  // `.planning/*.md` GLOBS when handed back to git: driven, `rm --cached` on it
+  // also removed `peer.md` and `stays.md`, and only the declared entry was
+  // recorded — so the rollback restored one of three and the other two rode out
+  // as undisclosed staged deletions. The magic-prefix twin is quieter still: a
+  // file named `:(literal)mine` has its prefix PARSED, so the rm matches nothing,
+  // exits 0, and the entry silently survives a removal this call then claims.
+  // `:(literal)` disables every other magic, including globbing, so the operand
+  // means the file it names.
+  const lit = (p: string): string => `:(literal)${p}`;
   const notARemoval = (e: IndexEntry): string | null => {
     if (e.mode === '160000') return 'a submodule gitlink, not a file';
     if (e.tag === 'S') return 'skip-worktree (sparse-checkout): absent by checkout, not removed';
@@ -1724,7 +1735,12 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
       continue;
     }
     // `-v -s`: tag, mode, blob, stage and path per record — see notARemoval.
-    const listed = execGit(['ls-files', '-v', '-s', '-z', '--', entry], { cwd });
+    // `lit` here too: the caller's declared entry is a PATH, not a glob —
+    // that is `--files-removed`'s whole contract — and :(literal) still
+    // resolves a directory to its descendants (driven), so the directory form
+    // is unaffected while a file literally named `*.md` or `:(literal)x` means
+    // itself.
+    const listed = execGit(['ls-files', '-v', '-s', '-z', '--', lit(entry)], { cwd });
     if (listed.exitCode !== 0) {
       failures.push({
         file: entry,
@@ -1773,7 +1789,7 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
     const namesItself = (p: string): boolean => p === entryRel || path.resolve(cwd, p) === entryAbs || canon(p) === canon(entry);
     const inHeadPaths = new Set<string>();
     if (headExists) {
-      const inHead = execGit(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', entry], { cwd });
+      const inHead = execGit(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', lit(entry)], { cwd });
       if (inHead.exitCode !== 0) {
         failures.push({
           file: entry,
@@ -1815,7 +1831,7 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
       // ordinary staged empty file shows there as added. Three probes, on the
       // rare empty-blob path only.
       if (reason === null && indexEntry !== undefined && EMPTY_BLOBS.has(indexEntry.sha) && !inHeadPaths.has(trackedPath)) {
-        const cached = execGit(['diff', '--cached', '--name-only', '-z', '--', trackedPath], { cwd });
+        const cached = execGit(['diff', '--cached', '--name-only', '-z', '--', lit(trackedPath)], { cwd });
         if (cached.exitCode === 0 && cached.stdout.split('\0').filter(Boolean).length === 0) reason = 'an intent-to-add entry (git add -N), not tracked content';
       }
       if (reason !== null) {
@@ -1849,7 +1865,7 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
         : null;
       // `--ignore-unmatch` makes "no such index entry" a success, so a non-zero
       // exit is a real I/O failure — same reading as the default-mode branch.
-      const rmResult = execGit(['rm', '--cached', '--ignore-unmatch', '--', trackedPath], { cwd });
+      const rmResult = execGit(['rm', '--cached', '--ignore-unmatch', '--', lit(trackedPath)], { cwd });
       if (rmResult.exitCode === 0) {
         if (recordable !== null) removedEntries.push(recordable);
         // Re-check AFTER the index mutation. The absence test and the `rm` are
@@ -1888,7 +1904,7 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
           timed_out: isSpawnTimeout(rmResult),
         });
         if (recordable !== null) {
-          const after = execGit(['ls-files', '-s', '-z', '--', trackedPath], { cwd });
+          const after = execGit(['ls-files', '-s', '-z', '--', lit(trackedPath)], { cwd });
           if (after.exitCode !== 0) {
             // Could not determine. Say so; never silently assume either way.
             failures.push({
@@ -2123,6 +2139,17 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   const removedEntries = declaredRemovals.removedEntries;
   stagingFailures.push(...declaredRemovals.failures);
   stagedPaths.push(...declaredRemovals.removedPathspec);
+  // A REMOVAL'S PATH IS A PATH DOWNSTREAM TOO. Literalising the staging alone
+  // does not protect the COMMIT's own pathspec: with a tracked file literally
+  // named `.planning/*.md` declared removed beside a MODIFIED `peer.md`, the
+  // `git commit -- <paths>` below globs and commits `M peer.md` the caller
+  // never declared — the sweep this flag exists to remove, arriving one step
+  // later. Driven. Only the removal-derived entries are literalised: `--files`
+  // entries keep whatever pathspec behaviour they have today, which is not this
+  // change's to alter.
+  const removalPathspecs = new Set(declaredRemovals.removedPathspec);
+  const asPathspec = (p: string): string => (removalPathspecs.has(p) ? `:(literal)${p}` : p);
+
   // Put every entry this call removed back, exactly — mode and blob. Called
   // from EVERY exit that mutated the index and then records nothing, not just
   // the staging-failure rollback: a `git rm --cached` that SUCCEEDS is still an
@@ -2155,7 +2182,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // non-ASCII name as `"caf\303\251.md"`, which never equals the raw path, so
     // an exactly-restored `café.md` (and any name carrying a tab or a newline)
     // read as NOT restored. Driven on all three shapes.
-    const back = execGit(['ls-files', '-s', '-z', '--', ...removedEntries.map(e => e.path)], { cwd });
+    const back = execGit(['ls-files', '-s', '-z', '--', ...removedEntries.map(e => `:(literal)${e.path}`)], { cwd });
     if (back.exitCode !== 0) return 'unverified';   // no observation — never an assertion of failure
     // COMPARE THE WHOLE ENTRY, not just the path. `--cacheinfo` restores mode,
     // blob and stage; a path present at a DIFFERENT mode or blob is not the
@@ -2442,13 +2469,13 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   // failing-closed (drop the content) and failing-open (re-enter #3776) are
   // wrong answers to a question we can just ask directly.
   const assumeUnchangedWouldRecord = (): boolean => {
-    const listed = execGit(['ls-files', '-v', '--', ...stagedPaths], { cwd });
+    const listed = execGit(['ls-files', '-v', '--', ...stagedPaths.map(asPathspec)], { cwd });
     // Only the TAG is read; the path is deliberately never parsed out — see the
     // `core.quotePath` note above, and the dry run below needs no path anyway.
     if (listed.exitCode === 0
       && !listed.stdout.split('\n').some((line) => /^[a-z] /.test(line))) return false;
     const dryRun = execGit(
-      ['commit', '--dry-run', '--porcelain', '--no-verify', '-m', sanitizedMessage as string, '--', ...stagedPaths],
+      ['commit', '--dry-run', '--porcelain', '--no-verify', '-m', sanitizedMessage as string, '--', ...stagedPaths.map(asPathspec)],
       { cwd },
     );
     // Only a CONFIRMED "nothing to record" closes the path: rc 1 from a git
@@ -2472,7 +2499,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     && (stagedPaths.length === 0
       || (!partialCommitRefused
         && execGit(
-          ['diff', '--quiet', '--ignore-submodules=dirty', '--no-textconv', 'HEAD', '--', ...stagedPaths],
+          ['diff', '--quiet', '--ignore-submodules=dirty', '--no-textconv', 'HEAD', '--', ...stagedPaths.map(asPathspec)],
           { cwd },
         ).exitCode === 0
         && !assumeUnchangedWouldRecord()));
@@ -2505,7 +2532,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     : ['commit', '-m', sanitizedMessage as string];
   if (noVerify) commitArgs.push('--no-verify');
   if (canScope) {
-    commitArgs.push('--', ...stagedPaths);
+    commitArgs.push('--', ...stagedPaths.map(asPathspec));
   }
   // #3859 follow-up: on git 2.39.5 (confirmed on the CI Linux bench image,
   // ghcr.io/open-gsd/gsd-tester-linux:v1.8.0-node24; NOT reproducible on git

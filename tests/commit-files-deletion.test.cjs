@@ -926,6 +926,128 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
+  test('a tracked filename containing a glob removes only itself, never its neighbours', () => {
+    // An index path handed back to git is parsed as a PATHSPEC. A tracked file
+    // literally named `*.md` therefore GLOBS: `rm --cached` on it also removed
+    // the peers, only the declared entry was recorded, and the rollback then
+    // restored one of three -- leaving the others staged as undisclosed
+    // deletions. :(literal) is what makes the operand mean the file it names.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, '*.md'), 'wildcard\n');
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'peer.md'), 'peer\n');
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'stays.md'), 'stays\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed a wildcard-named todo']);
+    fs.unlinkSync(path.join(tmpDir, PENDING, '*.md'));
+    const before = git(['ls-files', '-s', '--', PENDING]);
+
+    // stays.md is still present, so the call fails and rolls back. Whatever the
+    // rollback restores, the peers must never have been touched at all.
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration',
+        '--files-removed', '.planning/todos/pending/', '.planning/todos/pending/stays.md'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).reason, 'staging_failed', result.output);
+    assert.strictEqual(
+      git(['diff', '--cached', '--name-status']), '',
+      'no unrelated deletion may be left staged by a globbing pathspec',
+    );
+    assert.strictEqual(git(['ls-files', '-s', '--', PENDING]), before, 'the index is exactly as it was');
+  });
+
+  test('a tracked filename containing pathspec magic is removed, and commits nothing else', () => {
+    // The quieter half of the same defect: pathspec magic binds at the START of
+    // the operand, so a file named `:(literal)mine` at the repo ROOT has its
+    // prefix PARSED -- the rm matched nothing, exited 0, and the entry survived
+    // a removal this call went on to report as done. A path under a directory
+    // never starts with `:`, so the fixture must be top-level to reach it.
+    const odd = ':(literal)mine';
+    fs.writeFileSync(path.join(tmpDir, odd), 'mine\n');
+    git(['add', '--', ':(literal)' + odd]);
+    git(['commit', '-q', '-m', 'seed a magic-named file']);
+    assert.strictEqual(git(['ls-files', '--', ':(literal)' + odd]), odd, 'fixture: the odd name is tracked');
+    fs.unlinkSync(path.join(tmpDir, odd));
+
+    // A peer that is MODIFIED but never declared: the commit's own pathspec is
+    // where an unliteralised name sweeps it in.
+    fs.writeFileSync(path.join(tmpDir, 'peer.md'), 'peer\n');
+    git(['add', 'peer.md']);
+    git(['commit', '-q', '-m', 'seed a peer']);
+    fs.writeFileSync(path.join(tmpDir, 'peer.md'), 'peer, modified\n');
+
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files-removed', odd],
+      tmpDir,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, true, result.output);
+    assert.strictEqual(
+      git(['ls-files', '--', ':(literal)' + odd]), '',
+      'the entry the caller named must actually be gone from the index',
+    );
+    // The commit must contain the declared removal and NOTHING else -- an
+    // undeclared `M peer.md` is the sweep this flag exists to remove.
+    assert.strictEqual(
+      git(['diff', '--no-renames', 'HEAD~1', 'HEAD', '--name-status']), 'D\t' + odd,
+      'only the declared removal may be committed',
+    );
+  });
+
+  test('a glob-named removal commits only itself, never an undeclared peer edit', () => {
+    // Literalising the STAGING is not enough: `git commit -- <paths>` takes the
+    // same paths as a pathspec, so a tracked file named `*.md` swept a MODIFIED
+    // peer into the commit the caller never declared -- the sweep this flag
+    // exists to remove, arriving one step after staging.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, '*.md'), 'wildcard\n');
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'peer.md'), 'peer\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed a wildcard-named todo']);
+    fs.unlinkSync(path.join(tmpDir, PENDING, '*.md'));
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'peer.md'), 'peer, modified\n');
+
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files-removed', '.planning/todos/pending/'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).committed, true, result.output);
+    assert.strictEqual(
+      git(['diff', '--no-renames', 'HEAD~1', 'HEAD', '--name-status']),
+      'D\t' + path.join(PENDING, '*.md'),
+      'only the declared removal may be committed',
+    );
+    assert.match(porcelain(PENDING), /^ M \.planning\/todos\/pending\/peer\.md$/m, "the peer's edit stays uncommitted");
+  });
+
+  test('an intent-to-add entry with a glob name keeps its intent flag', () => {
+    // The intent-to-add probe is a `diff --cached` over the path, so an
+    // unliteralised glob name matched a STAGED PEER instead of itself, the
+    // entry was misclassified as ordinary content, removed, and then restored
+    // by --cacheinfo -- which cannot restore the intent flag. It came back as a
+    // real staged addition.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'peer.md'), 'peer\n');
+    git(['add', path.join(PENDING, 'peer.md')]);   // a STAGED peer for the glob to find
+    fs.writeFileSync(path.join(tmpDir, PENDING, '*.md'), 'wildcard\n');
+    git(['add', '-N', '--', ':(literal)' + path.join(PENDING, '*.md')]);
+    fs.unlinkSync(path.join(tmpDir, PENDING, '*.md'));
+    const flagsBefore = git(['ls-files', '-v', '--', ':(literal)' + path.join(PENDING, '*.md')]);
+
+    // A directory entry: the intent-to-add path must be SKIPPED, not removed.
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files-removed', '.planning/todos/pending/'],
+      tmpDir,
+    );
+    assert.ok(result.output, 'the tool produced output');
+    assert.strictEqual(
+      git(['ls-files', '-v', '--', ':(literal)' + path.join(PENDING, '*.md')]), flagsBefore,
+      'the intent-to-add entry must be left exactly as it was, flag included',
+    );
+  });
+
+
+
 
 
 

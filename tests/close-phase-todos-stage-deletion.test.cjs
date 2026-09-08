@@ -101,6 +101,10 @@ describe('#4208: cleanup.md archives phase directories without a --files directo
   test('the destinations and STATE.md stay under --files, which cannot record a deletion', () => {
     const line = archiveStepBody();
     const added = line.split('--files-removed')[0];
+    // Assert the FLAG, not just the substrings: without this, deleting
+    // `--files` entirely leaves the destinations sitting before
+    // `--files-removed` and the test still passes (round review, MINOR).
+    assert.match(added, /--files\s/, `the additive half must actually carry --files. Line: ${line}`);
     // --files keeps its #2014 skip-if-missing contract: it is the additive
     // half and the only half that can carry a path that must be WRITTEN.
     assert.ok(added.includes('.planning/milestones/'), `the archive destination must stay under --files. Line: ${line}`);
