@@ -344,7 +344,14 @@ function withProjectRoot(cwd: string, result: Record<string, unknown>): Record<s
   if (config.project_code) {
     result['project_code'] = config.project_code;
   }
-  const projectMdPath = path.join(planningDir(cwd), 'PROJECT.md');
+  // #4455 follow-up (self-discovered): PROJECT.md is shared across
+  // workstreams (never cloned per workstream — see cmdInitCompleteMilestone's
+  // projectPath comment for the full evidence), so it must be read via
+  // planningRoot(cwd), not the workstream-aware planningDir(cwd). Reading via
+  // planningDir(cwd) meant every init.* call's project_title silently
+  // vanished whenever a workstream was active (ambient GSD_WORKSTREAM or a
+  // session pointer), since no PROJECT.md ever exists at the workstream path.
+  const projectMdPath = path.join(planningRoot(cwd), 'PROJECT.md');
   const content = platformReadSync(projectMdPath);
   if (content) {
     const h1Match = content.match(/^#\s+(.+)$/m);
@@ -3086,16 +3093,28 @@ function cmdInitCompleteMilestone(
   const statePath = path.join(planningBase, 'STATE.md');
   const roadmapPath = path.join(planningBase, 'ROADMAP.md');
   const archiveDir = path.join(planningBase, 'milestones');
-  // #4455 follow-up (code-review finding): MILESTONES.md and PROJECT.md are
-  // workstream-scoped too — cmdMilestoneComplete (src/milestone.cts) writes
-  // MILESTONES.md via planningPaths(cwd).planning (the workstream base, not
-  // root), and planningPaths().project resolves PROJECT.md the same way.
-  // Neither is the deliberately-root-scoped exception `todos` is (#4256) —
-  // an earlier version of this fix wrongly treated both as shared root
-  // files, which would have made the safety commit below silently miss the
-  // actual files milestone.complete just wrote under an active workstream.
+  // #4455 follow-up (code-review finding): MILESTONES.md is workstream-scoped
+  // too — cmdMilestoneComplete (src/milestone.cts) writes it via
+  // planningPaths(cwd).planning (the workstream base, not root; #1911). It is
+  // not the deliberately-root-scoped exception `todos` is (#4256) — an
+  // earlier version of this fix wrongly treated it as a shared root file,
+  // which would have made the safety commit below silently miss the actual
+  // file milestone.complete just wrote under an active workstream.
   const milestonesPath = path.join(planningBase, 'MILESTONES.md');
-  const projectPath = path.join(planningBase, 'PROJECT.md');
+  // #4455 follow-up round 2 (self-discovered regression): PROJECT.md, unlike
+  // MILESTONES.md, is genuinely SHARED across workstreams — never cloned per
+  // workstream. gsd-core/references/workstream-flag.md's directory diagram
+  // marks it `# Shared`; new-milestone.md states it outright ("PROJECT.md is
+  // shared across workstreams") and explicitly SKIPS writing its
+  // `## Current Milestone` heading under an active workstream specifically
+  // to avoid clobbering the one shared file (#2308); cmdWorkstreamCreate
+  // (src/workstream.cts) never creates a PROJECT.md under a workstream
+  // directory. The first version of this #4455 follow-up wrongly generalized
+  // from planningPaths()'s structural shape (which composes `project` under
+  // the workstream base) without checking an actual PROJECT.md write path —
+  // resolved against planningRoot(cwd), not the workstream-scoped
+  // planningBase, so the safety commit below always targets the real file.
+  const projectPath = path.join(planningRoot(cwd), 'PROJECT.md');
   // REQUIREMENTS.md is workstream-scoped the same way (planningPaths(cwd).requirements,
   // src/planning-workspace.cts) — the git-rm-after-archive step needs the
   // resolved path too, not the literal root file.

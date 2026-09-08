@@ -1031,6 +1031,106 @@ describe('init complete-milestone — state_path/roadmap_path/archive_dir (#4455
   });
 });
 
+describe('init complete-milestone — milestones_path/project_path/requirements_path (#4455 follow-up)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  function writeRootProjectMd(dir) {
+    fs.writeFileSync(path.join(dir, '.planning', 'PROJECT.md'), '# Test Project\n');
+  }
+
+  test('flat mode: milestones_path/requirements_path resolve to root, project_path resolves to root (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+    writeRootProjectMd(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'MILESTONES.md'), '# Milestones\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'REQUIREMENTS.md'), '# Requirements\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.milestones_path, absPlanningPath(tmpDir, 'MILESTONES.md'));
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+    assert.strictEqual(output.requirements_path, absPlanningPath(tmpDir, 'REQUIREMENTS.md'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: milestones_path/requirements_path resolve into the workstream, but project_path STAYS root (PROJECT.md is shared, #4455 follow-up regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    // PROJECT.md is only ever written at root — cmdWorkstreamCreate never
+    // creates a per-workstream copy (it is a documented shared file, see
+    // gsd-core/references/workstream-flag.md's directory diagram).
+    writeRootProjectMd(tmpDir);
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha', 'MILESTONES.md'), '# Milestones\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha', 'REQUIREMENTS.md'), '# Requirements\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.milestones_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'MILESTONES.md'));
+    assert.strictEqual(output.requirements_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'REQUIREMENTS.md'));
+    // The regression this test guards against: project_path must be the
+    // ROOT PROJECT.md, never a workstream-scoped path that no writer ever
+    // populates.
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'PROJECT.md'));
+  });
+});
+
+describe('withProjectRoot — project_title reads PROJECT.md from root even under a workstream (#4455 follow-up)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  // Exercised via `init complete-milestone` rather than `init manager`:
+  // cmdInitManager has its own readiness guard requiring STATE.md/ROADMAP.md
+  // to already exist (see the "state_path/roadmap_path are null" test
+  // above), which would obscure whether THIS test is actually exercising
+  // withProjectRoot. Both commands share the same withProjectRoot helper.
+  test('flat mode: project_title is populated from the root PROJECT.md (regression guard)', () => {
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# My Test Project\n\nSome content.\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_title, 'My Test Project');
+  });
+
+  test('GSD_WORKSTREAM=alpha: project_title is STILL populated from the root PROJECT.md, not silently dropped (#4455 follow-up regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# My Test Project\n\nSome content.\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_title, 'My Test Project',
+      'project_title must be read from the shared root PROJECT.md even when a workstream is active');
+  });
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Folded from tests/bug-3584-runtime-slash-emitters.test.cjs — consolidation epic #1969 (B2 #1971)
