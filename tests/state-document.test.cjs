@@ -2686,6 +2686,22 @@ describe('computeProgressPercent — per-phase-slot composition (regressions, #4
     assert.strictEqual(computeProgressPercent(1, 2, null, null, SCOPE.COMPLETE, [open(2, 1)]), 50, 'no phase data -> samples cannot compose; plan fraction alone');
   });
 
+  test('an EMPTY sample array falls back to the aggregate composition — it is not a zero-credit set', () => {
+    // `[]` is truthy, so a bare `phases &&` would admit it into the per-slot loop,
+    // accumulate no credit over a nonzero denominator and report 0. Reachable via
+    // buildStateFrontmatter: an existing-but-empty phases/ directory yields no samples
+    // while #4129's ROADMAP floor still supplies a positive completed_phases.
+    assert.strictEqual(computeProgressPercent(0, 0, 1, 2, SCOPE.COMPLETE, []), 50);
+    assert.strictEqual(
+      computeProgressPercent(0, 0, 1, 2, SCOPE.COMPLETE, []),
+      computeProgressPercent(0, 0, 1, 2, SCOPE.COMPLETE, null),
+      'no samples measured must mean the same thing whether it arrives as [] or null',
+    );
+    // And the plan-bearing shape: composition would report 0, the fallback caps by phases.
+    assert.strictEqual(computeProgressPercent(1, 2, 0, 1, SCOPE.COMPLETE, []),
+      computeProgressPercent(1, 2, 0, 1, SCOPE.COMPLETE, null));
+  });
+
   test('a non-COMPLETE scope still withholds (null) with samples supplied — rule 4 is unchanged', () => {
     assert.strictEqual(computeProgressPercent(1, 1, 1, 1, SCOPE.UNREADABLE, [closed(1)]), null);
   });

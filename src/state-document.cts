@@ -787,7 +787,15 @@ export function computeProgressPercent(
   const hasPhaseData = totalPhases !== null && totalPhases > 0 && completedPhases !== null;
   if (!hasPlanData && !hasPhaseData)
     return null;
-  if (phases && hasPhaseData) {
+  // #4210: an EMPTY sample array is NOT a sample set — and `[]` is truthy, so a bare
+  // `phases &&` admits it into the composition, where it accumulates zero credit over a
+  // nonzero denominator and reports 0. That is reachable, not theoretical:
+  // `buildStateFrontmatter`'s directory loop yields `[]` for an existing-but-empty
+  // `phases/`, while #4129's ROADMAP floor can still supply a positive `completedPhases`
+  // from the canonical Progress table — a tuple the aggregate fallback reports as 50 and
+  // the composition reported as 0. `length > 0` routes the no-sample case to the
+  // aggregate-only fallback, which is what "no per-phase data was measured" means.
+  if (phases && phases.length > 0 && hasPhaseData) {
     // #4210: COMPOSE, don't cap. `min(plan_fraction, phase_fraction)` below
     // pinned the percent to `(k-1)/N` for the whole of phase k the moment the
     // plan fraction overtook it (every plan shipped, bar unmoved), and moved
