@@ -1,7 +1,3 @@
-// allow-test-rule: source-text-is-the-product (see #4460)
-// Workflow markdown is the installed orchestration contract — this file's
-// text IS what the reviewer flow runs at runtime.
-
 'use strict';
 
 /**
