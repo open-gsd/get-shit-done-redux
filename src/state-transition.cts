@@ -739,6 +739,10 @@ function mergeResyncProgressRatchet(
   derivedRecord: Record<string, unknown>,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...derivedRecord };
+  // #4210: did a curated counter actually REPLACE a derived one? Only then is
+  // the derived percent stale with respect to `merged`. See the recompute
+  // guard below for why the distinction became load-bearing.
+  let countersOverridden = false;
   for (const [key, value] of Object.entries(curatedRecord)) {
     if (key === 'total_plans' || key === 'total_phases' || key === 'percent') continue;
     if (key === 'completed_plans' || key === 'completed_phases') {
@@ -756,11 +760,31 @@ function mergeResyncProgressRatchet(
       // STRICTLY greater replaces the derived value.
       if (derivedNum === curatedNum) continue;
       merged[key] = value;
+      countersOverridden = true;
     } else {
       merged[key] = value;
     }
   }
-  if (toFiniteNumber(derivedRecord.percent) !== null) {
+  // #4210: the recompute is now conditional on a counter having actually been
+  // overridden. Before #4210, `percent` was a pure function of the four
+  // aggregate counters, so recomputing it from `merged` was free of
+  // information loss and this guard would have been a no-op. It no longer is:
+  // `computeProgressPercent` composes per phase slot from `PhaseProgressSample[]`,
+  // which this layer does not have and cannot reconstruct from the aggregates.
+  // Recomputing unconditionally therefore DISCARDS the composed percent the
+  // derived block just carried and substitutes the pre-#4210 min() value —
+  // observed as the composed 50 being overwritten with 0 on a write that
+  // merged no counter at all. When no counter was overridden, `merged`'s
+  // counters ARE the derived counters, so the derived percent is already
+  // coherent with them and is kept verbatim.
+  //
+  // RESIDUAL, disclosed rather than silently narrowed: when a curated counter
+  // DOES override a derived one, the recompute still runs against aggregates
+  // only, so a composed percent falls back to the aggregate composition on
+  // that path. That is the pre-existing #3634 boundary (`state-transition.cts`
+  // is not threaded with per-phase samples), unchanged by this commit, and it
+  // is the branch #4129's own tests pin (3/18 = 17).
+  if (countersOverridden && toFiniteNumber(derivedRecord.percent) !== null) {
     const recomputed = computeProgressPercent(
       toFiniteNumber(merged.completed_plans),
       toFiniteNumber(merged.total_plans),

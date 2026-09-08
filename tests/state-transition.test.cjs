@@ -4493,6 +4493,30 @@ describe('#4129: resyncing measured write ratchets the progress block', () => {
     assert.strictEqual(r.mutated, true, 'the merge actually changed the derived block');
   });
 
+  test('resyncRatchetKeepsDerivedComposedPercentWhenNoCounterIsOverridden', () => {
+    // #4210: `percent` is no longer a pure function of the four aggregate
+    // counters — computeProgressPercent composes per phase slot from
+    // PhaseProgressSample[], which this layer does not have and cannot
+    // reconstruct. Recomputing unconditionally therefore DISCARDS a composed
+    // percent and substitutes the pre-#4210 min() value.
+    //
+    // Here the two sides agree on every counter, so the merge overrides
+    // nothing and the derived block's percent is already coherent with the
+    // merged counters. The pinned 50 is deliberately NOT reproducible from
+    // those counters: an aggregate recompute yields
+    // min(1/2 plans, 0/1 phases) = 0, so a regression is visible as 0 rather
+    // than as a value that happens to agree.
+    const r = resyncMerge(
+      { total_phases: 1, completed_phases: 0, total_plans: 2, completed_plans: 1, percent: 20 },
+      { total_phases: 1, completed_phases: 0, total_plans: 2, completed_plans: 1, percent: 50 },
+    );
+    assert.strictEqual(
+      Number(r.postFm.progress.percent),
+      50,
+      '#4210: no counter was overridden, so the derived (composed) percent survives verbatim — an aggregate-only recompute would report 0',
+    );
+  });
+
   test('resyncRatchetStillLetsCompletedMoveUp', () => {
     // Genuine completion: derived ABOVE curated must ratchet up, and percent follows.
     const r = resyncMerge(
