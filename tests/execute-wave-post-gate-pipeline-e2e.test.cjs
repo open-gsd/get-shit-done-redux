@@ -29,7 +29,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { cleanup, createTempDir, installSpawnEnv } = require('./helpers.cjs');
+const { cleanup, createTempDir, installSpawnEnv, writeAmbientCapabilityGate } = require('./helpers.cjs');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 
 const GSD_TOOLS = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
@@ -80,28 +80,6 @@ function runTool(args, { cwd, env = {} } = {}) {
   return result;
 }
 
-function writeAmbientGate(home, id, point) {
-  const capDir = path.join(home, '.gsd', 'capabilities', id);
-  fs.mkdirSync(capDir, { recursive: true });
-  fs.writeFileSync(path.join(capDir, 'capability.json'), JSON.stringify({
-    id,
-    title: 'Ambient test capability',
-    version: '1.0.0',
-    role: 'feature',
-    tier: 'full',
-    description: 'Capability outside the test fixture that must remain invisible.',
-    engines: { gsd: '>=1.7.0' },
-    requires: [],
-    runtimeCompat: { supported: ['claude'], unsupported: [] },
-    skills: [],
-    agents: [],
-    config: {},
-    steps: [],
-    contributions: [],
-    gates: [{ point, check: { query: 'ambient.check' }, blocking: false, onError: 'skip' }],
-  }), 'utf8');
-}
-
 // ─── Shared fixture teardown ─────────────────────────────────────────────────
 
 const tmpDirs = [];
@@ -117,14 +95,18 @@ after(() => { for (const d of tmpDirs) { try { cleanup(d); } catch { /* best-eff
 
 describe('A. loop render-hooks execute:wave:post — resolution', () => {
 
-  test('#4485: render-hooks ignores capabilities installed in the ambient GSD_HOME', (t) => {
+  test('#4485: render-hooks ignores capabilities installed in ambient user locations', (t) => {
     const ambientHome = createTempDir('gsd-ambient-wave-post-');
-    writeAmbientGate(ambientHome, 'ambient-wave-post', 'execute:wave:post');
-    const previous = process.env.GSD_HOME;
+    writeAmbientCapabilityGate(ambientHome, 'ambient-wave-post', 'execute:wave:post');
+    const previous = { home: process.env.HOME, userprofile: process.env.USERPROFILE, gsdHome: process.env.GSD_HOME };
+    process.env.HOME = ambientHome;
+    process.env.USERPROFILE = ambientHome;
     process.env.GSD_HOME = ambientHome;
     t.after(() => {
-      if (previous === undefined) delete process.env.GSD_HOME;
-      else process.env.GSD_HOME = previous;
+      for (const [key, value] of [['HOME', previous.home], ['USERPROFILE', previous.userprofile], ['GSD_HOME', previous.gsdHome]]) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       cleanup(ambientHome);
     });
 

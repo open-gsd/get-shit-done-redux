@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { runGsdTools, createTempProject, createTempDir, cleanup, installSpawnEnv } = require('./helpers.cjs');
+const { runGsdTools, createTempProject, createTempDir, cleanup, installSpawnEnv, writeAmbientCapabilityGate } = require('./helpers.cjs');
 
 const GSD_TOOLS = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
 
@@ -84,28 +84,6 @@ function spawnRenderHooks(point, cwd) {
   };
 }
 
-function writeAmbientGate(home, id, point) {
-  const capDir = path.join(home, '.gsd', 'capabilities', id);
-  fs.mkdirSync(capDir, { recursive: true });
-  fs.writeFileSync(path.join(capDir, 'capability.json'), JSON.stringify({
-    id,
-    title: 'Ambient test capability',
-    version: '1.0.0',
-    role: 'feature',
-    tier: 'full',
-    description: 'Capability outside the test fixture that must remain invisible.',
-    engines: { gsd: '>=1.7.0' },
-    requires: [],
-    runtimeCompat: { supported: ['claude'], unsupported: [] },
-    skills: [],
-    agents: [],
-    config: {},
-    steps: [],
-    contributions: [],
-    gates: [{ point, check: { query: 'ambient.check' }, blocking: false, onError: 'skip' }],
-  }), 'utf8');
-}
-
 /**
  * Run check gap-analysis.plan-post via CLI with controlled args.
  * @param {string[]} extraArgs  args after 'gap-analysis.plan-post'
@@ -157,14 +135,18 @@ describe('render-hooks plan:post — gate discovery', () => {
     assert.ok(envelope.rendered.includes('gap-analysis.plan-post'), 'rendered must include check query');
   });
 
-  test('#4485: render-hooks ignores capabilities installed in the ambient GSD_HOME', (t) => {
+  test('#4485: render-hooks ignores capabilities installed in ambient user locations', (t) => {
     const ambientHome = createTempDir('gsd-ambient-plan-post-');
-    writeAmbientGate(ambientHome, 'ambient-plan-post', 'plan:post');
-    const previous = process.env.GSD_HOME;
+    writeAmbientCapabilityGate(ambientHome, 'ambient-plan-post', 'plan:post');
+    const previous = { home: process.env.HOME, userprofile: process.env.USERPROFILE, gsdHome: process.env.GSD_HOME };
+    process.env.HOME = ambientHome;
+    process.env.USERPROFILE = ambientHome;
     process.env.GSD_HOME = ambientHome;
     t.after(() => {
-      if (previous === undefined) delete process.env.GSD_HOME;
-      else process.env.GSD_HOME = previous;
+      for (const [key, value] of [['HOME', previous.home], ['USERPROFILE', previous.userprofile], ['GSD_HOME', previous.gsdHome]]) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       cleanup(ambientHome);
     });
 
