@@ -37,8 +37,9 @@ Resolved gaps are NOT re-diagnosed and do NOT spawn new gap plans. If the user l
 
 Read the full UAT file.
 
-Find first test with `result: [pending]`.
-If no `[pending]` test found → go to `complete_session`.
+(The find-pending / zero-pending guard clause is stated verbatim in the spine — a pre-existing
+drift guard, `tests/verify-work-auto-transition.test.cjs` bug #1716, requires the two sentences
+adjacent with nothing between them.)
 
 Announce:
 ```

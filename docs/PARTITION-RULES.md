@@ -124,7 +124,7 @@ criteria, applied to every file in the eager-window corpus:
   file is small enough that the fixed structural cost of a split — a new `detail/` directory,
   the five checks' ongoing enforcement surface, `docs/INVENTORY.md`/manifest bookkeeping, and
   reviewer attention — is not justified by the achievable savings. The smallest file split in
-  Phase 5 (`complete-milestone.md`, 41,278 bytes) still only yielded roughly 11.5 KB of actual
+  Phase 5 (`complete-milestone.md`, 41,278 bytes) still only yielded roughly 10.4 KB of actual
   reduction; a file well under that size buys proportionally less for the same fixed cost.
 
 A "not worth splitting" disposition is not permanent — re-evaluate a file if it grows

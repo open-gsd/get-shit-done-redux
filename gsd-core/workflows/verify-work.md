@@ -497,7 +497,12 @@ Exact YAML shape and the announcement line: `gsd-core/workflows/verify-work/deta
 </step>
 
 <step name="resume_from_file">
-**Resume testing from UAT file:** first run `reconcile_gaps` (above), then read the full UAT file and find the first `result: [pending]` test — none found means go to `complete_session`; otherwise announce progress and continue from that test at `present_test`.
+**Resume testing from UAT file:** first run `reconcile_gaps` (above), then read the full UAT file.
+
+Find first test with `result: [pending]`.
+If no `[pending]` test found → go to `complete_session`.
+
+Otherwise announce progress and continue from that test at `present_test`.
 
 Exact resume-announcement wording: `gsd-core/workflows/verify-work/detail/elaboration.md` § 2.
 </step>
