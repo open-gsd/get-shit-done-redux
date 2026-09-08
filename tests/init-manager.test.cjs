@@ -1172,13 +1172,17 @@ describe('init subcommands sharing the project_exists/project_path PROJECT.md pa
   // and withProjectRoot) repeated verbatim, via grep, in six more cmdInit*
   // functions. Each is exercised here through its real CLI subcommand rather
   // than re-asserting src/init.cts internals directly, so a regression in the
-  // router wiring would also be caught. `init manager` and `init new-milestone`
-  // are deliberately excluded: `manager` has its own STATE.md/ROADMAP.md
-  // readiness guard (covered separately above via `init complete-milestone`,
-  // which shares withProjectRoot); `new-milestone`'s project_path fix is
-  // real (see src/init.cts) but its dedicated coverage belongs with #4456's
-  // own new-milestone.md workstream-forwarding work, not duplicated here.
-  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project'];
+  // router wiring would also be caught. `init manager` is deliberately
+  // excluded: it has its own STATE.md/ROADMAP.md readiness guard (covered
+  // separately above via `init complete-milestone`, which shares
+  // withProjectRoot). `new-milestone` was originally deferred to #4456's own
+  // new-milestone.md workstream-forwarding work (see PR #4543), but that PR
+  // only exercised the *workflow's* `--ws` argv forwarding through a stubbed
+  // gsd_run, never cmdInitNewMilestone's real project_exists/project_path
+  // output — #4457 closes that gap by folding it into this loop; it has no
+  // manager-style readiness precondition, so it fits the shared assertion
+  // shape below without a dedicated test.
+  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project', 'new-milestone'];
 
   let tmpDir;
 
@@ -1229,6 +1233,77 @@ describe('init subcommands sharing the project_exists/project_path PROJECT.md pa
     const output = JSON.parse(result.output);
     assert.strictEqual(output.project_exists, true,
       `init milestone-op: project_exists must be true for a root-only PROJECT.md under a workstream, got: ${JSON.stringify(output.project_exists)}`);
+  });
+});
+
+// #4458: init new-project's sub_repos_detected field reuses core-utils.cts's
+// detectSubRepos instead of new-project.md's own (now-removed) narrower `find
+// -exec test -d "{}/.git"` predicate, which required .git to be a DIRECTORY and
+// so silently excluded linked git worktree children (.git is a FILE there).
+describe('init new-project: sub_repos_detected (#4458)', () => {
+  const { execFileSync } = require('child_process');
+  const { createTempGitProject } = require('./helpers.cjs');
+  const { GIT_FIXTURE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+  let tmpDir;
+
+  afterEach(() => {
+    if (tmpDir) { cleanup(tmpDir); tmpDir = null; }
+  });
+
+  test('detects a REAL linked git worktree child, matching the issue #4458 repro exactly', () => {
+    // `git worktree add` genuinely needs a real git repo -- this is the only
+    // one of these three tests that does (createTempGitProject spawns
+    // `git init` + a commit, real subprocess overhead on Windows CI's
+    // Defender-scanned spawns; the other two tests below use the plain,
+    // no-git createTempProject fixture instead, matching the pattern
+    // already proven safe by the SUBCOMMANDS loop above running `init
+    // new-project` against a non-git tmpDir).
+    tmpDir = fs.realpathSync(createTempGitProject());
+    const worktreeDir = path.join(tmpDir, 'child-wt');
+    // `git worktree add` checks out files into a new working tree — the same
+    // "construction" weight class as init/config/add/commit, not plain
+    // plumbing (rev-parse/branch/log), so GIT_FIXTURE_TIMEOUT_MS is the
+    // correct shared norm here (tests/helpers/timeouts.cjs).
+    execFileSync('git', ['worktree', 'add', '-b', 'wt-branch', worktreeDir], { cwd: tmpDir, stdio: 'pipe', timeout: GIT_FIXTURE_TIMEOUT_MS });
+
+    // Confirm the fixture actually reproduces the reported shape before
+    // trusting the assertion below: a linked worktree's .git is a FILE.
+    assert.ok(fs.statSync(path.join(worktreeDir, '.git')).isFile(),
+      'fixture setup: linked worktree .git must be a file, not a directory');
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(Array.isArray(output.sub_repos_detected), 'sub_repos_detected must be an array');
+    assert.ok(output.sub_repos_detected.includes('child-wt'),
+      `sub_repos_detected must include the linked worktree child, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('detects an ordinary child clone (.git as a directory) — no regression', () => {
+    // detectSubRepos only inspects the CHILD directory's .git, not the
+    // root's own git state -- a real outer repo isn't needed here, matching
+    // the SUBCOMMANDS loop above.
+    tmpDir = fs.realpathSync(createTempProject());
+    const cloneDir = path.join(tmpDir, 'child-clone');
+    fs.mkdirSync(path.join(cloneDir, '.git'), { recursive: true });
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(output.sub_repos_detected.includes('child-clone'),
+      `sub_repos_detected must include the ordinary child clone, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('does not report an ordinary non-repository directory as a sub-repo', () => {
+    tmpDir = fs.realpathSync(createTempProject());
+    fs.mkdirSync(path.join(tmpDir, 'not-a-repo'));
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(!output.sub_repos_detected.includes('not-a-repo'),
+      `sub_repos_detected must not include a plain non-repo directory, got: ${JSON.stringify(output.sub_repos_detected)}`);
   });
 });
 
