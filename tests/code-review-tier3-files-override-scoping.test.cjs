@@ -102,7 +102,18 @@ function buildFixture(tmpDir) {
  */
 function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
   const content = fs.readFileSync(WORKFLOW_PATH, 'utf-8');
-  const tier1 = extractFirstBashBlockAfter(content, '**Tier 1 — --files override', '**Tier 2 —');
+  // #4460 CI finding: Tier 1's `realpath -m` is a pre-existing, out-of-scope
+  // portability gap (BSD/macOS realpath has no -m; confirmed CI-reproducible
+  // on Windows too, where it likewise makes every --files entry look "outside
+  // the repository" and REVIEW_FILES stays empty, tripping the OUTER `if
+  // [ ${#REVIEW_FILES[@]} -eq 0 ]` fallback instead of exercising the gated
+  // elif this test targets). Not this fix's concern (see #4460's review
+  // notes) and every path in these fixtures already exists, so `-m` (which
+  // only changes behavior for a MISSING path) is a no-op here — stripped so
+  // this test exercises Tier 3's gate on every platform gsd-test runs on,
+  // not Tier 1's realpath compatibility.
+  const tier1 = extractFirstBashBlockAfter(content, '**Tier 1 — --files override', '**Tier 2 —')
+    .replace(/\brealpath -m\b/, 'realpath');
   const tier3 = extractFirstBashBlockAfter(content, '**Tier 3 — Git diff fallback', '**Post-processing');
 
   const filesArrayInit = filesOverride
