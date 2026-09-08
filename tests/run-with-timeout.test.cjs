@@ -25,6 +25,23 @@ const fs = require('node:fs');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { createTempDir, cleanup } = require('./helpers.cjs');
 
+/**
+ * Backstop for spawnSync's OWN hard-kill, guarding against run-with-timeout's
+ * internal wall-clock cap failing to fire. Not a measured probe duration —
+ * this suite's verb-internal budgets top out at 10s (Windows .cmd/.bat
+ * mediation tests), so this preserves ~3x headroom over that ceiling, the
+ * pre-existing value unchanged by this migration.
+ */
+const RUN_WITH_TIMEOUT_HARNESS_BACKSTOP_MS = 30000;
+
+/**
+ * Tighter backstop for the C1 reap test specifically: its own verb-internal
+ * budget is 3s plus ~900ms of heartbeat-settle waits, so this keeps a
+ * smaller margin than the file default while still comfortably covering it.
+ * Pre-existing value, unchanged.
+ */
+const RUN_WITH_TIMEOUT_C1_REAP_BACKSTOP_MS = 20000;
+
 const ROOT = path.join(__dirname, '..');
 const GSD_TOOLS = path.join(ROOT, 'gsd-core', 'bin', 'gsd-tools.cjs');
 const NODE = process.execPath;
@@ -35,7 +52,7 @@ function runVerb(args, opts = {}) {
   return spawnSync(NODE, [GSD_TOOLS, 'run-with-timeout', ...args], {
     cwd: os.tmpdir(),
     encoding: 'utf8',
-    timeout: 30000, // test-harness backstop; the verb's own cap is what we assert
+    timeout: RUN_WITH_TIMEOUT_HARNESS_BACKSTOP_MS, // test-harness backstop; the verb's own cap is what we assert
     ...opts,
   });
 }
@@ -139,7 +156,7 @@ describe('#2351 run-with-timeout — argument handling (negative matrix)', () =>
 
   test('the `query` meta-prefix form is accepted', () => {
     const r = spawnSync(NODE, [GSD_TOOLS, 'query', 'run-with-timeout', '5', '--', ...OK], {
-      cwd: os.tmpdir(), encoding: 'utf8', timeout: 30000,
+      cwd: os.tmpdir(), encoding: 'utf8', timeout: RUN_WITH_TIMEOUT_HARNESS_BACKSTOP_MS,
     });
     assert.equal(r.status, 0);
   });
@@ -183,7 +200,7 @@ describe('#2351 run-with-timeout — kill semantics (POSIX process groups)', () 
       'process.on("SIGTERM", () => process.exit(0));',
       'setInterval(() => {}, 1000);',
     ].join('\n'));
-    const r = runVerb(['3', '--', NODE, parentFile, hbFile], { timeout: 20000 });
+    const r = runVerb(['3', '--', NODE, parentFile, hbFile], { timeout: RUN_WITH_TIMEOUT_C1_REAP_BACKSTOP_MS });
     assert.equal(r.status, 124, 'must report a timeout (124), not hang');
     assert.ok(fs.existsSync(hbFile), 'child heartbeat should exist');
     await sleep(300); // let any in-flight write settle after the SIGKILL
