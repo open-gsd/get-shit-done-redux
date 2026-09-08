@@ -152,6 +152,8 @@ describe('ci-test-scope.cjs', () => {
     const result = scopeFor(['tests/run-tests-harness.test.cjs']);
     assert.strictEqual(result.code_changed, true);
     assert.ok(result.targeted_tests.includes('tests/run-tests-harness.test.cjs'));
+    assert.strictEqual(result.full_matrix, true,
+      'expected full_matrix=true for a changed test file (rescinded #494 carve-out, see #4421)');
   });
 
   test('installer-sensitive changes request full matrix and install tests', () => {
@@ -277,33 +279,37 @@ describe('ci-test-scope.cjs', () => {
   });
 });
 
-describe('ci-test-scope superset invariant (#494, narrowed)', () => {
-  // Facet A (narrowed): a changed test file no longer triggers the full
-  // parity matrix — instead it must ALWAYS run on the scoped windows lane,
-  // so OS-specific breakage in the changed test (the #482 class) is still
-  // exercised pre-merge. Ubuntu 22/24 coverage comes via targeted_tests.
-  test('A1: a changed test file joins the windows scoped lane without full_matrix', () => {
+describe('ci-test-scope superset invariant (#494, rescinded by #4421)', () => {
+  // Facet A: #494 originally narrowed this so a changed test file joined only
+  // the scoped windows lane instead of triggering the full parity matrix.
+  // Rescinded per #4421 (2026-09-06 RCA: PR #4384 shipped a macOS-only
+  // regression invisible pre-merge because of exactly this carve-out) — a
+  // changed test file now ALWAYS sets full_matrix=true, in addition to still
+  // joining the scoped windows lane.
+  test('A1: a changed test file joins the windows scoped lane AND triggers full_matrix', () => {
     const result = scopeFor(['tests/perf-317-context-monitor-fs.test.cjs']);
-    assert.strictEqual(result.full_matrix, false,
-      `expected full_matrix=false for a tests/**-only change, got: ${JSON.stringify(result)}`);
+    assert.strictEqual(result.full_matrix, true,
+      `expected full_matrix=true for a tests/**-only change (rescinded #494 carve-out, see #4421), got: ${JSON.stringify(result)}`);
     assert.ok(result.targeted_tests.includes('tests/perf-317-context-monitor-fs.test.cjs'),
       `expected the changed test in targeted_tests, got: ${JSON.stringify(result.targeted_tests)}`);
     assert.ok(result.windows_tests.includes('tests/perf-317-context-monitor-fs.test.cjs'),
       `expected the changed test in windows_tests, got: ${JSON.stringify(result.windows_tests)}`);
   });
 
-  test('A2: a changed test file with no windows hint still joins the windows lane', () => {
+  test('A2: a changed test file with no windows hint still joins the windows lane and triggers full_matrix', () => {
     // commands.test.cjs matches none of the WINDOWS_HINTS substrings — the
     // unconditional changed-test → windows lane rule must include it anyway.
     const result = scopeFor(['tests/commands.test.cjs']);
-    assert.strictEqual(result.full_matrix, false);
+    assert.strictEqual(result.full_matrix, true,
+      `expected full_matrix=true (rescinded #494 carve-out, see #4421), got: ${JSON.stringify(result)}`);
     assert.ok(result.windows_tests.includes('tests/commands.test.cjs'),
       `expected hint-less changed test in windows_tests, got: ${JSON.stringify(result.windows_tests)}`);
   });
 
-  test('A3: a deleted/nonexistent test path falls back to the unit token, no full_matrix', () => {
+  test('A3: a deleted/nonexistent test path falls back to the unit token, still triggers full_matrix', () => {
     const result = scopeFor(['tests/some-new.test.cjs']);
-    assert.strictEqual(result.full_matrix, false);
+    assert.strictEqual(result.full_matrix, true,
+      `expected full_matrix=true even for a nonexistent tests/*.test.cjs path — the matrix decision is made on the changed-file name, not on-disk existence (rescinded #494 carve-out, see #4421), got: ${JSON.stringify(result)}`);
     // The nonexistent file is filtered by existingTests(); with nothing left,
     // the #408 fallback applies so the targeted lane still runs something.
     assert.deepStrictEqual(result.targeted_tests, ['unit']);
@@ -598,6 +604,49 @@ describe('test-full shard matrix parity (#1212)', () => {
       Array.isArray(fanIn.needs) && fanIn.needs.includes('test-full'),
       'required-tests must `needs: test-full` so all shard legs aggregate into the gate',
     );
+  });
+
+  test('workflow triggers on merge_group (#4241)', () => {
+    // GitHub's merge queue fires `merge_group`, not `pull_request` or `push`,
+    // for the temporary merge-group commit it creates. Without this trigger
+    // the whole workflow — and therefore `required-tests` — never schedules
+    // for a queued PR, silently stalling the merge queue on a check that
+    // never runs. `on.merge_group` has no required config, so its presence
+    // as a key (even with a `null`/empty value) is what matters here.
+    const text = fs.readFileSync(path.join(WORKFLOWS_DIR, 'test.yml'), 'utf8');
+    const doc = yaml.load(text);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(doc.on, 'merge_group'),
+      'test.yml must trigger `on: merge_group` so required-tests schedules for merge-queue commits',
+    );
+  });
+
+  test('every AUDIT_BASELINE_REF pin covers merge_group, not just pull_request/push (#4241)', () => {
+    // scripts/npm-audit-baseline.cjs's resolveBaselineRef() documents its
+    // origin/next live-tip fallback as UNREACHABLE from CI because
+    // AUDIT_BASELINE_REF is "always set by test.yml". A merge_group event
+    // carries neither pull_request nor push context, so a ternary that only
+    // branches on those two silently falls through to '' for a merge-queue
+    // run -- reopening the exact origin/next-can-advance-mid-run race #4196
+    // fixed, but only for merge_group. Every job that sets AUDIT_BASELINE_REF
+    // must also branch on merge_group, using merge_group.base_sha (the base
+    // tip the temporary merge-group commit was built against).
+    const text = fs.readFileSync(path.join(WORKFLOWS_DIR, 'test.yml'), 'utf8');
+    const doc = yaml.load(text);
+
+    const jobsUnderTest = Object.entries(doc.jobs).filter(
+      ([, job]) => job.env && typeof job.env.AUDIT_BASELINE_REF === 'string',
+    );
+    assert.ok(jobsUnderTest.length >= 3, `expected at least 3 jobs to pin AUDIT_BASELINE_REF, got ${jobsUnderTest.length}`);
+
+    for (const [name, job] of jobsUnderTest) {
+      const expr = job.env.AUDIT_BASELINE_REF;
+      assert.ok(
+        expr.includes("github.event_name == 'merge_group'") && expr.includes('github.event.merge_group.base_sha'),
+        `job ${name}: AUDIT_BASELINE_REF must branch on merge_group using ` +
+        `github.event.merge_group.base_sha, got: ${expr}`,
+      );
+    }
   });
 });
 

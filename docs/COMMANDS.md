@@ -270,7 +270,7 @@ Cross-AI plan convergence loop — replan with review feedback until no HIGH con
 | `--all` | No | Run every configured reviewer. Lanes are dispatched **sequentially by default**; set `review.parallel_lanes` to `true` to dispatch them concurrently within a single review pass |
 | `--max-cycles N` | No | Override cycle cap (default 3) |
 
-**Exit behavior:** Loop exits when both `current_high` and `current_actionable` hit zero. Stall detection warns when the total unresolved review count is not decreasing across cycles. Escalation gate asks the user to proceed or review manually when `--max-cycles` is hit with HIGH or actionable non-HIGH concerns still open.
+**Exit behavior:** Loop exits when `current_high` and `current_actionable` hit zero; open `## Plan-Revision Conflicts` entries in REVIEWS.md must also be zero. Stall detection warns when the total unresolved review count is not decreasing across cycles. At `--max-cycles`, the escalation gate offers proceed-or-review-manually for HIGH or actionable non-HIGH concerns, but only manual review when a plan-revision conflict is still open — "Proceed anyway" is never offered over an unresolved conflict.
 
 **Consensus gate (2+ reviewers only).** When two or more reviewers actually run in a cycle, a HIGH raised by exactly one of them is weighed by what the claim asserts before it counts toward `current_high`:
 
@@ -998,6 +998,31 @@ Granular flags are composable: `--discuss --research --validate` is equivalent t
 /gsd-quick resume my-task-slug      # Resume a quick task
 ```
 
+### `/gsd-quick-batch`
+
+Batch several `/gsd-quick`-shaped tasks together — one coordinator plans, dispatches, and merges them as one run (#3676, epic #3344, ADR-1239 "Quick-batch binding"). See [Batch quick tasks](how-to/batch-quick-tasks.md) for a walkthrough.
+
+| Argument | Description |
+|----------|-------------|
+| Inline task list | A bulleted or numbered list, ≥2 items, one per line |
+| `--file <path>` | Read the task list from a file instead of inline text |
+
+| Flag | Description |
+|------|-------------|
+| `--jobs auto\|N` | `auto` (default) uses the negotiated dispatch capacity as-is; `N` caps effective concurrency at `min(task count, N, capacity)` |
+| `--validate` | Per-item plan-checker loop (max 2 iterations) + post-merge verification |
+| `--research` | Per-item researcher dispatched before planning |
+| `--resume <batch-id>` | Skip task-list parsing and batch creation; dispatch only the batch's still-eligible items |
+
+**Not supported in v1:** `--discuss` and `--full` are rejected with a usage error before any dispatch — run `/gsd-quick --discuss`/`--full` per item instead.
+
+```bash
+/gsd-quick-batch "- fix the login timeout\n- add the retry banner"   # inline list
+/gsd-quick-batch --file .planning/my-tasks.md                          # from a file
+/gsd-quick-batch --jobs 3 --validate "- item one\n- item two\n- item three"
+/gsd-quick-batch --resume 260101-abc                                    # resume an interrupted batch
+```
+
 ### `/gsd-autonomous`
 
 Run all remaining phases autonomously.
@@ -1704,10 +1729,13 @@ Review source files changed during a phase for bugs, security vulnerabilities, a
 | `--fix` | No | Auto-fix issues after review — reads REVIEW.md, spawns fixer agent, commits each fix atomically |
 | `--fix --all` | No | Include Info findings in fix scope (default: Critical + Warning only) |
 | `--fix --auto` | No | Fix + re-review iteration loop, capped at 3 iterations |
+| *(reviewer-lane flag)* | No | Any flag `gsd_run review-lane flags` reports for the installed roster (e.g. `--codex`, `--agy`) — see below |
 
 **Prerequisites:** Phase has been executed and has SUMMARY.md or git history
 **Produces:** `{phase}-REVIEW.md` with severity-classified findings; `{phase}-REVIEW-FIX.md` when `--fix` is used
-**Spawns:** `gsd-code-reviewer` agent; `gsd-code-fixer` agent (with `--fix`)
+**Spawns:** `gsd-code-reviewer` agent; `gsd-code-fixer` agent (with `--fix`); requested external reviewer lane(s) (#4209 — see below)
+
+**Optional external reviewer lanes (#4209):** Pass one or more reviewer-lane flags — any flag the roster declares (run `gsd_run review-lane flags` to list them for your installation, e.g. `--codex`, `--agy`) — to have that lane independently review the same already-resolved file scope alongside the internal `gsd-code-reviewer` agent. The prompt sent to each lane carries only the repository root, canonical file paths, review depth, and base SHA — never source file contents — under four fixed prohibitions: no source mutation, no test execution, no background processes, no polling. An external lane's findings are corroborating evidence only: `gsd-code-reviewer` independently re-verifies every claim against the actual source before writing it to `REVIEW.md`, so there is exactly one `REVIEW.md` schema regardless of how many lanes ran. An explicitly requested lane that is unavailable or fails is reported as a warning — it never falls back to a raw provider CLI call. Omitting every reviewer-lane flag (the default) reviews with only the internal agent, unchanged from before #4209. This is distinct from `/gsd-review`, which reviews `PLAN.md` files before execution — see [Set up cross-AI review](how-to/set-up-cross-ai-review.md).
 
 **Optional structural pre-pass:** Set `code_quality.fallow.enabled` to `true` to run fallow before the agent review. GSD writes `{phase}/FALLOW.json` and embeds a `Structural Findings (fallow)` section in `REVIEW.md`. Configure scope and profile with `code_quality.fallow.scope` and `code_quality.fallow.profile`.
 
@@ -1718,6 +1746,7 @@ Review source files changed during a phase for bugs, security vulnerabilities, a
 /gsd-code-review 3 --fix                    # Review then fix Critical + Warning findings
 /gsd-code-review 3 --fix --all             # Review then fix all findings including Info
 /gsd-code-review 3 --fix --auto            # Review, fix, and re-review until clean (max 3 iterations)
+/gsd-code-review 3 --codex                 # Corroborate the internal review with the codex reviewer lane
 ```
 
 ---
@@ -1912,6 +1941,8 @@ Capture ideas, tasks, notes, and seeds to their appropriate destination. Default
 **Seeds:** Preserve full WHY, WHEN to surface, and breadcrumbs — consumed by `/gsd-new-milestone`. Audit parked seeds anytime with `--list-seeds` (optionally `--list-seeds dormant`).
 
 **Produces:** `.planning/todos/` (default), note files (--note), ROADMAP.md backlog section (--backlog), `.planning/seeds/SEED-NNN-slug.md` (--seed)
+
+**STATE.md rendering:** each capture (or `--list` action that changes the pending count) refreshes STATE.md's "### Pending Todos" section to one bullet per pending todo, each capped at 240 characters — `- [date] [area] title — [todo file](path) — Needs ...`. The todo-file link is repo-relative (`.planning/todos/pending/...`), so the cap is independent of where the repo is checked out — a long absolute path never consumes the budget or drops the "Needs ..." clause. A todo with no clear next step omits the "Needs ..." clause rather than the bullet. Refresh is fail-safe: a failed or malformed lookup leaves the existing section untouched rather than clearing it.
 
 ```bash
 /gsd-capture "Consider adding dark mode support"   # Add todo
@@ -2323,6 +2354,14 @@ Enable with:
 ```json
 { "hooks": { "community": true } }
 ```
+
+`gsd-validate-commit.sh` accepts the 10 Conventional Commits types (`feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`) by default. Extend the list with `hooks.commit_types` — an array of extra type names, added to (never replacing) the built-in ten:
+
+```json
+{ "hooks": { "community": true, "commit_types": ["enhance", "enh", "revert"] } }
+```
+
+Each entry must match `^[a-z][a-z0-9-]*$` (lowercase letters, digits, hyphens); non-conforming or non-string entries are dropped rather than blocking the hook.
 
 ---
 

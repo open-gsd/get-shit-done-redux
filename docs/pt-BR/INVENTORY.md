@@ -302,7 +302,7 @@ Registro completo em `gsd-core/references/*.md`. Referências são documentos de
 | `scout-codebase.md` | Tabela de seleção de tipo de fase → mapa de base de código para a etapa de scout da discuss-phase (extraída via a divisão progressiva discuss-phase/modes, #717). |
 | `revision-loop.md` | Padrões de iteração de revisão de plano. |
 | `universal-anti-patterns.md` | Antipadrões universais a detectar e evitar. |
-| `worktree-path-safety.md` | Suite de guarda do worktree: asserção de HEAD, sentinela de drift de cwd (etapa 0a, #3097) e guarda de caminho absoluto (etapa 0b, #3099) — carregados nos prompts de spawn do executor via `<execution_context>`. |
+| `worktree-path-safety.md` | Guardas de caminho do executor: pin de raiz fornecida (etapa 0p, #4254 — todo modo; o execute-phase.md binda a raiz validada pelo orquestrador em dispatches sequenciais como `<project_root_pin>`), sentinela de drift de cwd (etapa 0a, #3097) e guarda de caminho absoluto (etapa 0b, #3099) — carregados nos prompts de spawn do executor via `<execution_context>`. |
 | `artifact-types.md` | Definições de tipos de artefato de planejamento. |
 | `phase-argument-parsing.md` | Convenções de análise de argumentos de fase. |
 | `decimal-phase-calculation.md` | Regras de numeração de subfases decimais. |
@@ -476,6 +476,7 @@ Listagem completa: `hooks/`.
 | `gsd-worktree-path-guard.js` | `PreToolUse` | Bloqueia rigorosamente Edit/Write/MultiEdit com caminhos absolutos fora da raiz do worktree (PR #579, #260) |
 | `gsd-agent-isolation-guard.js` | `PreToolUse` | Bloqueia rigorosamente um dispatch `Agent()` de executor que não tenha o parâmetro de isolamento do harness quando o isolamento de dispatch resolvido do projeto é `harness-worktree` (#3045) |
 | `gsd-write-guard.js` | `PreToolUse` | Bloqueia rigorosamente um `Write` de arquivo inteiro que encolhe catastroficamente um artefato curado de `.planning/` (ROADMAP.md, roadmaps de milestone, STATE.md); override via o sentinela de uso único `.planning/.gsd-allow-shrink` (passos de workflow) ou `GSD_ALLOW_PLANNING_SHRINK=1` (interativo) (#2255, correção 3 de #973) |
+| `gsd-secret-read-guard.js` | `PreToolUse` | Bloqueia rigorosamente leituras de `.env`, `.env.<suffix>` (exceto templates como `.env.example`) e `.secrets` via Read / Grep / Bash; substitui as regras deny `Read(.env*)` que o instalador escrevia (#4221) |
 | `gsd-session-state.sh` | `SessionStart` | Rastreamento de estado de sessão para runtimes baseados em shell |
 | `gsd-validate-commit.sh` | `PreToolUse` | Validação de commit para aplicação de conventional-commit |
 | `gsd-phase-boundary.sh` | `PostToolUse` | Detecção de limite de fase para transições de workflow |

@@ -30,6 +30,9 @@
  *   list-todos [area]                  Count and enumerate pending todos
  *   list-seeds [status]                List captured seeds (optional status filter)
  *   verify-path-exists <path>          Check file/directory existence
+ *   quick-tasks-migrate                Migrate STATE.md's "Quick Tasks Completed"
+ *                                      table onto the canonical schema (#3730).
+ *                                      No-op when absent or already canonical.
  *   quick-tasks-append --task <text>   Append a row to STATE.md's "Quick Tasks
  *                                      Completed" table (schema-backed via
  *                                      markdown-table.cjs; #2133/ADR-2143).
@@ -334,6 +337,11 @@ const { routePhaseCommand } = require('./lib/phase-command-router.cjs');
 const { routePhasesCommand } = require('./lib/phases-command-router.cjs');
 const { routeValidateCommand } = require('./lib/validate-command-router.cjs');
 const { routeRoadmapCommand } = require('./lib/roadmap-command-router.cjs');
+// #3676 (Phase 4, epic #3344): quick-batch is a first-party, always-on
+// command family (like `/gsd:quick`) — wired directly into
+// HOST_COMMAND_ROUTERS, not the opt-in capability-registry/`activationKey`
+// path graphify uses.
+const { routeQuickBatchCommand } = require('./lib/quick-batch-command-router.cjs');
 const { routeCapabilityCommand } = require('./lib/capability-command-router.cjs');
 const { routeAgentCommand, AGENT_FAILURE_CLASSES } = require('./lib/agent-command-router.cjs');
 const smartEntryMod = require('./lib/smart-entry.cjs');
@@ -776,7 +784,7 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
       error,
       output: output,
     });
-    if (!handled) config.cmdConfigSet(cwd, args[1], args[2], raw);
+    if (!handled) config.cmdConfigSet(cwd, args[1], args[2], raw, { dryRun: args.includes('--dry-run') });
   }
 
   function routeConfigSetModelProfile({ args, cwd, raw }) {
@@ -1177,6 +1185,34 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
     commands.cmdVerifyPathExists(cwd, args[1], raw);
   }
 
+  function routeQuickTasksMigrate({ cwd, raw }) {
+    // #3730 (option b, maintainer decision 2026-09-02): the supported repair
+    // path for a legacy Quick Tasks table GSD's own pre-registry prose created.
+    // Silent no-op when the section is absent or the table is already canonical
+    // — the quick/fast workflows call this before their first append, so the
+    // migration runs exactly once, on the first quick run, unprompted otherwise.
+    const statePath = path.join(cwd, '.planning', 'STATE.md');
+    if (!fs.existsSync(statePath)) {
+      output({ ok: true, migrated: false, reason: `STATE.md not found at ${statePath}` }, raw);
+      return;
+    }
+    const { migrateQuickTasksTable } = require('./lib/markdown-table.cjs');
+    let report;
+    state.readModifyWriteStateMd(statePath, (content) => {
+      const result = migrateQuickTasksTable(content);
+      if (!result.ok) {
+        throw new ExitError(1, `⚠ quick-tasks-migrate: ${result.reason}`);
+      }
+      report = result.value;
+      return result.value.content;
+    }, cwd, { resync: false });
+    output({
+      ok: true,
+      migrated: report.migrated,
+      ...(report.migrated ? { from: report.from, rows: report.rows } : {}),
+    }, raw);
+  }
+
   function routeQuickTasksAppend({ args, cwd, raw, error }) {
     // #2133 / ADR-2143 §3,§7: schema-backed replacement for fast.md's inline
           // `awk NF-2` Quick Tasks column arithmetic. Row construction is delegated
@@ -1286,7 +1322,8 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
     const fsx = require('node:fs');
     const os = require('node:os');
     const { REVIEWER_LANES, mergeReviewerLanes } = require('./lib/review-lane-descriptor.cjs');
-    const { resolveLanePlan } = require('./lib/review-lane-invocation.cjs');
+    const { resolveLanePlan, resolveLaneEffort, resolveLaneBudget } = require('./lib/review-lane-invocation.cjs');
+    const modelCatalog = require('./lib/model-catalog.cjs');
     const runner = require('./lib/review-lane-runner.cjs');
     const cfgLoader = require('./lib/config-loader.cjs');
     const capabilityLoader = require('./lib/capability-loader.cjs');
@@ -1298,18 +1335,20 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
     const sub = args[1];
     // Fail fast on an unrecognized subcommand. Without this check, `sub` fell through
     // to the `sub !== 'invoke'` usage-error branch far below (after loading the
-    // capability registry AND building a per-lane plan for every lane — which itself
-    // spawns one child `query resolve-execution` process per lane via `effortFor`,
-    // up to 12 subprocess spawns for the default lane set) before ever reporting the
-    // error. That made an invalid subcommand slow instead of instant, and under bench
-    // load (many sequential node spawns) `review-lane bogus` could exceed a caller's
-    // spawn timeout and be killed before writing anything to stderr — the CI-observed
-    // failure was empty stdout AND stderr, not the expected usage message (#3148).
+    // capability registry AND building a per-lane plan for every lane) before ever
+    // reporting the error. That made an invalid subcommand slow instead of instant, and
+    // under bench load `review-lane bogus` could exceed a caller's spawn timeout and be
+    // killed before writing anything to stderr — the CI-observed failure was empty stdout
+    // AND stderr, not the expected usage message (#3148). The plan path used to be far
+    // heavier still: it spawned one child `query resolve-execution` process PER LANE to
+    // fetch effort, up to 12 subprocess spawns for the default set. #4255 resolves effort
+    // in-process from the lane's own declaration, so that cost is gone; the fail-fast
+    // check stays because building 12 plans is still work an unrecognized sub should skip.
     // `plan`/`invoke` are the only subs that need the expensive plan-building path
     // below; `sections`/`flags` return earlier still. Anything else errors here, before
     // any of that work starts.
-    if (!['plan', 'invoke', 'sections', 'flags'].includes(sub)) {
-      error("Usage: review-lane <plan|invoke|sections|flags> [--selected a,b] [--run-dir D] [--repo-root R]");
+    if (!['plan', 'invoke', 'sections', 'flags', 'dispatch-step', 'explicit-from-argv'].includes(sub)) {
+      error("Usage: review-lane <plan|invoke|sections|flags|dispatch-step|explicit-from-argv> [--selected a,b] [--run-dir D] [--repo-root R]");
       return;
     }
     const runDir = flag('--run-dir') || '.';
@@ -1331,176 +1370,11 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
       return cur;
     };
 
-    const selected = (flag('--selected') || '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-    // ADR-2782 D8 (#2927): the lane map is first-party ∪ INSTALLED overlay
-    // `reviewer` bodies, first-party winning on slug collision. Before this merge
-    // the map was built from the frozen REVIEWER_LANES array alone, so an installed,
-    // consented third-party reviewer lane was roster-visible (deriveReviewerSlugs)
-    // and disclosed at install (collectReviewerLaneSurfaces) but never selectable,
-    // plannable, or invocable — `sections`/`flags`/`plan`/`invoke` all consumed this
-    // one map. The overlay body is field-identical to a ReviewerLane (ADR-2782 D1,
-    // "no translation layer"), so `mergeReviewerLanes` is a pure merge, not a
-    // projection. loadRegistry is TOTAL and never throws on a malformed overlay
-    // (it skips the cap with a warning), and mergeReviewerLanes is total in turn,
-    // so a bad third-party manifest cannot take the first-party lanes down with it.
-    // `includeInstalled` is what merges project + global overlay caps into the
-    // registry; without it the base is first-party-only and this is a no-op.
-    let mergedLanes = REVIEWER_LANES;
-    try {
-      const registry = capabilityLoader.loadRegistry({ includeInstalled: true, cwd });
-      mergedLanes = mergeReviewerLanes(REVIEWER_LANES, registry);
-    } catch {
-      // A registry load failure must never block first-party review. Degrade to the
-      // static set — identical to pre-fix behavior — rather than crashing review-lane.
-      mergedLanes = REVIEWER_LANES;
-    }
-    const laneBySlug = new Map(mergedLanes.map((l) => [l.slug, l]));
-    const chosen = selected.length ? selected : mergedLanes.map((l) => l.slug);
-
-    if (sub === 'sections') {
-      const rows = chosen
-        .map((s) => laneBySlug.get(s))
-        .filter(Boolean)
-        .map((l) => `${l.slug}\t${l.reviewsSection}`);
-      process.stdout.write(rows.join('\n') + (rows.length ? '\n' : ''));
-      return;
-    }
-
-    // Phase 6 (#2800, closes #2272). The reviewer-flag lists in
-    // plan-review-convergence.md, autonomous.md and next.md were hand-enumerated in three places
-    // and had drifted apart: `--coderabbit` was missing from all three and had been silently
-    // falling back to `--codex`. One declared source, three consumers.
-    //
-    // Emits FLAGS, not slugs: `antigravity` declares two (`--antigravity`, `--agy`), so the flag
-    // count (13) is deliberately not the lane count (12). Same output contract as `sections` —
-    // one token per line, descriptor order, and no trailing newline on an empty result.
-    if (sub === 'flags') {
-      const rows = chosen
-        .map((s) => laneBySlug.get(s))
-        .filter(Boolean)
-        .flatMap((l) => (Array.isArray(l.flags) ? l.flags : []))
-        // Shape-filtered, not merely non-empty. All three consumers read this through an
-        // UNQUOTED `$(gsd_run review-lane flags)` so the newline-separated output word-splits
-        // into loop items — which is the intent. Phase 2 (#2795) admits third-party overlay
-        // lanes into this same descriptor, so an overlay declaring `--foo bar` would inject a
-        // second loop item, and one declaring a glob character would expand against the cwd.
-        // Emitting only well-formed flags keeps that from reaching the shell at all.
-        .filter((f) => typeof f === 'string' && /^--[a-z0-9][a-z0-9-]*$/.test(f));
-      process.stdout.write(rows.join('\n') + (rows.length ? '\n' : ''));
-      return;
-    }
-
-    // Effort argv is resolved per lane by the host's own execution policy, through the SAME
-    // `resolve-execution` surface the bash legs used (`--host <slug>`), so the host's negotiated
-    // effortSurface still decides whether an argument is emitted and the catalog still owns the
-    // syntax (ADR-1239 #2481, ADR-443's escalation ladder). `cmdResolveExecution` writes to
-    // stdout and exits, so it cannot be called in-process for a value — this spawns the same
-    // bounded query the legs did, once per selected lane. A lane whose slug is not a known host
-    // resolves to no effort argument at all.
-    //
-    // NOT `--raw` and NOT `--pick` (#2295). `--raw` prints only the resolved EFFORT ('low') with
-    // no host-specific rendering at all. `--pick effort_argv_string` used to be the answer — the
-    // rendered array re-joined into a string ('-c model_reasoning_effort=low') — but the caller
-    // then had to `.split(/\s+/)` that string back apart to get an argv array, and re-splitting a
-    // string the callee just joined is a lossy round trip: any argv element that legitimately
-    // contains a space would come back split into two argv elements, corrupting the very argv it
-    // was rendered to preserve. Reading the UNPICKED object instead gives both `effort_argv` (a
-    // real string array, used verbatim, no re-splitting) and `effort_argv_value` (the bare level,
-    // #2295's `plan.effort`) from the one spawn.
-    const EMPTY_EFFORT = { argv: [], value: null };
-    const effortFor = (slug) => {
-      try {
-        const r = cp.spawnSync(
-          process.execPath,
-          [__filename, 'query', 'resolve-execution', 'gsd-plan-checker', '--host', slug],
-          { cwd, encoding: 'utf8', timeout: 15000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 },
-        );
-        if (r.status !== 0) return EMPTY_EFFORT;
-        let parsed;
-        try {
-          parsed = JSON.parse(String(r.stdout || ''));
-        } catch { return EMPTY_EFFORT; }
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return EMPTY_EFFORT;
-        const argv = Array.isArray(parsed.effort_argv)
-          ? parsed.effort_argv.filter((a) => typeof a === 'string' && a !== '')
-          : [];
-        const value = typeof parsed.effort_argv_value === 'string' && parsed.effort_argv_value
-          ? parsed.effort_argv_value
-          : null;
-        return { argv, value };
-      } catch { return EMPTY_EFFORT; }
-    };
-
-    /**
-     * Per-lane prompt budget (#2797 semantics, preserved exactly).
-     *
-     * `-1` is the UNSET sentinel and falls back to the central `review.max_prompt_tokens`, because
-     * `0` is a legitimate value meaning "do not trim this lane". Treating 0 as unset would silently
-     * switch a user who deliberately disabled trimming onto the global budget.
-     *
-     * Only the budget VALUE is resolved here. Assembly and trimming stay in `prompt-budget`, which
-     * already owns that machinery and is already tested; the workflow calls it and hands the
-     * trimmed file back via `--prompt-file`. Re-implementing it inside the runner would fork a
-     * tested surface for no gain.
-     */
-    const budgetFor = (lane) => {
-      if (!lane.promptBudgetKey) return null;
-      const per = configGet(lane.promptBudgetKey);
-      const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-      if (isNum(per) && per !== -1) return per;
-      const global = configGet('review.max_prompt_tokens');
-      return isNum(global) ? global : null;
-    };
-
-    const plans = chosen.map((slug) => {
-      const lane = laneBySlug.get(slug);
-      if (!lane) return { slug, ok: false, reason: 'malformed_lane', detail: 'no such declared lane' };
-      // Per-lane isolation. resolveLanePlan is documented total, but this map is the seam where a
-      // single throw would take down EVERY selected lane rather than the one that is malformed —
-      // and "a cross-AI review that silently drops a lane" is the failure this epic exists to end,
-      // so losing all of them to one bad manifest is strictly worse. Belt and braces on purpose.
-      let r;
-      try {
-        const effort = effortFor(slug);
-        r = resolveLanePlan({ lane, configGet, runDir, repoRoot, effortArgs: effort.argv, effortValue: effort.value });
-      } catch (e) {
-        return { slug, ok: false, reason: 'malformed_lane', detail: `resolver threw: ${e && e.message ? e.message : String(e)}` };
-      }
-      return r.ok
-        ? {
-            slug,
-            ok: true,
-            section: lane.reviewsSection,
-            transport: r.plan.transport,
-            promptBudget: budgetFor(lane),
-            promptPath: r.plan.transport === 'spawn' ? r.plan.stdin : r.plan.promptPath,
-            plan: r.plan,
-          }
-        : { slug, ok: false, reason: r.reason, detail: r.detail };
-    });
-
-    if (sub === 'plan') {
-      output(plans.map(({ plan, ...rest }) => rest), raw);
-      return;
-    }
-
-    if (sub !== 'invoke') {
-      error("Usage: review-lane <plan|invoke|sections|flags> [--selected a,b] [--run-dir D] [--repo-root R]");
-      return;
-    }
-
-    const slug = flag('--slug');
-    if (!slug) { error('review-lane invoke requires --slug'); return; }
-    const entry = plans.find((p) => p.slug === slug);
-    if (!entry || !entry.ok) {
-      output({ slug, ok: false, reason: entry ? entry.reason : 'malformed_lane', detail: entry ? entry.detail : 'unknown lane' }, raw);
-      return;
-    }
-
-    // EVERY spawn bounded — `DEFECT.UNBOUNDED-SUBPROCESS` (CONTEXT.md:772). A frozen sync spawn
-    // cannot be interrupted by --test-force-exit and hangs a whole CI chunk to its 10-minute kill.
-    const deps = {
+    // Shared by `invoke` and `dispatch-step` (#4209) — both need the SAME bounded
+    // spawn/http/fs seam `runLane` requires (RunnerDeps). Factored out so the two
+    // callers can never disagree about how a lane's binary is resolved or how its
+    // process is bounded; a fix to either reaches both.
+    const buildLaneRunnerDeps = () => ({
       spawn: (binary, argv, opts) => {
         // #3086: on Windows, reviewer CLIs (gemini, codex, etc.) are installed
         // as .cmd shims. spawnSync with a bare name + shell:false fails with
@@ -1574,7 +1448,289 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
       configGet,
       homeDir: os.homedir(),
       warn: (m) => process.stderr.write(`${m}\n`),
+    });
+
+    const selected = (flag('--selected') || '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    // ADR-2782 D8 (#2927): the lane map is first-party ∪ INSTALLED overlay
+    // `reviewer` bodies, first-party winning on slug collision. Before this merge
+    // the map was built from the frozen REVIEWER_LANES array alone, so an installed,
+    // consented third-party reviewer lane was roster-visible (deriveReviewerSlugs)
+    // and disclosed at install (collectReviewerLaneSurfaces) but never selectable,
+    // plannable, or invocable — `sections`/`flags`/`plan`/`invoke` all consumed this
+    // one map. The overlay body is field-identical to a ReviewerLane (ADR-2782 D1,
+    // "no translation layer"), so `mergeReviewerLanes` is a pure merge, not a
+    // projection. loadRegistry is TOTAL and never throws on a malformed overlay
+    // (it skips the cap with a warning), and mergeReviewerLanes is total in turn,
+    // so a bad third-party manifest cannot take the first-party lanes down with it.
+    // `includeInstalled` is what merges project + global overlay caps into the
+    // registry; without it the base is first-party-only and this is a no-op.
+    let mergedLanes = REVIEWER_LANES;
+    try {
+      const registry = capabilityLoader.loadRegistry({ includeInstalled: true, cwd });
+      mergedLanes = mergeReviewerLanes(REVIEWER_LANES, registry);
+    } catch {
+      // A registry load failure must never block first-party review. Degrade to the
+      // static set — identical to pre-fix behavior — rather than crashing review-lane.
+      mergedLanes = REVIEWER_LANES;
+    }
+    const laneBySlug = new Map(mergedLanes.map((l) => [l.slug, l]));
+    const chosen = selected.length ? selected : mergedLanes.map((l) => l.slug);
+
+    // #4209 RQ-02: match a workflow's raw CLI argv (e.g. `--codex`, `--agy`) against the SAME
+    // merged first-party+installed-overlay roster this whole function already built above,
+    // instead of a workflow re-deriving its own copy of `loadRegistry`/`mergeReviewerLanes` via
+    // an inline `node -e` (a rename-only duplicate of the block starting at `mergedLanes =
+    // REVIEWER_LANES` above — `code-review-flags.cjs`'s own header states "this is the canonical
+    // flag-parsing surface — do not replicate inline bash parsing" for exactly this reason).
+    // Everything after `--` is a candidate flag; matched lane slugs print sorted and comma-joined.
+    if (sub === 'explicit-from-argv') {
+      const sepIdx = args.indexOf('--');
+      const candidateArgs = new Set(sepIdx === -1 ? [] : args.slice(sepIdx + 1));
+      const slugs = [];
+      for (const lane of mergedLanes) {
+        const flags = Array.isArray(lane.flags) ? lane.flags : [];
+        if (flags.some((f) => candidateArgs.has(f))) slugs.push(lane.slug);
+      }
+      process.stdout.write([...new Set(slugs)].sort().join(','));
+      return;
+    }
+
+    if (sub === 'sections') {
+      const rows = chosen
+        .map((s) => laneBySlug.get(s))
+        .filter(Boolean)
+        .map((l) => `${l.slug}\t${l.reviewsSection}`);
+      process.stdout.write(rows.join('\n') + (rows.length ? '\n' : ''));
+      return;
+    }
+
+    // Phase 6 (#2800, closes #2272). The reviewer-flag lists in
+    // plan-review-convergence.md, autonomous.md and next.md were hand-enumerated in three places
+    // and had drifted apart: `--coderabbit` was missing from all three and had been silently
+    // falling back to `--codex`. One declared source, three consumers.
+    //
+    // Emits FLAGS, not slugs: `antigravity` declares two (`--antigravity`, `--agy`), so the flag
+    // count (13) is deliberately not the lane count (12). Same output contract as `sections` —
+    // one token per line, descriptor order, and no trailing newline on an empty result.
+    if (sub === 'flags') {
+      const rows = chosen
+        .map((s) => laneBySlug.get(s))
+        .filter(Boolean)
+        .flatMap((l) => (Array.isArray(l.flags) ? l.flags : []))
+        // Shape-filtered, not merely non-empty. All three consumers read this through an
+        // UNQUOTED `$(gsd_run review-lane flags)` so the newline-separated output word-splits
+        // into loop items — which is the intent. Phase 2 (#2795) admits third-party overlay
+        // lanes into this same descriptor, so an overlay declaring `--foo bar` would inject a
+        // second loop item, and one declaring a glob character would expand against the cwd.
+        // Emitting only well-formed flags keeps that from reaching the shell at all.
+        .filter((f) => typeof f === 'string' && /^--[a-z0-9][a-z0-9-]*$/.test(f));
+      process.stdout.write(rows.join('\n') + (rows.length ? '\n' : ''));
+      return;
+    }
+
+    // Effort argv is resolved from the LANE's own review configuration (#4255), then rendered
+    // through the host's negotiated `effortSurface` so ADR-1239/#2481's trust-boundary invariant
+    // still decides whether an argument is emitted at all and the catalog still owns the syntax.
+    //
+    // What this replaced: a `query resolve-execution gsd-plan-checker --host <slug>` spawn per
+    // lane. The agent id was a hardcoded literal, so the `--host` argument chose only the argv
+    // RENDERING while the LEVEL always came from the installed plan-checker's frontmatter — `low`
+    // under every shipped model profile. Every prompt-fed reviewer therefore ran at a fast
+    // structural verifier's effort, and because the rendered argument is a CLI config override it
+    // silently beat the effort the operator had configured for that CLI. At `low` a large
+    // source-grounded prompt makes a model end its turn with no final message, so the lane came
+    // back empty and the stub read as a crash.
+    //
+    // `resolveLaneEffort` is pure and lives beside the other lane resolution; this closure only
+    // injects the rendering, which needs the registry and the catalog.
+    const renderLaneEffort = (host, level) => {
+      try {
+        const surface = commands.effortSurfaceForHost(cwd, host);
+        const r = modelCatalog.renderEffortArgv(host, level, surface);
+        return { argv: Array.isArray(r && r.argv) ? r.argv : [], value: (r && r.value) || null };
+      } catch { return { argv: [], value: null }; }
     };
+    const effortFor = (lane) => resolveLaneEffort(lane, configGet, renderLaneEffort);
+
+    // Per-lane prompt budget: `resolveLaneBudget` (review-lane-invocation.cjs) owns the #2797
+    // resolution semantics (shared with src/reviewer-step-dispatch.cts, #4209 R3 — was two
+    // verbatim copies). Only the budget VALUE is resolved here; assembly/trimming stay in
+    // `prompt-budget`, which the workflow calls, handing the trimmed file back via `--prompt-file`.
+    const budgetFor = (lane) => resolveLaneBudget(lane, configGet);
+
+    // #4209 (ADR-2782 seam) — the ONE interpreter route for a step that declared
+    // `supportsReviewerLanes: true`. Wires `dispatchReviewerLanes` (src/reviewer-step-dispatch.cts)
+    // to the SAME plan/invoke machinery `plan`/`invoke` above use, so a step opting in gets exact
+    // parity with hand-driven `review-lane plan|invoke` rather than a second implementation.
+    // Canonical file paths travel on stdin, never argv (see gsd-core/workflows/code-review.md's
+    // "Files travel on stdin" note) — a 50+-file scope with long paths approaches the Windows
+    // execFileSync argv ceiling, and stdin has no such bound.
+    //
+    // Returns EARLY, like `sections`/`flags` above, rather than falling into the `plans` builder
+    // below: that builder spawns one `effortFor` child process PER LANE IN THE ROSTER (chosen
+    // defaults to every merged lane when nothing is selected), which would burn ~12 wasted spawns
+    // on every dispatch-step call whether or not anything was actually selected. `dispatchReviewerLanes`
+    // builds its own per-SELECTED-lane plan below instead, bounded by the (typically 0-3) explicitly
+    // requested slugs, not the whole roster.
+    if (sub === 'dispatch-step') {
+      const { dispatchReviewerLanes } = require('./lib/reviewer-step-dispatch.cjs');
+      const explicitFlags = (flag('--explicit') || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const depth = flag('--depth') || '';
+      const baseSha = flag('--base-sha') || '';
+      // #4209: this command IS the reusable capability/step-dispatch trait check — see
+      // gsd-core/references/loop-hook-dispatch.md for what supportsReviewerLanes means and why
+      // this is the one place it's resolved. Calls the SAME resolver `loop render-hooks` uses,
+      // `resolveActiveHooksForPoint`, directly in-process — no subprocess, no JSON re-parse, and
+      // no exposure to `io.cjs`'s `@file:` overflow protocol (which only applies to the
+      // rendered-string envelope this path never touches).
+      const capId = flag('--cap-id') || '';
+      const point = flag('--point') || '';
+      let trait = false;
+      if (capId && point) {
+        try {
+          const { resolveActiveHooksForPoint } = loopResolver;
+          const { activeHooks } = resolveActiveHooksForPoint(cwd, point);
+          trait = activeHooks.some((h) => h && h.capId === capId && h.supportsReviewerLanes === true);
+        } catch (e) {
+          process.stderr.write(`Warning: reviewer-lane trait resolution failed for --cap-id ${capId} --point ${point}: ${e && e.message ? e.message : String(e)} — treating as not enabled.\n`);
+          trait = false;
+        }
+      } else if (capId || point) {
+        // #4209 RQ-03: exactly one of the two was passed — a caller with NO capability-step
+        // context at all (neither flag) is the legitimate, silent no-op documented above, but a
+        // caller that named a capability without its point (or vice versa) is misconfigured, not
+        // opted out, and that must not look identical to a correct opt-out on the wire.
+        process.stderr.write(`Warning: --cap-id and --point must both be given to resolve the reviewer-lane trait (got --cap-id=${JSON.stringify(capId)} --point=${JSON.stringify(point)}) — treating as not enabled.\n`);
+      }
+      // No piped stdin (interactive TTY): fail closed to empty paths instead of blocking
+      // indefinitely on a TTY EOF the caller never sends.
+      let stdinPaths = '';
+      if (!process.stdin.isTTY) {
+        try { stdinPaths = fsx.readFileSync(0, 'utf8'); } catch { stdinPaths = ''; }
+      }
+      const paths = stdinPaths.split('\n').map((s) => s.trim()).filter(Boolean);
+
+      // Reuse the exact effort-aware, per-lane plan `plan` builds above (DISP-03: "planned
+      // through the existing `review-lane plan` interface") rather than the interpreter's
+      // simpler default plan callback, which does not resolve per-host effort.
+      const planFn = (lane, ctx) => {
+        const effort = effortFor(lane.slug);
+        return resolveLanePlan({
+          lane, configGet: ctx.configGet, runDir: ctx.runDir, repoRoot: ctx.repoRoot,
+          effortArgs: effort.argv, effortValue: effort.value,
+        });
+      };
+
+      const runnerDeps = buildLaneRunnerDeps();
+      const invokeFn = async (lane, plan) => {
+        let consentedHost;
+        if (plan.transport === 'openai-http') {
+          try {
+            const consent = require('./lib/capability-consent.cjs');
+            const projectRoot = require('./lib/project-root.cjs').consentProjectRoot(cwd);
+            const capId = String(lane.slug).replace(/_/g, '-');
+            consentedHost = consent.readConsentedReviewerHost({ projectRoot, id: capId });
+          } catch { consentedHost = undefined; }
+        }
+        // DISP-04/05: every selected lane is invoked through this SAME `runner.runLane` seam
+        // `invoke` uses, exactly once (the interpreter's own for-loop over `selection.selected`
+        // never revisits a slug).
+        return runner.runLane(plan, runnerDeps, { consentedHost, explicitlyRequested: true, repoRoot });
+      };
+
+      // `resolveReviewerSelection` only selects an explicit flag present in `detected`
+      // (ADR-2782 D4: absent-safe governs discovery, never explicit selection — a slug the
+      // roster does not declare is rejected here as an explicit-selection error). REAL
+      // host availability (is the CLI actually installed?) is a separate, already-owned
+      // check inside `runner.runLane`'s `probeLane` at invoke time below — duplicating a
+      // second `command -v` probe here would let the two disagree about what "available"
+      // means, which is the exact defect class `resolveSpawnBinary` was consolidated to
+      // prevent (#3275).
+      //
+      // GUARDED ON explicitFlags.length, not unconditional: `resolveReviewerSelection`'s
+      // precedence chain (explicit > --all > review.default_reviewers > all detected) ends,
+      // when none of the first three apply, in `selected = [...detected]` — the SAME
+      // "no flags means every detected reviewer" default `/gsd:review` intentionally uses.
+      // Source review's COMP-01 contract is the opposite: no reviewer-lane flag means inert,
+      // unchanged from before #4209. Passing a non-empty
+      // `detected` unconditionally would silently opt every dispatch-step call with no
+      // `--explicit` into planning+invoking the WHOLE roster via that fallback branch. An
+      // empty `detected` when nothing was asked for makes that fallback resolve to
+      // `[...[]]` = `[]`, so `dispatchReviewerLanes` hits its own `NO_LANES_SELECTED`
+      // early-return before any plan/invoke call — the same fast, inert no-op the caller
+      // gets from an absent `supportsReviewerLanes` trait.
+      const rosterSlugs = explicitFlags.length > 0 ? [...laneBySlug.keys()] : [];
+
+      const dispatchResult = await dispatchReviewerLanes(
+        {
+          trait,
+          selection: { explicitFlags, detected: rosterSlugs },
+          repoRoot,
+          paths,
+          depth,
+          baseSha,
+          runDir,
+        },
+        {
+          getLane: (slug) => laneBySlug.get(slug),
+          configGet,
+          plan: planFn,
+          invoke: invokeFn,
+        },
+      );
+      output(dispatchResult, raw);
+      return;
+    }
+
+    const plans = chosen.map((slug) => {
+      const lane = laneBySlug.get(slug);
+      if (!lane) return { slug, ok: false, reason: 'malformed_lane', detail: 'no such declared lane' };
+      // Per-lane isolation. resolveLanePlan is documented total, but this map is the seam where a
+      // single throw would take down EVERY selected lane rather than the one that is malformed —
+      // and "a cross-AI review that silently drops a lane" is the failure this epic exists to end,
+      // so losing all of them to one bad manifest is strictly worse. Belt and braces on purpose.
+      let r;
+      try {
+        const effort = effortFor(lane);
+        r = resolveLanePlan({ lane, configGet, runDir, repoRoot, effortArgs: effort.argv, effortValue: effort.value });
+      } catch (e) {
+        return { slug, ok: false, reason: 'malformed_lane', detail: `resolver threw: ${e && e.message ? e.message : String(e)}` };
+      }
+      return r.ok
+        ? {
+            slug,
+            ok: true,
+            section: lane.reviewsSection,
+            transport: r.plan.transport,
+            promptBudget: budgetFor(lane),
+            promptPath: r.plan.transport === 'spawn' ? r.plan.stdin : r.plan.promptPath,
+            plan: r.plan,
+          }
+        : { slug, ok: false, reason: r.reason, detail: r.detail };
+    });
+
+    if (sub === 'plan') {
+      output(plans.map(({ plan, ...rest }) => rest), raw);
+      return;
+    }
+
+    if (sub !== 'invoke') {
+      error("Usage: review-lane <plan|invoke|sections|flags|dispatch-step|explicit-from-argv> [--selected a,b] [--run-dir D] [--repo-root R]");
+      return;
+    }
+
+    const slug = flag('--slug');
+    if (!slug) { error('review-lane invoke requires --slug'); return; }
+    const entry = plans.find((p) => p.slug === slug);
+    if (!entry || !entry.ok) {
+      output({ slug, ok: false, reason: entry ? entry.reason : 'malformed_lane', detail: entry ? entry.detail : 'unknown lane' }, raw);
+      return;
+    }
+
+    // EVERY spawn bounded — `DEFECT.UNBOUNDED-SUBPROCESS` (CONTEXT.md:772). A frozen sync spawn
+    // cannot be interrupted by --test-force-exit and hangs a whole CI chunk to its 10-minute kill.
+    const deps = buildLaneRunnerDeps();
 
     // ADR-1517 reviewer instances resolve THROUGH a lane rather than being lanes themselves
     // (ADR-2782 D8), so they reuse this seam with three substitutions instead of duplicating the
@@ -1622,7 +1778,7 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
           `model override (it declares no modelConfigKey). The review will use the CLI's own default.\n`,
         );
       }
-      const instanceEffort = effortFor(entry.slug);
+      const instanceEffort = effortFor(lane);
       const overridden = resolveLanePlan({
         lane,
         configGet: (k) => (key && k === key ? instanceModel : configGet(k)),
@@ -2677,7 +2833,20 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
   function routeTodo({ args, cwd, raw, error }) {
     const subcommand = args[1];
           if (subcommand === 'complete') {
-            commands.cmdTodoComplete(cwd, args[2], raw);
+            // #4096: this verb's flag surface is closed. `--dry-run` is parsed
+            // and plumbed (mirroring routeMilestone / #2118), and any OTHER
+            // flag fails loudly instead of being silently ignored — an
+            // accepted-but-ignored safety flag converts a deliberate preview
+            // into the mutation it was meant to avoid. (`--raw` is spliced by
+            // the dispatcher before routing; it stays in the set as a guard
+            // against that splice ever moving.)
+            const TODO_COMPLETE_KNOWN_FLAGS = new Set(['--dry-run', '--raw']);
+            for (const a of args.slice(3)) {
+              if (typeof a === 'string' && a.startsWith('-') && !TODO_COMPLETE_KNOWN_FLAGS.has(a)) {
+                error(`Unknown flag for todo complete: ${a}`, ERROR_REASON.USAGE);
+              }
+            }
+            commands.cmdTodoComplete(cwd, args[2], { dryRun: args.includes('--dry-run') }, raw);
           } else if (subcommand === 'match-phase') {
             commands.cmdTodoMatchPhase(cwd, args[2], raw);
           } else {
@@ -4182,6 +4351,9 @@ const HOST_COMMAND_ROUTERS = {
     'list-seeds': routeListSeeds,
     'verify-path-exists': routeVerifyPathExists,
     'quick-tasks-append': routeQuickTasksAppend,
+    'quick-tasks-migrate': routeQuickTasksMigrate,
+    // #3676 (Phase 4, epic #3344): quick-batch coordination verbs.
+    'quick-batch': routeQuickBatchCommand,
     'normalize-test-command': routeNormalizeTestCommand,
     'dispatch-should-flatten': routeDispatchShouldFlatten,
     'dispatch-isolation': routeDispatchIsolation,
@@ -4445,7 +4617,7 @@ const TOP_LEVEL_USAGE = 'Usage: gsd-tools <command> [args] [--raw] [--pick <fiel
   'from-gsd2, frontmatter, gap-analysis, generate-claude-md, generate-claude-profile, ' +
   'generate-dev-preferences, generate-slug, graphify, history-digest, init, intel, ' +
   'capability, classify-confidence, git, learnings, list-seeds, list-todos, loop, milestone, package-legitimacy, phase, phase-plan-index, phases, planning, profile-questionnaire, ' +
-  'profile-sample, progress, project-instruction-file, prompt-budget, quick-tasks-append, requirements, research-plan, research-store, resolve-granularity, resolve-model, restore-custom-files, roadmap, runtime-identity, scaffold, smart-entry, state, ' +
+  'profile-sample, progress, project-instruction-file, prompt-budget, quick-batch, quick-tasks-append, quick-tasks-migrate, requirements, research-plan, research-store, resolve-granularity, resolve-model, restore-custom-files, roadmap, runtime-identity, scaffold, smart-entry, state, ' +
   'config-set-model-profile, dispatch-capacity, dispatch-isolation, dispatch-should-flatten, inspect-dispatch-isolation, record-dispatch-isolation, estimate-calibrate, estimate-calibration, estimate-check, resolve-agent, resolve-dispatch-type, ' +
   'resolve-execution, review-lane, skill-manifest, skills-root, state-snapshot, stats, summary-extract, teams-status, todo, uat, update-context, verification, websearch, windows, ' +
   'task, template, user-story, validate, verify, verify-path-exists, verify-summary, eval, workstream, worktree\n\n' +

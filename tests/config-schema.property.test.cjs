@@ -24,6 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const fc = require('./helpers/fast-check-setup.cjs');
 const { cleanup } = require('./helpers.cjs');
+const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const {
   isValidConfigKey,
@@ -148,6 +149,22 @@ describe('config-schema: isValidConfigKey properties', () => {
   test('empty string is not a valid config key', () => {
     const result = isValidConfigKey('');
     assert.equal(result, false, 'empty string must not be a valid config key');
+  });
+
+  test('hooks.commit_types is a valid config key (#4443)', () => {
+    assert.equal(
+      isValidConfigKey('hooks.commit_types'),
+      true,
+      'hooks.commit_types is a documented, hook-consumed key (see the CLI reference) and must be settable via config-set'
+    );
+  });
+
+  test('hooks.community is a valid config key (sibling of #4443)', () => {
+    assert.equal(
+      isValidConfigKey('hooks.community'),
+      true,
+      'hooks.community is the gsd-validate-commit.sh opt-in gate and must be settable via config-set'
+    );
   });
 
   // Boundary: null/undefined/number return false (not throw, not true)
@@ -1097,10 +1114,16 @@ describe('feat-3210: workflow and config contracts', () => {
 
   test('config-set accepts code_quality.fallow keys', () => {
     const originalTmpDir = process.env.TMPDIR;
+    const originalTemp = process.env.TEMP;
+    const originalTmp = process.env.TMP;
     // L2: fail loudly if no writable tmp dir is found (was silent skip)
     const writableTmp = getWritableTmp(); // N2: use shared helper
     assert.ok(writableTmp, 'no writable tmp directory found'); // L2: explicit fail-loud assertion
+    // #4220 class: os.tmpdir() never reads TMPDIR on Windows (only TEMP, then
+    // TMP), so redirecting only TMPDIR silently no-ops there — set all three.
     process.env.TMPDIR = writableTmp;
+    process.env.TEMP = writableTmp;
+    process.env.TMP = writableTmp;
     const tmpDir = createTempProject('gsd-fallow-config-');
     try {
       const cases = [
@@ -1117,6 +1140,10 @@ describe('feat-3210: workflow and config contracts', () => {
       cleanup(tmpDir);
       if (originalTmpDir === undefined) delete process.env.TMPDIR;
       else process.env.TMPDIR = originalTmpDir;
+      if (originalTemp === undefined) delete process.env.TEMP;
+      else process.env.TEMP = originalTemp;
+      if (originalTmp === undefined) delete process.env.TMP;
+      else process.env.TMP = originalTmp;
     }
   });
 
@@ -1222,3 +1249,47 @@ describe('feat-3210: workflow and config contracts', () => {
 });
   });
 }
+
+describe('config-set: hooks.commit_types end-to-end (#4443)', () => {
+  const { spawnSync } = require('node:child_process');
+
+  test('config-set hooks.commit_types accepts a JSON array and does not report Unknown config key', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-4443-'));
+    t.after(() => cleanup(dir));
+    fs.mkdirSync(path.join(dir, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.planning', 'config.json'), '{}\n');
+
+    const gsdTools = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
+    const result = spawnSync(
+      process.execPath,
+      [gsdTools, 'config-set', 'hooks.commit_types', '["enhance"]'],
+      { cwd: dir, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS },
+    );
+
+    assert.equal(result.status, 0, `config-set failed: ${result.stderr || result.stdout}`);
+    assert.doesNotMatch(result.stdout + result.stderr, /Unknown config key/);
+
+    const written = JSON.parse(fs.readFileSync(path.join(dir, '.planning', 'config.json'), 'utf8'));
+    assert.deepEqual(written.hooks.commit_types, ['enhance']);
+  });
+
+  test('config-set hooks.community accepts a boolean and does not report Unknown config key', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-4443-community-'));
+    t.after(() => cleanup(dir));
+    fs.mkdirSync(path.join(dir, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.planning', 'config.json'), '{}\n');
+
+    const gsdTools = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
+    const result = spawnSync(
+      process.execPath,
+      [gsdTools, 'config-set', 'hooks.community', 'true'],
+      { cwd: dir, encoding: 'utf8', timeout: PROBE_TIMEOUT_MS },
+    );
+
+    assert.equal(result.status, 0, `config-set failed: ${result.stderr || result.stdout}`);
+    assert.doesNotMatch(result.stdout + result.stderr, /Unknown config key/);
+
+    const written = JSON.parse(fs.readFileSync(path.join(dir, '.planning', 'config.json'), 'utf8'));
+    assert.equal(written.hooks.community, true);
+  });
+});

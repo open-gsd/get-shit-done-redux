@@ -5,8 +5,10 @@ import pluginN from 'eslint-plugin-n';
 import noOnlyTests from 'eslint-plugin-no-only-tests';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Local plugin with custom AST rules
 import noSourceGrep from './eslint-rules/no-source-grep.cjs';
@@ -24,6 +26,8 @@ import noUnboundedQuantifier from './eslint-rules/no-unbounded-quantifier.cjs';
 import noHardcodedTmp from './eslint-rules/no-hardcoded-tmp.cjs';
 import noBareNpmExec from './eslint-rules/no-bare-npm-exec.cjs';
 import requireUserprofileWithHome from './eslint-rules/require-userprofile-with-home.cjs';
+import requireFullTmpdirTriad from './eslint-rules/require-full-tmpdir-triad.cjs';
+import noUnboundedDirnameWalk from './eslint-rules/no-unbounded-dirname-walk.cjs';
 import normalizePathInContent from './eslint-rules/normalize-path-in-content.cjs';
 import requireFsOpFallback from './eslint-rules/require-fs-op-fallback.cjs';
 import noUnboundedSpawn from './eslint-rules/no-unbounded-spawn.cjs';
@@ -34,6 +38,9 @@ import noPrivateBinaryResolution from './eslint-rules/no-private-binary-resoluti
 import requireRegisteredExit from './eslint-rules/require-registered-exit.cjs';
 import noSwallowedPrecondition from './eslint-rules/no-swallowed-precondition.cjs';
 import noExactCaseEnvAccess from './eslint-rules/no-exact-case-env-access.cjs';
+import noAdhocTimeoutLiteral from './eslint-rules/no-adhoc-timeout-literal.cjs';
+
+const adhocTimeoutLiteralAllowlist = require('./eslint-rules/no-adhoc-timeout-literal.allowlist.json');
 
 const localPlugin = {
   rules: {
@@ -52,6 +59,8 @@ const localPlugin = {
     'no-hardcoded-tmp': noHardcodedTmp,
     'no-bare-npm-exec': noBareNpmExec,
     'require-userprofile-with-home': requireUserprofileWithHome,
+    'require-full-tmpdir-triad': requireFullTmpdirTriad,
+    'no-unbounded-dirname-walk': noUnboundedDirnameWalk,
     'normalize-path-in-content': normalizePathInContent,
     'require-fs-op-fallback': requireFsOpFallback,
     'no-unbounded-spawn': noUnboundedSpawn,
@@ -62,6 +71,7 @@ const localPlugin = {
     'require-registered-exit': requireRegisteredExit,
     'no-swallowed-precondition': noSwallowedPrecondition,
     'no-exact-case-env-access': noExactCaseEnvAccess,
+    'no-adhoc-timeout-literal': noAdhocTimeoutLiteral,
   },
 };
 
@@ -74,6 +84,11 @@ export default tseslint.config(
       '.worktrees/**',
       '.claude/**',
       'coverage/**',
+      // #4141: Stryker's sandbox (tempDirName in stryker.config.mjs, also gitignored
+      // and always-ignored by Stryker itself). A run that dies before cleanup leaves a
+      // copy of the tree here; linting it reports the path-scoped `local/*` rules as
+      // undefined, which reads as the plugin being broken rather than as scratch space.
+      '.stryker-tmp/**',
       '**/*.generated.cjs',
       // ADR-457: tsc-generated runtime artifact — lint the src/*.cts source, not the emitted .cjs.
       'gsd-core/bin/lib/claude-orchestration.cjs',
@@ -115,6 +130,10 @@ export default tseslint.config(
       'gsd-core/bin/lib/probe-core.cjs',
       'gsd-core/bin/lib/spec-section.cjs',
       'gsd-core/bin/lib/prohibition-enforcement.cjs',
+      // #3770: tsc-generated runtime artifact — lint the src/tdd-red-evidence.cts source.
+      'gsd-core/bin/lib/tdd-red-evidence.cjs',
+      // #4145: tsc-generated runtime artifact — lint the src/pristine-baseline.cts source.
+      'gsd-core/bin/lib/pristine-baseline.cjs',
       'gsd-core/bin/lib/ui-consideration-probe.cjs',
       'gsd-core/bin/lib/code-review-flags.cjs',
       'gsd-core/bin/lib/code-review-depth.cjs',
@@ -138,6 +157,7 @@ export default tseslint.config(
       'gsd-core/bin/lib/review-lane-descriptor.cjs',
       'gsd-core/bin/lib/review-lane-invocation.cjs',
       'gsd-core/bin/lib/review-lane-runner.cjs',
+      'gsd-core/bin/lib/reviewer-step-dispatch.cjs',
       'gsd-core/bin/lib/clusters.cjs',
       'gsd-core/bin/lib/installer-migrations/001-legacy-orphan-files.cjs',
       'gsd-core/bin/lib/observability/redaction.cjs',
@@ -257,6 +277,11 @@ export default tseslint.config(
       'gsd-core/bin/lib/file-overlap-partitioner.cjs',
       // #3675: tsc-generated runtime artifact — lint the src/quick-batch.cts source, not this.
       'gsd-core/bin/lib/quick-batch.cjs',
+      // #3676: tsc-generated runtime artifacts — lint the
+      // src/quick-batch-dispatch.cts / src/quick-batch-command-router.cts
+      // sources, not these emitted .cjs files.
+      'gsd-core/bin/lib/quick-batch-dispatch.cjs',
+      'gsd-core/bin/lib/quick-batch-command-router.cjs',
       'gsd-core/bin/lib/roadmap-parser.cjs',
       'gsd-core/bin/lib/drift.cjs',
       'gsd-core/bin/lib/cjs-command-router-adapter.cjs',
@@ -601,6 +626,10 @@ export default tseslint.config(
       'local/require-registered-exit': 'error',
       // #3624: see the src/**/*.cts block above for detail.
       'local/no-exact-case-env-access': 'error',
+      // #4244 (origin #4020 / #4220): scripts/run-tests.cjs is the actual site
+      // of the shipped Windows CI hang — registered here (not only on
+      // tests/**/*.cjs below) so the rule covers the real bug's own location.
+      'local/no-unbounded-dirname-walk': 'error',
     },
   },
 
@@ -682,11 +711,22 @@ export default tseslint.config(
       'local/no-bare-npm-exec': 'error',
       // Require USERPROFILE alongside HOME assignments (ADR-1703 Phase 4)
       'local/require-userprofile-with-home': 'error',
+      // Require TEMP+TMP alongside any TMPDIR override — TMPDIR is never read on
+      // Windows, so a TMPDIR-only redirect silently no-ops there (#4220).
+      'local/require-full-tmpdir-triad': 'error',
+      // Require a fixed-point termination guard on any dirname() ancestor walk —
+      // a length/equality-only bound spins forever at a Windows drive root (#4020 / #4220).
+      'local/no-unbounded-dirname-walk': 'error',
       // Ban unbounded sync child_process spawns in tests (DEFECT.UNBOUNDED-SUBPROCESS).
       // No allowlist: the epic (#3064) migrated every site; the rule runs with no
       // exemption surface. The only sanctioned escapes are an explicit `timeout` on
       // a raw spawn or the `// allow-spawn-timeout-ceiling: <reason>` marker.
       'local/no-unbounded-spawn': 'error',
+      // Ban a bare numeric `timeout`/`timeoutMs` literal in tests (DEFECT.AD-HOC-TIMEOUT-LITERAL,
+      // #4428): two independently-guessed copies of the same magic number can drift apart, or
+      // collide exactly into a zero-margin race. Allowlist starts empty; a pre-existing violation
+      // gets grandfathered in here as it's found, per eslint-rules/no-adhoc-timeout-literal.allowlist.json.
+      'local/no-adhoc-timeout-literal': ['error', { allowlist: adhocTimeoutLiteralAllowlist }],
       // Ban a consolidation-epic folded suite appearing twice in one host file (#3271).
       // A second copy runs the same tests twice on every lane and drifts silently.
       'local/no-duplicate-fold-marker': 'error',

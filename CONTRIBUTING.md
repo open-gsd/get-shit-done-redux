@@ -102,6 +102,8 @@ An ADR (Architecture Decision Record) documents a significant architectural deci
 
 **Rejection reasons:** Issue not approved before file was created, filename uses local-compute sequential number instead of issue#, multiple decisions bundled in one PR, file placed in wrong directory (`docs/adr/` vs `docs/prd/`).
 
+**This process is for a *new* ADR file.** An accepted ADR is never rewritten from scratch — check `docs/adr/` first for a broader ADR that already owns the area. Amending one is a separate, lighter-weight path: see **[`docs/contributor-standards.md` — "Amending an accepted ADR"](docs/contributor-standards.md#amending-an-accepted-adr)** for the two established patterns (an in-place dated section, or a new ADR that declares `Amends`/gets the reciprocal `Amended by` back-link).
+
 ---
 
 ## The Issue-First Rule — No Exceptions
@@ -1108,6 +1110,27 @@ explanation holds, and only you can say which. There is no "which source owns th
 question underneath it, because there is no shared file for two sources to own — to change
 an acknowledgment, amend the commit carrying it.
 
+**Splitting a workflow file into a spine + `detail/*.md` parts (ADR-4139, `workflow.compact_content`)**
+follows the same trailer idiom for one more case. See `docs/PARTITION-RULES.md` for the
+full rule set — the short version: a split moves text, it never restates it, so there is
+no drift-parity check to satisfy, only a guard (`tests/compact-content-partition-guard.test.cjs`)
+that a moved sentence stay moved and a protected sentence never move at all. When the guard
+reports an ordinary (non-protected) line that moved from a spine into its own detail part
+without a declaration, add:
+
+```
+Boundary-Move-Declared: gsd-core/workflows/plan-phase.md — condensed the filesystem-fallback banner into one summary paragraph
+```
+
+Same range (`git log $(git merge-base <base> HEAD)..HEAD`), same fail-closed behavior on an
+uncomputable range, same silent dedupe of identical declarations across a rebase, same hard
+error on two conflicting reasons for the same spine — it is a second key space alongside
+`Emitted-Drift-Ack-Hash`/`-Growth` above, not a different mechanism. Content on the
+protected-content list (guardrails, output-format contracts, few-shot examples the
+workflow's own steps depend on, security language, machine-parsed structural headings) has
+no trailer escape hatch: it may not leave the spine, moved or not, and the guard fails
+regardless of what the trailer says.
+
 `npm run regen:derived` still exists for the artifacts that ARE committed and derived —
 `sync-manifest-versions`, the ADR index, the capability matrix, the inventory manifest,
 the registry, and `tests/fixtures/install-tree/*.json` (`npm run gen:install-tree`, the
@@ -1283,6 +1306,21 @@ the pipeline runs exactly as it did before, and the per-job
 including which lanes are deliberately *not* gated, is in
 [docs/TESTING-SUITES.md → The mergeability preflight](docs/TESTING-SUITES.md#the-mergeability-preflight).
 
+### A PR cannot merge onto a red base branch
+
+The `Base branch health` required check queries GitHub for the base branch's
+own last push-triggered Tests run and blocks your merge if that run is red —
+independent of whether your own PR's changes pass. This needs no
+branch-protection reconfiguration: it rides the existing "Required tests"
+check, the same status GitHub already requires before merge.
+
+If your PR is itself the fix-forward and you need to land it while the base
+branch is still red, a maintainer applies the `fix-next` label directly to
+your PR to explicitly bypass this one check. Applying a label requires
+GitHub write access to the repo, so a PR author cannot self-apply it to
+bypass the gate — only a maintainer or another collaborator with label-write
+permission can. Full decision logic is in `scripts/ci-next-health.cjs`.
+
 ### CI Test Quality Checks
 
 The following checks run on every PR in addition to the test suite:
@@ -1292,6 +1330,7 @@ The following checks run on every PR in addition to the test suite:
 | `Lint — ESLint` | No source-grep tests (see above), via the `local/no-source-grep` rule | Replace with `runGsdTools()` behavioral tests, or add `// allow-test-rule: <reason>` |
 | `Lint — cross-platform portability` | Windows-portability defects in tests, via `local/no-path-literal-in-assert` (more rules land per [ADR-1703](docs/adr/1703-portability-enforcement-architecture.md)) — e.g. a path-returning call asserted against a hardcoded `/`-literal | Normalize the actual: `String(pathFn(...)).replace(/\\/g, '/')`, or structure platform-specific code behind a `process.platform !== 'win32'` guard. **No `eslint-disable`** — see [cross-platform-portability-rules.md](docs/contributing/cross-platform-portability-rules.md) |
 | `lint-docs-guard-registration.cjs` (via `npm run lint:ci`) | A test that reads shipped `docs/` content must be registered so it runs on the PR that changes those docs — otherwise it can only fail after merge | Register it in `scripts/docs-guard-registry.cjs`, mapping the test to the docs paths it reads, or mark it `// docs-guard-exempt: <reason>` and list it in `scripts/lint-docs-guard-registration.exempt-baseline.cjs` — see [docs-guard-registration.md](docs/contributing/docs-guard-registration.md) |
+| `lint-response-language-coverage.cjs` (via `npm run lint:ci`) | Every workflow file instructs the model to honour `response_language` in user-facing prose, and the directive names inter-tool narration rather than questions alone — a directive that omits the narration class leaves running commentary in English beside translated answers (#2529) | Give the file one of the four coverage forms: the eager `@`-reference, its own inline directive, the pinned line, or proven inheritance from the parent that dispatches it — see [response-language-coverage.md](docs/contributing/response-language-coverage.md) |
 
 Run locally before pushing: `npm run lint` (or `npx eslint .`)
 

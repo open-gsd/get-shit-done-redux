@@ -11,6 +11,15 @@ on:
     branches:
       - next
       - main
+  # #4241: GitHub's merge queue fires `merge_group`, not `pull_request` or
+  # `push`, for the temporary merge-group commit it creates. Without this
+  # trigger, `required-tests` (the registered "Required tests" branch-
+  # protection check) never schedules for a queued PR and the queue stalls
+  # waiting on a check that never runs. See:
+  # https://docs.github.com/en/actions/how-tos/using-features-for-actions/using-merge-queues
+  # This is prerequisite wiring only — the merge queue itself is enabled via
+  # a separate, manual "Require merge queue" branch-protection toggle.
+  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -35,6 +44,72 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+
+  # #4422: three unrelated PRs merged on top of an already-broken `next` on
+  # 2026-09-06 before anyone noticed — nothing checked the base branch's OWN
+  # health before letting a PR land on it. This job queries the GitHub API for
+  # the base branch's last push-triggered Tests run and blocks the merge if it
+  # is red, with a `fix-next` label escape hatch for the PR that is itself the
+  # fix-forward. See scripts/ci-next-health.cjs's header for the full risk-
+  # asymmetry reasoning (it deliberately does NOT fail open on a definite red
+  # signal, unlike the mergeability preflight above).
+  #
+  # No `if:` guard, for the same reason `preflight` has none: a SKIPPED
+  # dependency skips its dependents exactly like a failed one, so guarding this
+  # job would skip `required-tests` on every push/workflow_dispatch run too.
+  # scripts/ci-next-health.cjs itself no-ops (zero API calls, exit 0) on any
+  # event other than pull_request/merge_group.
+  #
+  # `next-health` is likewise deliberately NOT gated behind `preflight`, same
+  # rationale as `changes` above: it is a ~2-minute, compute-free API read that
+  # runs in parallel with the preflight job, and serializing it behind
+  # `preflight` would add latency to every healthy PR for no saving.
+  next-health:
+    name: Base branch health
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the next-health script from the base branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Same rationale as pr-mergeable-preflight.yml's checkout: pinned to
+          # the BASE sha so the script that decides the gate comes from a
+          # trusted commit, never PR-supplied code. Empty on a non-pull_request
+          # event (e.g. merge_group), where actions/checkout falls back to the
+          # triggering ref — fine, since the script no-ops before reading
+          # anything on those events too.
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          sparse-checkout: |
+            scripts
+          persist-credentials: false
+
+      - name: Check base branch health
+        id: check
+        env:
+          # Every value arrives through env. CONTRIBUTING.md forbids `${{ }}`
+          # inside a `run:` block.
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          MERGE_GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
+        run: |
+          # Bootstrap arm, mirroring pr-mergeable-preflight.yml's: the checkout
+          # above is of the BASE sha, so this step runs the script as it exists
+          # on the base branch — which means it is absent on the PR that
+          # INTRODUCES it, and on any PR branched from a base predating it.
+          # Absent is not "red": it is one more thing we cannot determine, so
+          # it takes the same fail-open path as any other unresolved read.
+          # Self-healing — once the script is on the base branch this arm never
+          # fires again.
+          if [ ! -f scripts/ci-next-health.cjs ]; then
+            echo "::warning::scripts/ci-next-health.cjs is not present at the base sha; skipping the base-branch health gate (fail-open). Expected on the PR that introduces it, or on a branch whose base predates it."
+            echo "verdict=INDETERMINATE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node scripts/ci-next-health.cjs
 
   changes:
     name: Detect test scope
@@ -127,6 +202,33 @@ jobs:
       - name: Lint — all (ESLint, skill deps, test-file count, command contract, PR checks, legacy name, regression-test names, resolution-provenance)
         run: npm run lint:ci
 
+  # #3751 (decision 1): provision the claude CLI so plugin-manifest's C2 tier
+  # (`claude plugin validate --strict`) is a real CI gate instead of a
+  # local-only check. Dedicated job — the matrix lanes stay CLI-free.
+  plugin-validate:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # #2665 round 4: every job that runs the suite wires the strict guard
+      # (job-level env, where the live-config-guard derivation reads it).
+      GSD_STRICT_LIVE_CONFIG_GUARD: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          token: ${{ github.token }}
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version: 24
+      - name: Install dev dependencies
+        run: npm ci --ignore-scripts
+      - name: Install claude CLI (C2 gate dependency, #3751)
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run plugin-manifest suite (C1+C2+C3)
+        run: node scripts/run-tests.cjs --files plugin-manifest.test.cjs
+
   test:
     name: test (${{ matrix.os }}, ${{ matrix.node-version }}${{ matrix.shard && format(', shard {0}', matrix.shard) || '' }})
     needs: [changes, preflight]
@@ -171,7 +273,7 @@ jobs:
     # change beyond sharing the same job-level `timeout-minutes`.
     # tests/ci-test-job-timeout-budget.test.cjs holds every lane here to a
     # headroom factor over its own measured cost.
-    timeout-minutes: 21
+    timeout-minutes: 32
     env:
       GSD_PLUGIN_ROOT: .ci-gsd-plugin-root-disabled
       # #2665: a live-config leak fails the run on Linux/macOS lanes. Windows
@@ -188,6 +290,23 @@ jobs:
       # "stale" and the run hard-failed on diffs that touched nothing related.
       # This must stay equal to CI_REBASE_BASE_SHA; a test asserts that parity.
       GSD_EMITTED_BASE: ${{ github.event.pull_request.base.sha }}
+      # #4196: pin the npm-audit baseline the SAME way GSD_EMITTED_BASE pins
+      # its own baseline (see the comment above) -- origin/next is live under
+      # fetch-depth: 0 and can advance mid-run; base.sha is fixed for the life
+      # of the run. For a push event, github.event.before is git's own record
+      # of the ref's state immediately before this push landed -- correct
+      # even when a rebase-merged PR lands as multiple discrete commits in
+      # one push (HEAD~1 would be wrong there: it could already contain an
+      # earlier commit's newly-introduced vulnerable package, masking it).
+      # #4241: a merge_group event carries no pull_request/push context, so
+      # without this arm it silently fell through to the '' branch --
+      # resolveBaselineRef()'s documented-unreachable origin/next live-tip
+      # fallback (npm-audit-baseline.cjs), reopening the exact race #4196
+      # fixed, but only for merge-queue runs. github.event.merge_group.base_sha
+      # is "the SHA of the merge group's parent commit" (GitHub's merge_group
+      # webhook payload) -- the base tip the temporary merge-group commit was
+      # built against, pinned for the life of the run same as the other two arms.
+      AUDIT_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || (github.event_name == 'merge_group' && github.event.merge_group.base_sha) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -402,7 +521,7 @@ jobs:
         continue-on-error: true
         env:
           CI_JOB_LABEL: "test (${{ matrix.os }}, ${{ matrix.node-version }}${{ matrix.shard && format(', shard {0}', matrix.shard) || '' }})"
-          CI_JOB_TIMEOUT_MINUTES: '21'
+          CI_JOB_TIMEOUT_MINUTES: '32'
         run: node scripts/ci-check-job-near-cap.cjs
 
   test-inert:
@@ -419,6 +538,23 @@ jobs:
       # list that can include the emitted gate, and the invariant is easier to keep
       # with no exceptions: if a job merges a pinned base, the gate uses that base.
       GSD_EMITTED_BASE: ${{ github.event.pull_request.base.sha }}
+      # #4196: pin the npm-audit baseline the SAME way GSD_EMITTED_BASE pins
+      # its own baseline (see the comment above) -- origin/next is live under
+      # fetch-depth: 0 and can advance mid-run; base.sha is fixed for the life
+      # of the run. For a push event, github.event.before is git's own record
+      # of the ref's state immediately before this push landed -- correct
+      # even when a rebase-merged PR lands as multiple discrete commits in
+      # one push (HEAD~1 would be wrong there: it could already contain an
+      # earlier commit's newly-introduced vulnerable package, masking it).
+      # #4241: a merge_group event carries no pull_request/push context, so
+      # without this arm it silently fell through to the '' branch --
+      # resolveBaselineRef()'s documented-unreachable origin/next live-tip
+      # fallback (npm-audit-baseline.cjs), reopening the exact race #4196
+      # fixed, but only for merge-queue runs. github.event.merge_group.base_sha
+      # is "the SHA of the merge group's parent commit" (GitHub's merge_group
+      # webhook payload) -- the base tip the temporary merge-group commit was
+      # built against, pinned for the life of the run same as the other two arms.
+      AUDIT_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || (github.event_name == 'merge_group' && github.event.merge_group.base_sha) || '' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
@@ -513,6 +649,23 @@ jobs:
       # "stale" and the run hard-failed on diffs that touched nothing related.
       # This must stay equal to CI_REBASE_BASE_SHA; a test asserts that parity.
       GSD_EMITTED_BASE: ${{ github.event.pull_request.base.sha }}
+      # #4196: pin the npm-audit baseline the SAME way GSD_EMITTED_BASE pins
+      # its own baseline (see the comment above) -- origin/next is live under
+      # fetch-depth: 0 and can advance mid-run; base.sha is fixed for the life
+      # of the run. For a push event, github.event.before is git's own record
+      # of the ref's state immediately before this push landed -- correct
+      # even when a rebase-merged PR lands as multiple discrete commits in
+      # one push (HEAD~1 would be wrong there: it could already contain an
+      # earlier commit's newly-introduced vulnerable package, masking it).
+      # #4241: a merge_group event carries no pull_request/push context, so
+      # without this arm it silently fell through to the '' branch --
+      # resolveBaselineRef()'s documented-unreachable origin/next live-tip
+      # fallback (npm-audit-baseline.cjs), reopening the exact race #4196
+      # fixed, but only for merge-queue runs. github.event.merge_group.base_sha
+      # is "the SHA of the merge group's parent commit" (GitHub's merge_group
+      # webhook payload) -- the base tip the temporary merge-group commit was
+      # built against, pinned for the life of the run same as the other two arms.
+      AUDIT_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || (github.event_name == 'merge_group' && github.event.merge_group.base_sha) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -660,7 +813,7 @@ jobs:
       # is exactly the layout c8 expects from a single run. The dumps are
       # per-process files with distinct names, so there is nothing to collide.
       - name: Download every shard's raw coverage
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: coverage-tmp-shard-*
           path: coverage/tmp
@@ -770,6 +923,7 @@ jobs:
     name: Required tests
     needs:
       - preflight
+      - next-health
       - changes
       - lint-tests
       - test
@@ -784,6 +938,7 @@ jobs:
       - name: Summarize required test gate
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          NEXT_HEALTH_RESULT: ${{ needs.next-health.result }}
           CODE_CHANGED: ${{ needs.changes.outputs.code_changed }}
           PRODUCT_CHANGED: ${{ needs.changes.outputs.product_changed }}
           CHANGES_RESULT: ${{ needs.changes.result }}
@@ -796,6 +951,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "preflight=$PREFLIGHT_RESULT"
+          echo "next-health=$NEXT_HEALTH_RESULT"
           echo "code_changed=$CODE_CHANGED"
           echo "product_changed=$PRODUCT_CHANGED"
           echo "changes=$CHANGES_RESULT"
@@ -820,6 +976,14 @@ jobs:
 
           if [ "$CHANGES_RESULT" != "success" ]; then
             echo "::error::test scope detection did not pass"
+            exit 1
+          fi
+
+          # #4422: applies UNCONDITIONALLY, not nested inside the
+          # PRODUCT_CHANGED/CODE_CHANGED branches below — a red base branch
+          # must block every PR, including doc-only ones.
+          if [ "$NEXT_HEALTH_RESULT" != "success" ]; then
+            echo "::error::the base branch's own last Tests run is red — see the 'Base branch health' job above for the failing run. Wait for a fix-forward merge, or if this PR IS the fix, ask a maintainer to apply the 'fix-next' label to override."
             exit 1
           fi
 

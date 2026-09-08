@@ -25,6 +25,8 @@
   - [Freeform Routing](#12-freeform-routing)
   - [Note Capture](#13-note-capture)
   - [Auto-Advance (Next)](#14-auto-advance-next)
+  - [Review Dispositions Ledger](#3806-review-dispositions-ledger)
+  - [Quick Batch Mode](#4015-quick-batch-mode)
 - [Quality Assurance Features](#quality-assurance-features)
   - [Nyquist Validation](#15-nyquist-validation)
   - [Plan Checking](#16-plan-checking)
@@ -33,6 +35,7 @@
   - [Health Validation](#19-health-validation)
   - [Cross-Phase Regression Gate](#20-cross-phase-regression-gate)
   - [Requirements Coverage Gate](#21-requirements-coverage-gate)
+  - [TDD-Applicability Predicate](#4273-tdd-applicability-predicate)
 - [Context Engineering Features](#context-engineering-features)
   - [Context Window Monitoring](#22-context-window-monitoring)
   - [Session Management](#23-session-management)
@@ -562,6 +565,8 @@
 - REQ-DO-02: System MUST map intent to the best matching GSD command
 - REQ-DO-03: System MUST confirm the routing with the user before executing
 - REQ-DO-04: System MUST handle project-exists vs no-project contexts differently
+- REQ-DO-05: Routing rules MUST order specific operations before the generic keyword rules they shadow (specific-before-generic)
+- REQ-DO-06: Dispatch MUST forward only arguments the selected command accepts; the freeform sentence is forwarded only when that command explicitly accepts a freeform task description
 
 ---
 
@@ -602,6 +607,65 @@
 | Phase has plans but no SUMMARY.md | Run `/gsd-execute-phase` |
 | Phase executed but no VERIFICATION.md | Run `/gsd-verify-work` |
 | All phases complete | Suggest `/gsd-complete-milestone` |
+
+---
+
+### 3806. Review Dispositions Ledger
+
+**Purpose:** Reviews-mode planning (`/gsd-plan-phase {N} --reviews`) has required every current
+actionable REVIEWS.md finding to be incorporated into PLAN.md or explicitly deferred/rejected
+there since v1.5.0 (#724/#728). Nothing canonized *where* in PLAN.md, *what shape*, or how a
+REVIEWS.md line reference survives the next round rewriting the file wholesale. Two
+independently-invented, mutually incompatible disposition formats were observed across two
+consecutive rounds of the same phase, each written by a different planner subagent instance
+improvising from prose alone.
+
+**Behavior:** The existing return-payload tables from `references/planner-reviews.md` Step 4 —
+`### Review Feedback Addressed` / `### Review Feedback Deferred` — are now the canonical
+**Review Dispositions Ledger**, promoted verbatim in shape into the affected PLAN.md itself under
+a `## Review Dispositions Ledger` heading. Each reviews-mode round gets its own
+`### Round {N} — {REVIEWS_sha}` subsection, where `{REVIEWS_sha}` is the commit that wrote that
+round's REVIEWS.md snapshot (`workflows/review.md` already commits REVIEWS.md as its own commit).
+A REVIEWS.md line reference cites `L##@{REVIEWS_sha}`; a bare line number is non-conforming. The
+ledger is append-only — a later round adds a new row naming what it supersedes rather than editing
+or deleting an earlier round's tables.
+
+The contract is stated once, in `references/planner-reviews.md`; `workflows/plan-phase.md`'s
+`<review_incorporation_contract>` and `agents/gsd-plan-checker.md`'s Review Incorporation dimension
+both reference it by name rather than restating it, guarded by a parity test
+(`tests/plan-review-convergence.test.cjs`) that fails if the three drift apart.
+
+`{Concern}`/`{Reason}` stay free text — the reviewer roster is capability-owned and open to
+third-party additions, so no closed reviewer/severity enum is introduced.
+
+**Known limits:** No lint or check verb enforces this shape yet — a follow-up (tracked as part 2
+of #3806) will add deterministic enforcement once a migration story for the two pre-existing ad-hoc
+formats already in the wild is decided. Legacy PLAN.md content written before this convention is
+not migrated or flagged.
+
+**Reference:** [ADR-3806](adr/3806-review-dispositions-ledger.md) · [Cross-AI Peer Review](#42-cross-ai-peer-review)
+
+---
+
+### 4015. Quick Batch Mode
+
+**Command:** `/gsd-quick-batch [--file <path>] [--jobs auto|N] [--validate] [--research] [--resume <batch-id>]`
+
+**Purpose:** Batch several `/gsd-quick`-shaped tasks together — one coordinator plans, dispatches, and merges them as a single run, with per-item leaves and deterministic merge ordering (ADR-1239 "Quick-batch binding").
+
+**Requirements:**
+- REQ-QB-01: System MUST accept an inline task list (≥2 items) or `--file <path>`
+- REQ-QB-02: System MUST reject `--discuss` and `--full` with a usage error before any dispatch
+- REQ-QB-03: System MUST reject a malformed `--jobs` value before any dispatch
+- REQ-QB-04: System MUST resolve effective concurrency as `min(task count, jobsN, capacity)` for `--jobs N`, or `capacity` alone for `--jobs auto`
+- REQ-QB-05: System MUST force a mutating (worktree/executor) wave's concurrency to 1 when isolation is `none`, without capping a non-mutating (research/planning-only) wave
+- REQ-QB-06: System MUST dispatch a planner per eligible item per DAG layer, providing the full batch task catalog and always requiring `depends_on`/`files_modified` frontmatter
+- REQ-QB-07: System MUST recompute execution waves after each planning layer from the planners' declared dependencies/files
+- REQ-QB-08: System MUST serialize worktree create/merge/cleanup while allowing already-created worktrees to run concurrently
+- REQ-QB-09: System MUST merge items strictly in the deterministic wave order, never completion order
+- REQ-QB-10: System MUST NOT call the STATE.md completion primitive for an item routed to `human_needed`
+- REQ-QB-11: System MUST fail an item routed to `gaps_found`/`merge_failed`/`scope_violation` without rollback, without an automatic retry, and with its worktree preserved
+- REQ-QB-12: System MUST support `--resume <batch-id>` to re-derive eligibility and dispatch only still-runnable items, refusing closed on an unknown batch id or a diverged base revision
 
 
 ---
@@ -710,6 +774,29 @@
 - REQ-COVGATE-04: System MUST report which specific requirements lack plan coverage
 
 **When:** Runs automatically at the end of `/gsd-plan-phase` after the plan checker loop.
+
+---
+
+### 4273. TDD-Applicability Predicate
+
+**Purpose:** Give the workflow engine one code-owned computation for whether TDD's RED/GREEN/REFACTOR
+procedure applies to a given plan, instead of restating the same precedence logic as hand-written prose in
+each dispatch backend — a restatement that had already drifted between two backends (#4264, #4265). This
+is Phase 1 of epic #4272 (ADR-3473's fourth application of the single-owner-predicate pattern): it ships
+the isolated `phase.tdd-applicable` query verb only. Wiring `execute-phase.md` and its
+executor-isolation-dispatch step to consume the verb instead of their own inline predicates is a later
+phase of the same epic.
+
+**Command:** `gsd-tools query phase.tdd-applicable <plan-file> [--cli-flag]`
+
+**Requirements:**
+- REQ-TDDA-01: System MUST resolve applicability via a fixed precedence: `--cli-flag` (explicit override) >
+  plan frontmatter `type: tdd` > any task in the plan carrying `tdd="true"` > project config
+  `workflow.tdd_mode`
+- REQ-TDDA-02: System MUST report which precedence tier decided the outcome (`cli_flag`, `plan_frontmatter`,
+  `task_attribute`, `config`, or `none`) alongside the boolean result
+- REQ-TDDA-03: System MUST emit JSON (`applicable`, `source`, `plan_type`, `config_tdd_mode`,
+  `cli_flag_present`) so callers can consume the decision without re-deriving it
 
 
 ---
@@ -1237,7 +1324,9 @@ After Level 3 wiring verification passes, spot-check individual exports for actu
 **Components:**
 
 **1. Cross-Phase Health Check** (progress.md Step 1.6)
-Every `/gsd-progress` call scans ALL phases in the current milestone for outstanding items (pending, skipped, blocked, human_needed). Displays a non-blocking warning section with actionable links.
+Every `/gsd-progress` call scans ALL phases in the current milestone for outstanding items (pending, skipped, blocked, human_needed, gaps_found). Displays a non-blocking warning section with actionable links.
+
+A verification report counts as outstanding under EITHER terminal non-passing status: `human_needed` contributes its `human_verification:` entries, and `gaps_found` contributes both its `human_verification:` and its `gaps:` entries, excluding any already closed. What counts as closed is per key: a `gaps:` entry closes on `status: resolved` and nothing else — the same rule the `## Gaps` markdown reader applies, so one authored entry cannot read closed in one reader and open in the other — while a `human_verification:` entry also closes on a bare `resolution:` field, provided no `status:` contradicts it (#3850).
 
 **2. `status: partial`** (verify-work.md, UAT.md)
 New UAT status that distinguishes between "session ended" and "all tests resolved". Prevents `status: complete` when tests are still pending, blocked, or skipped without reason.
@@ -2057,6 +2146,8 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 **Requirements:**
 - REQ-LANG-01: System MUST respect `response_language` setting across all phases and agents
 - REQ-LANG-02: Setting MUST propagate to all spawned agents for consistent language output
+- REQ-LANG-03: Every workflow MUST carry response-language coverage — through an exact inline directive, a shared `@`-referenced directive (`gsd-core/references/response-language-directive.md`), or inheritance from the parent workflow that dispatches it; enforced in CI by `scripts/lint-response-language-coverage.cjs` (#2529)
+- REQ-LANG-04: A covering directive MUST name inter-tool narration, not only the question/prompt surface. A directive names it by using the word "narration" or the phrase "between tool calls"; the class it denotes is the model's running commentary between tool calls, status updates, progress notes and findings included, and enumerating those items without naming the class does not satisfy the rule. A directive worded around questions and prompts alone leaves the model's running commentary in English beside translated answers, which is the defect #2529 reports; `scripts/lint-response-language-coverage.cjs` rejects it (#2529)
 
 **Config:**
 | Setting | Type | Default | Description |
@@ -2138,6 +2229,7 @@ Test suite that scans all agent, workflow, and command files for embedded inject
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `hooks.community` | boolean | `false` | Enable optional community hooks for commit validation, session state, and phase boundaries |
+| `hooks.commit_types` | array of strings | `[]` | Extra Conventional Commits types `gsd-validate-commit.sh` accepts, in addition to the built-in `feat, fix, docs, style, refactor, perf, test, build, ci, chore` — never replaces them. Each entry must match `^[a-z][a-z0-9-]*$` (lowercase letters, digits, hyphens); non-conforming or non-string entries are dropped. Example: `{ "hooks": { "community": true, "commit_types": ["enhance", "enh", "revert"] } }`. |
 
 
 ---
@@ -2279,6 +2371,8 @@ flows — the same way every other wave-scoped capability step already behaves f
 Escalation is **whole-review, not per-file**: depth is a single scalar handed to the reviewer agent, not a per-file setting, so the strongest matching tier across the whole rule set applies to every file in the review — a sensitive file is never reviewed shallowly because it shared a review with an unrelated one.
 
 v1 supports **directory-prefix matching only, not glob syntax**: no glob engine (`minimatch`, `picomatch`, `fast-glob`) exists in this project and none was added for this feature. A path containing `*` or `?` (e.g. `src/auth/**`) is a configuration error rather than a silent near-miss, because accepting it as sugar for a prefix would make unsupported patterns look armed when they match nothing. Every use case in the issue is expressible as a directory prefix. See [Scope code review depth by path](how-to/scope-code-review-depth-by-path.md) for the resolution order, error table, and a worked example.
+
+**Optional external reviewer lanes (#4209):** `/gsd-code-review` accepts the same reviewer-lane flags as `/gsd-review` — any flag the roster declares (run `gsd_run review-lane flags` to list them for your installation, e.g. `--codex`, `--agy`). No reviewer-lane flag is the default and is byte-for-byte unchanged from before #4209: zero lane selection, plan, or invoke calls, and only the internal `gsd-code-reviewer` agent runs. Passing one or more flags asks those lanes to independently review the same already-resolved file scope alongside the internal agent, through the same shared capability-trait interpreter and `review-lane plan`/`invoke` machinery `/gsd-review` uses — no second implementation. Each lane's prompt carries only the repository root, canonical file paths, review depth, and base SHA, never source file contents, under four fixed prohibitions (no source mutation, no test execution, no background processes, no polling). External findings are unverified corroborating evidence: `gsd-code-reviewer` independently re-verifies every claim against the actual source before writing it to `REVIEW.md`, so there remains exactly one `REVIEW.md` schema regardless of how many lanes ran. An explicitly requested lane that is unavailable or fails is reported as a warning, never silently dropped and never a raw-CLI fallback. This is separate from `/gsd-review`, which reviews `PLAN.md` files before execution, not source code.
 
 ---
 

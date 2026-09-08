@@ -6,7 +6,8 @@ const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
+const { runGsdTools, createTempProject, cleanup, absPlanningPath } = require('./helpers.cjs');
+const { seedWorkstream } = require('./fixtures/index.cjs');
 
 // Helper: write a minimal ROADMAP.md with phases
 function writeRoadmap(tmpDir, phases) {
@@ -495,6 +496,55 @@ describe('init manager', () => {
     assert.strictEqual(output.phases[0].is_active, false);
   });
 
+  // #4134 — a first-ever ROADMAP.md whose H1 puts the version after the name
+  // (`# Roadmap: <Project> — <Milestone Name> (v1.13)` — the shape nothing
+  // templates for a project's first milestone) used to make the §7.2 pinned
+  // name rule return the literal `)` left after the version token as the
+  // milestone's "name", and init manager displayed it verbatim. The refusal
+  // reports the honest ADR-3180 §7.2 rule-6 answer instead: the version is
+  // real, the name is not resolvable from that heading, milestone_name is
+  // null — never a punctuation fragment.
+  test('#4134 — milestone_name is null, never ")", for a name-then-version H1', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      [
+        '# Roadmap: GSD Core — Native OMP Runtime Support (v1.13)',
+        '',
+        '## Phases',
+        '',
+        '- [ ] **Phase 1: Runtime Adapter Interface**',
+        '',
+        '## Phase Details',
+        '',
+        '### Phase 1: Runtime Adapter Interface',
+        '',
+        '**Goal:** Define the adapter contract.',
+        '',
+      ].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      [
+        '---',
+        'gsd_state_version: 1.0',
+        'milestone: v1.13',
+        'milestone_name: Native OMP Runtime Support',
+        'status: planning',
+        '---',
+        '',
+        '# Project State',
+        '',
+      ].join('\n')
+    );
+
+    const result = runGsdTools('init manager', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.milestone_version, 'v1.13');
+    assert.strictEqual(output.milestone_name, null);
+    assert.ok(!result.output.includes('")"'), 'a lone ")" value must not appear anywhere in the JSON');
+  });
+
   // #3314 — ADR-456 subprocess clock pin: cmdInitManager's `is_active` gate
   // (nowMs - newestMtime < 300000) is CLI-subprocess tested, so only the
   // GSD_TEST_MODE+GSD_NOW_MS pin can control "now" here (t.mock.timers in the
@@ -866,6 +916,394 @@ describe('init manager — cross-milestone dependency satisfaction (#2267)', () 
       false,
       'Phase 7 dep on non-existent Phase 99 should not be satisfied'
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #4455 — init manager emits workstream-scoped state_path/roadmap_path/
+// archive_dir (same pattern cmdInitPlanPhase already uses, plus the
+// milestone.cts archive-dir composition, #1911). autonomous.md's
+// discover_phases/iterate/lifecycle steps consume these instead of
+// hardcoding `.planning/STATE.md` / `.planning/milestones/...`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('init manager — state_path/roadmap_path/archive_dir (#4455)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    // macOS: realpath before absPlanningPath comparisons (symlinked /var/tmp).
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('flat mode (no GSD_WORKSTREAM): paths resolve to root .planning (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+
+    const result = runGsdTools('init manager', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: paths resolve into the workstream, not root (#4455 regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+
+    const result = runGsdTools('init manager', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'milestones'));
+    // Goodhart both-directions: must NOT be the flat root form.
+    assert.notStrictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.notStrictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.notStrictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('state_path/roadmap_path are null when the files do not exist yet', () => {
+    // init manager itself requires ROADMAP.md/STATE.md to exist to proceed
+    // past its own readiness guard, so exercise the null branch through
+    // init complete-milestone instead — same fs.existsSync(...) ? ... : null
+    // pattern, no upstream guard blocking an empty-fixture run.
+    const result = runGsdTools('init complete-milestone', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, null);
+    assert.strictEqual(output.roadmap_path, null);
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+});
+
+describe('init complete-milestone — state_path/roadmap_path/archive_dir (#4455)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('flat mode (no GSD_WORKSTREAM): paths resolve to root .planning (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: paths resolve into the workstream, not root (#4455 regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'milestones'));
+    assert.notStrictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.notStrictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.notStrictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+});
+
+describe('init complete-milestone — milestones_path/project_path/requirements_path (#4455 follow-up)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  function writeRootProjectMd(dir) {
+    fs.writeFileSync(path.join(dir, '.planning', 'PROJECT.md'), '# Test Project\n');
+  }
+
+  test('flat mode: milestones_path/requirements_path resolve to root, project_path resolves to root (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+    writeRootProjectMd(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'MILESTONES.md'), '# Milestones\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'REQUIREMENTS.md'), '# Requirements\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.milestones_path, absPlanningPath(tmpDir, 'MILESTONES.md'));
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+    assert.strictEqual(output.requirements_path, absPlanningPath(tmpDir, 'REQUIREMENTS.md'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: milestones_path/requirements_path resolve into the workstream, but project_path STAYS root (PROJECT.md is shared, #4455 follow-up regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    // PROJECT.md is only ever written at root — cmdWorkstreamCreate never
+    // creates a per-workstream copy (it is a documented shared file, see
+    // gsd-core/references/workstream-flag.md's directory diagram).
+    writeRootProjectMd(tmpDir);
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha', 'MILESTONES.md'), '# Milestones\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'workstreams', 'alpha', 'REQUIREMENTS.md'), '# Requirements\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.milestones_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'MILESTONES.md'));
+    assert.strictEqual(output.requirements_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'REQUIREMENTS.md'));
+    // The regression this test guards against: project_path must be the
+    // ROOT PROJECT.md, never a workstream-scoped path that no writer ever
+    // populates.
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'PROJECT.md'));
+  });
+
+  test('GSD_PROJECT=second-product: project_path resolves into the PROJECT namespace, not root (#3749 regression — round 1 of this fix broke this)', () => {
+    // The FIRST version of this #4455 follow-up resolved project_path via
+    // planningRoot(cwd), which ignores GSD_PROJECT entirely — gsd-test caught
+    // this immediately (tests/init.test.cjs's pre-existing #3749 coverage) on
+    // this fix's own first push. PROJECT.md is shared across a project's own
+    // WORKSTREAMS, but a DIFFERENT project (GSD_PROJECT) legitimately gets
+    // its own separate PROJECT.md at `.planning/<project>/PROJECT.md`. The
+    // correct resolution is planningDir(cwd, null) — `ws` explicitly nulled
+    // (never read from GSD_WORKSTREAM), `project` left to default from
+    // GSD_PROJECT.
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'second-product'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'second-product', 'PROJECT.md'), '# Second Product\n');
+    writeRootProjectMd(tmpDir); // an unrelated root PROJECT.md must not win
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_PROJECT: 'second-product' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'second-product', 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+  });
+
+  test('GSD_PROJECT=second-product AND GSD_WORKSTREAM=alpha together: project_path follows the PROJECT namespace, ignoring the workstream', () => {
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'second-product', 'workstreams', 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'second-product', 'PROJECT.md'), '# Second Product\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_PROJECT: 'second-product', GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'second-product', 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path,
+      absPlanningPath(tmpDir, 'second-product', 'workstreams', 'alpha', 'PROJECT.md'));
+  });
+});
+
+describe('withProjectRoot — project_title reads PROJECT.md from root even under a workstream (#4455 follow-up)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  // Exercised via `init complete-milestone` rather than `init manager`:
+  // cmdInitManager has its own readiness guard requiring STATE.md/ROADMAP.md
+  // to already exist (see the "state_path/roadmap_path are null" test
+  // above), which would obscure whether THIS test is actually exercising
+  // withProjectRoot. Both commands share the same withProjectRoot helper.
+  test('flat mode: project_title is populated from the root PROJECT.md (regression guard)', () => {
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# My Test Project\n\nSome content.\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_title, 'My Test Project');
+  });
+
+  test('GSD_WORKSTREAM=alpha: project_title is STILL populated from the root PROJECT.md, not silently dropped (#4455 follow-up regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# My Test Project\n\nSome content.\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_title, 'My Test Project',
+      'project_title must be read from the shared root PROJECT.md even when a workstream is active');
+  });
+});
+
+describe('init subcommands sharing the project_exists/project_path PROJECT.md pattern (#4455 follow-up)', () => {
+  // A code-review pass on this fix's first draft found the identical
+  // workstream-scoped-PROJECT.md bug (fixed above for cmdInitCompleteMilestone
+  // and withProjectRoot) repeated verbatim, via grep, in six more cmdInit*
+  // functions. Each is exercised here through its real CLI subcommand rather
+  // than re-asserting src/init.cts internals directly, so a regression in the
+  // router wiring would also be caught. `init manager` is deliberately
+  // excluded: it has its own STATE.md/ROADMAP.md readiness guard (covered
+  // separately above via `init complete-milestone`, which shares
+  // withProjectRoot). `new-milestone` was originally deferred to #4456's own
+  // new-milestone.md workstream-forwarding work (see PR #4543), but that PR
+  // only exercised the *workflow's* `--ws` argv forwarding through a stubbed
+  // gsd_run, never cmdInitNewMilestone's real project_exists/project_path
+  // output — #4457 closes that gap by folding it into this loop; it has no
+  // manager-style readiness precondition, so it fits the shared assertion
+  // shape below without a dedicated test.
+  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project', 'new-milestone'];
+
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  for (const subcommand of SUBCOMMANDS) {
+    test(`GSD_WORKSTREAM=alpha: "init ${subcommand}" resolves project_path to the shared root PROJECT.md`, () => {
+      seedWorkstream(tmpDir, {
+        name: 'alpha',
+        state: '---\nstatus: active\n---\n# State\n',
+        roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+      });
+      fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# Test Project\n');
+
+      const result = runGsdTools(`init ${subcommand}`, tmpDir, { GSD_WORKSTREAM: 'alpha' });
+      assert.ok(result.success, `init ${subcommand} failed: ${result.error}`);
+      const output = JSON.parse(result.output);
+
+      assert.strictEqual(output.project_exists, true,
+        `init ${subcommand}: project_exists must be true (root PROJECT.md exists), got: ${JSON.stringify(output.project_exists)}`);
+      if ('project_path' in output) {
+        assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'),
+          `init ${subcommand}: project_path must resolve to the shared root PROJECT.md, got: ${output.project_path}`);
+        assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'PROJECT.md'),
+          `init ${subcommand}: project_path must not resolve into the workstream directory`);
+      }
+    });
+  }
+
+  test('milestone-op: GSD_WORKSTREAM=alpha does not report project_exists=false for a root-only PROJECT.md', () => {
+    // milestone-op does not expose a project_path field, only project_exists
+    // via buildInitCompletenessFields — the coreComplete/init_incomplete fix.
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# Test Project\n');
+
+    const result = runGsdTools('init milestone-op', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `init milestone-op failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_exists, true,
+      `init milestone-op: project_exists must be true for a root-only PROJECT.md under a workstream, got: ${JSON.stringify(output.project_exists)}`);
+  });
+});
+
+// #4458: init new-project's sub_repos_detected field reuses core-utils.cts's
+// detectSubRepos instead of new-project.md's own (now-removed) narrower `find
+// -exec test -d "{}/.git"` predicate, which required .git to be a DIRECTORY and
+// so silently excluded linked git worktree children (.git is a FILE there).
+describe('init new-project: sub_repos_detected (#4458)', () => {
+  const { execFileSync } = require('child_process');
+  const { createTempGitProject } = require('./helpers.cjs');
+  const { GIT_FIXTURE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+  let tmpDir;
+
+  afterEach(() => {
+    if (tmpDir) { cleanup(tmpDir); tmpDir = null; }
+  });
+
+  test('detects a REAL linked git worktree child, matching the issue #4458 repro exactly', () => {
+    // `git worktree add` genuinely needs a real git repo -- this is the only
+    // one of these three tests that does (createTempGitProject spawns
+    // `git init` + a commit, real subprocess overhead on Windows CI's
+    // Defender-scanned spawns; the other two tests below use the plain,
+    // no-git createTempProject fixture instead, matching the pattern
+    // already proven safe by the SUBCOMMANDS loop above running `init
+    // new-project` against a non-git tmpDir).
+    tmpDir = fs.realpathSync(createTempGitProject());
+    const worktreeDir = path.join(tmpDir, 'child-wt');
+    // `git worktree add` checks out files into a new working tree — the same
+    // "construction" weight class as init/config/add/commit, not plain
+    // plumbing (rev-parse/branch/log), so GIT_FIXTURE_TIMEOUT_MS is the
+    // correct shared norm here (tests/helpers/timeouts.cjs).
+    execFileSync('git', ['worktree', 'add', '-b', 'wt-branch', worktreeDir], { cwd: tmpDir, stdio: 'pipe', timeout: GIT_FIXTURE_TIMEOUT_MS });
+
+    // Confirm the fixture actually reproduces the reported shape before
+    // trusting the assertion below: a linked worktree's .git is a FILE.
+    assert.ok(fs.statSync(path.join(worktreeDir, '.git')).isFile(),
+      'fixture setup: linked worktree .git must be a file, not a directory');
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(Array.isArray(output.sub_repos_detected), 'sub_repos_detected must be an array');
+    assert.ok(output.sub_repos_detected.includes('child-wt'),
+      `sub_repos_detected must include the linked worktree child, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('detects an ordinary child clone (.git as a directory) — no regression', () => {
+    // detectSubRepos only inspects the CHILD directory's .git, not the
+    // root's own git state -- a real outer repo isn't needed here, matching
+    // the SUBCOMMANDS loop above.
+    tmpDir = fs.realpathSync(createTempProject());
+    const cloneDir = path.join(tmpDir, 'child-clone');
+    fs.mkdirSync(path.join(cloneDir, '.git'), { recursive: true });
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(output.sub_repos_detected.includes('child-clone'),
+      `sub_repos_detected must include the ordinary child clone, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('does not report an ordinary non-repository directory as a sub-repo', () => {
+    tmpDir = fs.realpathSync(createTempProject());
+    fs.mkdirSync(path.join(tmpDir, 'not-a-repo'));
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(!output.sub_repos_detected.includes('not-a-repo'),
+      `sub_repos_detected must not include a plain non-repo directory, got: ${JSON.stringify(output.sub_repos_detected)}`);
   });
 });
 
