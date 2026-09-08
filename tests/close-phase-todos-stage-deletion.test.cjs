@@ -7,8 +7,10 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { splitLines } = require('../gsd-core/bin/lib/text-lines.cjs');
 
 const EXECUTE_PHASE = path.join(__dirname, '..', 'gsd-core', 'workflows', 'execute-phase.md');
+const CLEANUP = path.join(__dirname, '..', 'gsd-core', 'workflows', 'cleanup.md');
 
 describe('#2415: close_phase_todos must stage the pending/ deletion alongside completed/', () => {
   test('close_phase_todos stages the completed/ destination and the pending/ deletion (via --files-removed since #4208)', () => {
@@ -64,5 +66,44 @@ describe('#2415: close_phase_todos must stage the pending/ deletion alongside co
     // switch to git mv without revisiting the failure modes.
     assert.match(withoutComments, /\bmv\s+"\$TODO_FILE"\s+"\$COMPLETED_DIR\/"/, 'close_phase_todos must use plain shell mv to move the file');
     assert.doesNotMatch(withoutComments, /\bgit\s+mv\b/, 'close_phase_todos must NOT use git mv as the actual move command — it fails on untracked todos and on non-git .planning dirs');
+  });
+});
+
+describe('#4208: cleanup.md archives phase directories without a --files directory sweep', () => {
+  // The other caller #4208 rewrote. execute-phase.md's equivalent rewrite is
+  // pinned above; this one was not, so a revert of the routing here would be
+  // caught by nothing -- the mechanism's own unit tests pass either way,
+  // because they never read this file.
+  function archiveStepBody() {
+    // splitLines (the text-lines seam), not a `[^\n]*` match over the whole
+    // file: a bare \n is CRLF-fragile under Windows autocrlf, and an unbounded
+    // quantifier over readFileSync content is the #2128 backtracking class.
+    const lines = splitLines(fs.readFileSync(CLEANUP, 'utf8'));
+    const line = lines.find(l => /gsd_run\s+query\s+commit\b/.test(l) && l.includes('--files-removed'));
+    assert.ok(line, `cleanup.md must commit the archive via gsd_run query commit ... --files-removed. Lines scanned: ${lines.length}`);
+    return line;
+  }
+
+  test('the archive commit routes the moved-away directories through --files-removed, not --files', () => {
+    const line = archiveStepBody();
+    const [added, removed] = line.split('--files-removed');
+
+    // The two directories the archival mv empties. Under --files a directory
+    // entry stages EVERYTHING under it, so an in-flight phase or quick-task
+    // file a concurrent session had written there would be committed too --
+    // the sweep #4208 exists to remove.
+    for (const dir of ['.planning/phases/', '.planning/quick/']) {
+      assert.ok(removed.includes(dir), `${dir} must be under --files-removed. Line: ${line}`);
+      assert.ok(!added.includes(dir), `${dir} must NOT be under --files -- a directory entry there sweeps in concurrent writes. Line: ${line}`);
+    }
+  });
+
+  test('the destinations and STATE.md stay under --files, which cannot record a deletion', () => {
+    const line = archiveStepBody();
+    const added = line.split('--files-removed')[0];
+    // --files keeps its #2014 skip-if-missing contract: it is the additive
+    // half and the only half that can carry a path that must be WRITTEN.
+    assert.ok(added.includes('.planning/milestones/'), `the archive destination must stay under --files. Line: ${line}`);
+    assert.ok(added.includes('.planning/STATE.md'), `STATE.md must stay under --files. Line: ${line}`);
   });
 });
