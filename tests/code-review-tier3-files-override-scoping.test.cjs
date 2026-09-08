@@ -36,7 +36,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 const { GIT_FIXTURE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const { createTempDir, cleanup } = require('./helpers.cjs');
@@ -131,10 +131,16 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
     // Both tiers print diagnostic "File scope: ..." / "Warning: ..." lines to
     // stdout as documentation for a human running code-review.md interactively
     // — a brace group (not a subshell: variables set inside still persist to
-    // the enclosing shell) discards that chatter so only the final REVIEW_FILES
-    // printf below reaches this script's captured stdout.
+    // the enclosing shell) redirects that chatter to stderr (captured
+    // separately below) instead of discarding it, so a failure carries the
+    // actual reason Tier 1 accepted/rejected each path, rather than forcing
+    // another guess-and-push cycle (three of which have already failed
+    // identically on Windows CI — see the round-4/round-5 review notes).
     '{',
     tier1,
+    // Diagnostic-only: what Tier 1 actually decided, before Tier 3 runs.
+    'echo "[diag] REPO_ROOT=$REPO_ROOT"',
+    'for f in "${REVIEW_FILES[@]:-}"; do echo "[diag] REVIEW_FILES(post-tier1)+=$f"; done',
     // Tier 1 unconditionally resets REVIEW_FILES=() when FILES_OVERRIDE is
     // set; the seed only matters (and only applies) when it is not, exactly
     // mirroring Tier 2 running in FILES_OVERRIDE's absence.
@@ -143,19 +149,29 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
     'PADDED_PHASE="03"',
     'LAST_REVIEW_COMMIT=""',
     tier3,
-    '} > /dev/null',
+    '} 1>&2',
     'printf \'%s\\n\' "${REVIEW_FILES[@]}"',
   ].join('\n');
 
   const scriptPath = path.join(tmpDir, '.tier-script.sh');
   fs.writeFileSync(scriptPath, script);
 
-  const output = execFileSync('bash', [scriptPath], {
+  const result = spawnSync('bash', [scriptPath], {
     cwd: tmpDir,
     encoding: 'utf8',
     timeout: GIT_FIXTURE_TIMEOUT_MS,
   });
-  return output.split('\n').map((l) => l.trim()).filter(Boolean).sort();
+  if (result.error) {
+    throw new Error(`bash spawn failed: ${result.error.message}\ndiagnostics:\n${result.stderr || '(none)'}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `bash exited ${result.status} (signal ${result.signal})\ndiagnostics:\n${result.stderr || '(none)'}`,
+    );
+  }
+  const files = result.stdout.split('\n').map((l) => l.trim()).filter(Boolean).sort();
+  files.__diagnostics = result.stderr;
+  return files;
 }
 
 describe('#4460: code-review.md Tier 3 does not widen an explicit --files override', () => {
@@ -173,18 +189,18 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
   });
 
   test('real execution: --files=src/alpha.js stays scoped to exactly that file (issue #4460 repro)', () => {
-    // fs.realpathSync.native (not the plain fs.realpathSync used elsewhere in
-    // this file's original revision) — tests/helpers.cjs's own
-    // tmpRootCandidates() documents that GitHub's Windows runners report
-    // os.tmpdir() in the 8.3 SHORT form (C:\Users\RUNNER~1\...) and that
-    // fs.realpathSync() does not reliably expand it, only the .native variant
-    // does. Without this, this test's tmpDir can carry a short-name segment
-    // that bash's own `git rev-parse --show-toplevel` / `realpath` resolve
-    // differently inside Tier 1, so its REPO_ROOT-prefix containment check
-    // spuriously treats every --files entry as "outside the repository" —
-    // REVIEW_FILES stays empty and control falls through to the full-diff
-    // path, which is what actually caused this test's prior Windows CI
-    // failure (all 5 files instead of the requested 1), not the `-m` flag.
+    // fs.realpathSync.native: tests/helpers.cjs's tmpRootCandidates() documents
+    // GitHub's Windows runners reporting os.tmpdir() in the 8.3 SHORT form and
+    // plain fs.realpathSync() not reliably expanding it. Applied as a
+    // plausible, evidence-grounded fix for the same widened-to-5-files
+    // Windows CI failure this test kept hitting -- but it did NOT resolve it
+    // (identical symptom recurred after this fix landed), so the true cause
+    // is still unconfirmed. Left in place because it's still a correct fix
+    // for its own documented bug class, but see runTiers()'s stderr
+    // diagnostics wiring below: rather than guess a fourth time, the next
+    // Windows CI failure carries Tier 1's own "[diag] REPO_ROOT=..." /
+    // "[diag] REVIEW_FILES(post-tier1)+=..." lines so the actual cause is
+    // read off the failure, not inferred.
     const tmpDir = fs.realpathSync.native(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
@@ -192,7 +208,7 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
       assert.deepEqual(
         files,
         ['src/alpha.js'],
-        `--files override must not be widened by Tier 3's cross-check, got: ${JSON.stringify(files)}`,
+        `--files override must not be widened by Tier 3's cross-check, got: ${JSON.stringify(files)}\ndiagnostics:\n${files.__diagnostics || '(none)'}`,
       );
     } finally {
       cleanup(tmpDir);
@@ -210,7 +226,7 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
       assert.deepEqual(
         files,
         ['src/alpha.js', 'src/beta.js', 'src/delta.js', 'src/epsilon.js', 'src/gamma.js'],
-        `without --files, the cross-check must still widen a partial scope, got: ${JSON.stringify(files)}`,
+        `without --files, the cross-check must still widen a partial scope, got: ${JSON.stringify(files)}\ndiagnostics:\n${files.__diagnostics || '(none)'}`,
       );
     } finally {
       cleanup(tmpDir);
