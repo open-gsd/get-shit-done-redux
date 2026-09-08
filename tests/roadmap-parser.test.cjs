@@ -3652,6 +3652,30 @@ describe('#1881 unreadable ROADMAP vs absent ROADMAP', () => {
       ]);
     });
 
+    t3('#4480 property: the declared name column wins at every column position', () => {
+      const otherHeader = fc.constantFrom('Status', 'Goal', 'Plans', 'Owner');
+      fc.assert(fc.property(
+        fc.array(otherHeader, { maxLength: 4 }),
+        fc.array(otherHeader, { maxLength: 4 }),
+        fc.constantFrom('Name', 'Phase Name'),
+        fc.integer({ min: 1, max: 998 }),
+        fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9 ]{0,30}$/),
+        (before, after, nameHeader, phase, name) => {
+          const headers = ['Phase', ...before, nameHeader, ...after];
+          const values = [String(phase), ...before.map(() => 'x'), name, ...after.map(() => 'y')];
+          const delimiter = headers.map(() => '---');
+          const rows = rp3.collectTablePhaseRows([
+            `| ${headers.join(' | ')} |`,
+            `| ${delimiter.join(' | ')} |`,
+            `| ${values.join(' | ')} |`,
+          ].join('\n'));
+          a3.deepStrictEqual(rows.map(({ id, name: parsedName }) => ({ id, name: parsedName })), [
+            { id: String(phase), name: name.trim() },
+          ]);
+        },
+      ), { numRuns: 200 });
+    });
+
     t3('#4480: a status table cannot hide missing phase details', () => {
       writeRoadmap3(tmpDir, [
         '# Roadmap', '',
