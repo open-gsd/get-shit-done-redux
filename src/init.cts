@@ -4111,19 +4111,43 @@ function cmdAgentSkills(
   // persona fallback. Triggering the fallback for claude would change the
   // documented "unconfigured → empty block" contract that agent-skills tests
   // pin.
+  //
+  // #4407 (ADR-4139 stream 2): this is the one place GSD's own agent-persona
+  // content is served through a real code seam rather than an eagerly
+  // @-included file, so the compact/canonical choice is made here in code
+  // (a real exit code) instead of a prose config-get gate. Compact is tried
+  // first when requested; a missing compact sibling falls back to canonical
+  // with the fallback disclosed in the payload itself, never a silent switch.
+  let agentPayloadVariant: 'compact' | 'canonical' | null = null;
   if (!block) {
     const runtime = (config && (config['runtime'] as string)) || process.env['GSD_RUNTIME'] || 'claude';
     if (runtime !== 'claude') {
       const agentCheck = checkAgentsInstalled(runtime, projectRoot) as unknown as { agents_dir?: string } | null;
       const agentsDir = agentCheck?.agents_dir;
       if (typeof agentsDir === 'string' && agentsDir.length > 0) {
-        const agentFile = path.join(agentsDir, `${agentType}.md`);
-        try {
-          const content = platformReadSync(agentFile);
-          if (content && content.length > 0) {
-            block = content;
-          }
-        } catch { /* agent file not found — fall through to empty block */ }
+        const compactRequested = readConfigJsonBoolean(projectRoot, ['workflow', 'compact_content']);
+        if (compactRequested) {
+          const compactFile = path.join(agentsDir, `${agentType}.compact.md`);
+          try {
+            const content = platformReadSync(compactFile);
+            if (content && content.length > 0) {
+              block = content;
+              agentPayloadVariant = 'compact';
+            }
+          } catch { /* no compact payload registered — fall through to canonical */ }
+        }
+        if (!block) {
+          const agentFile = path.join(agentsDir, `${agentType}.md`);
+          try {
+            const content = platformReadSync(agentFile);
+            if (content && content.length > 0) {
+              block = compactRequested
+                ? `<!-- gsd: no compact payload registered for ${agentType}; serving canonical -->\n\n${content}`
+                : content;
+              agentPayloadVariant = 'canonical';
+            }
+          } catch { /* agent file not found — fall through to empty block */ }
+        }
       }
     }
   }
@@ -4185,6 +4209,7 @@ function cmdAgentSkills(
       reason,
       source,
       degraded,
+      agent_payload_variant: agentPayloadVariant,
       value: resolution.value,
     }, raw);
     return;

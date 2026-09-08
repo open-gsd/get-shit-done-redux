@@ -48,3 +48,19 @@ it is, for the same reason stream 1's `@`-includes were left alone — convertin
 host-guaranteed load for a conditional one. Before wiring any call site, confirm by inspection
 which kind it is; do not assume every mention of a `gsd-core/templates/**` path is a runtime `Read`
 just because the directory's typical case is.
+
+## Stream 2 — agent-skill payloads (the `gsd_run query agent-skills` CLI seam)
+
+`agents/<name>.compact.md`, same directory, same stem, `.compact.md` suffix — registered and
+checked the same way as streams 1b/4. The selection is different: this seam already runs through
+a real function call (`cmdAgentSkills`, `src/init.cts`), so the resolution happens **in code**,
+not by a `gsd_run query config-get` prose instruction. There is nothing to state here for a
+workflow author to follow, because no workflow author calls this seam directly — it fires only
+inside the `#2454` persona fallback for non-Claude, AGENTS-native runtimes that cannot dispatch a
+named subagent.
+
+Same two rules as streams 1b/4, enforced in code instead of prose: `workflow.compact_content` off,
+or no registered `.compact.md` sibling for that agent, serves the canonical persona unchanged; on,
+with a sibling registered, serves the compact one. The one addition code gives that prose could
+not: a missing sibling is disclosed in the served payload itself (a leading `<!-- gsd: no compact
+payload registered ... -->` comment) rather than silently serving canonical with no signal at all.

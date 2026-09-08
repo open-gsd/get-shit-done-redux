@@ -46,7 +46,14 @@ const { countTokens } = require('gpt-tokenizer');
 const { runMain } = require('./lib/cli-exit.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const VARIANT_ROOTS = [path.join(ROOT, 'gsd-core', 'workflows'), path.join(ROOT, 'gsd-core', 'templates')];
+// #4407: agents/ joins the scan. Reachability there is a code seam
+// (cmdAgentSkills), not a markdown literal reference, but token accounting
+// doesn't care how a pair is reached — only that it's registered.
+const VARIANT_ROOTS = [
+  path.join(ROOT, 'gsd-core', 'workflows'),
+  path.join(ROOT, 'gsd-core', 'templates'),
+  path.join(ROOT, 'agents'),
+];
 const BASELINE_PATH = path.join(ROOT, 'tests', 'fixtures', 'compact-content-variant-benchmark-baseline.json');
 const COMPACT_SUFFIX = '.compact.md';
 
