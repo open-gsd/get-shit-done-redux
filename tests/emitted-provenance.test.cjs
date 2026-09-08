@@ -360,17 +360,14 @@ test('agents-verbatim is reclassified to derived with the same transforms, sourc
   assert.deepEqual(got.transforms, AGENT_TRANSFORM_SRCS);
 });
 
-test('#4482 OpenCode command and skill surfaces declare their converter transform', () => {
+test('#4482 runtime-note-filtered command and skill surfaces declare their converter transform', () => {
   const command = attributeEmittedPath('commands/gsd-plan-phase.md', 'opencode');
   const skill = attributeEmittedPath('skills/gsd-plan-phase/SKILL.md', 'opencode');
   assert.deepEqual(command.transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
   assert.deepEqual(skill.transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
 
-  assert.deepEqual(
-    attributeEmittedPath('commands/gsd-plan-phase.md', 'kilo').transforms,
-    [],
-    'the transform attribution must remain scoped to OpenCode',
-  );
+  assert.deepEqual(attributeEmittedPath('commands/gsd-plan-phase.md', 'kilo').transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
+  assert.deepEqual(attributeEmittedPath('skills/gsd-plan-phase/SKILL.md', 'cursor').transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
 });
 
 test('a rule with no transforms field still returns an empty array, never undefined', () => {

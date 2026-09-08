@@ -182,13 +182,16 @@ const ZCODE_BODY_TRANSFORM_SRCS = [
   'bin/install.js',
 ];
 
-// #4482: OpenCode commands and their command-derived skills both pass through
-// converters owned by runtime-artifact-conversion.cts. A scoped converter edit
-// can therefore move these emitted bytes without changing commands/gsd/*.md.
-// Keep this runtime-specific: other flat runtimes do not share this transform.
+// #4482: every non-Claude/non-Copilot runtime filters audience-specific notes
+// through the conversion module and the published installer copy path.
 const OPENCODE_COMMAND_TRANSFORM_SRCS = [
   'src/runtime-artifact-conversion.cts',
+  'bin/install.js',
 ];
+const RUNTIME_NOTE_FILTERED_IDS = new Set([
+  'antigravity', 'augment', 'cline', 'codebuddy', 'codex', 'cursor', 'hermes',
+  'kilo', 'kimi', 'kimi-code', 'opencode', 'pi', 'qwen', 'trae', 'windsurf', 'zcode',
+]);
 
 /**
  * A `sources` entry ending in `/` is a PREFIX, not a file: it means "any repo path
@@ -533,7 +536,7 @@ const PROVENANCE_RULES = [
     // ZCODE_BODY_TRANSFORM_SRCS), so the converter change explains theirs too.
     transforms: (_m, ctx) => {
       if (ctx.runtime === 'antigravity') return ANTIGRAVITY_SKILL_TRANSFORM_SRCS;
-      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
+      if (RUNTIME_NOTE_FILTERED_IDS.has(ctx.runtime)) return OPENCODE_COMMAND_TRANSFORM_SRCS;
       if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
       return [];
     },
@@ -550,7 +553,7 @@ const PROVENANCE_RULES = [
     // #4002: zcode's nested router children pass through the same rewrite pass
     // as its flat skills — see ZCODE_BODY_TRANSFORM_SRCS.
     transforms: (_m, ctx) => {
-      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
+      if (RUNTIME_NOTE_FILTERED_IDS.has(ctx.runtime)) return OPENCODE_COMMAND_TRANSFORM_SRCS;
       if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
       return [];
     },
@@ -565,7 +568,7 @@ const PROVENANCE_RULES = [
     // #4002: zcode command bodies pass through _applyRuntimeRewrites with
     // converter: null — see ZCODE_BODY_TRANSFORM_SRCS above.
     transforms: (_m, ctx) => {
-      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
+      if (RUNTIME_NOTE_FILTERED_IDS.has(ctx.runtime)) return OPENCODE_COMMAND_TRANSFORM_SRCS;
       if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
       return [];
     },
