@@ -465,8 +465,17 @@ function collectAnalyzePhases(
   // #3036: widen the id capture to accept non-numeric-leading ids (e.g. B7, P0.3-2)
   // that get-phase/execute-phase already resolve. An optional leading letter prefix
   // ([A-Za-z]?) covers letter-prefixed ids without breaking numeric-leading ones.
+  // #4478: line-anchored (`^ {0,3}`, `/m`) — unanchored, `#{2,4}` matched a
+  // `### Phase N:`-shaped mention ANYWHERE `exec()`'s scan reached: mid-sentence
+  // prose, inside a blockquote, inside an inline code span (backtick-quoted on
+  // the same line, not a fenced block `tokenizeHeadings` would exclude). Any
+  // such line minted a phantom phase entry, inflating phase_count and able to
+  // collide on a phase NUMBER with a real heading nearby. `{0,3}` leading
+  // spaces mirrors `tokenizeHeadings`'s own CommonMark ATX-heading tolerance
+  // (src/markdown-sectionizer.cts:453) so a legitimately-indented heading that
+  // matched before this fix still matches after it.
   // phase-id-owner: uses the [.-] (dot-or-dash) separator variant, not the canonical dot-only token; a swap to PHASE_NUMBER_TOKEN_SOURCE would drop hyphenated phase-id matches.
-  const phasePattern = new RegExp(`#{2,4}\\s*${phaseHeadingPrefixSrcFor(PHASE_HEADING_BASELINE.ANY_BRACKET, convention, true)}([A-Za-z]?\\d+[A-Z]?(?:[.-]\\d+)*)(?:\\s*\\([^)\\n]{0,200}\\))?\\s*:\\s*([^\\n]+)`, 'gi');
+  const phasePattern = new RegExp(`^ {0,3}#{2,4}\\s*${phaseHeadingPrefixSrcFor(PHASE_HEADING_BASELINE.ANY_BRACKET, convention, true)}([A-Za-z]?\\d+[A-Z]?(?:[.-]\\d+)*)(?:\\s*\\([^)\\n]{0,200}\\))?\\s*:\\s*([^\\n]+)`, 'gim');
   // The capturing intro inserts the bracket id at group 1 only under the
   // bracket convention; the token and name shift by the same offset.
   const G = convention === 'bracket' ? 1 : 0;
@@ -488,7 +497,13 @@ function collectAnalyzePhases(
     // #3691: `\d` → `\d[\d.]*` so decimal phase headings (e.g. `### Phase 02.3:`) are
     // recognised as section boundaries. #3036: `[A-Za-z]?\d` so non-numeric-leading ids
     // (e.g. B7) are also recognised.
-    const nextHeader = restOfContent.match(new RegExp(`\\n#{2,4}\\s+${phaseHeadingPrefixSrcFor(PHASE_HEADING_BASELINE.ANY_BRACKET, convention)}[A-Za-z]?\\d[\\d.-]*`, 'i'));
+    // #4478 follow-up (independent code review on this same fix): ` {0,3}` after
+    // the literal `\n` mirrors phasePattern's own new leading-space tolerance
+    // above -- without it, a legitimately-indented (1-3 space) NEXT phase
+    // heading was invisible to this boundary lookup, letting the PRIOR phase's
+    // goal/mode/depends_on extraction bleed across the section boundary into
+    // the next phase's own body.
+    const nextHeader = restOfContent.match(new RegExp(`\\n {0,3}#{2,4}\\s+${phaseHeadingPrefixSrcFor(PHASE_HEADING_BASELINE.ANY_BRACKET, convention)}[A-Za-z]?\\d[\\d.-]*`, 'i'));
     const sectionEnd = nextHeader ? sectionStart + nextHeader.index! : content.length;
     const section = content.slice(sectionStart, sectionEnd);
 
