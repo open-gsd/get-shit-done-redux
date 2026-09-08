@@ -2084,8 +2084,16 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   // `"caf\303\251.md"`, which never equals the raw path in `stagedPaths`, so
   // the rollback below would treat a caller-pre-staged `café.md` as this
   // call's own and unstage it (#4208 review, driven).
+  // `--relative`: `diff --cached` prints REPO-relative paths whatever the cwd,
+  // while `stagedPaths` holds the caller's own cwd-relative names. In a project
+  // nested inside its repo (`<repo>/sub/.planning/...`) the two name spaces
+  // never intersect, so `preStaged` matched NOTHING and the rollback unstaged
+  // every path including the caller's own pre-staged work. Driven on a nested
+  // fixture: a caller-staged deletion vanished from `diff --cached` after an
+  // unrelated declaration failed. Pre-existing -- it governs the `--files` side
+  // too -- and a no-op when the project IS the repo root.
   const preStaged = new Set(
-    execGit(['diff', '--cached', '--name-only', '-z'], { cwd })
+    execGit(['diff', '--cached', '--name-only', '-z', '--relative'], { cwd })
       .stdout.split('\0').filter(Boolean),
   );
   for (const file of filesToStage) {
@@ -2235,7 +2243,12 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     const removedPaths = new Set(removedEntries.map(e => e.path));
     const toUnstage = stagedPaths.filter(p => !preStaged.has(p) && !removedPaths.has(p));
     if (toUnstage.length > 0) {
-      execGit(['reset', '-q', '--', ...toUnstage], { cwd });
+      // `asPathspec` here too. This reset is the LAST place a removal-derived
+      // name reaches git as a pathspec, and it is the most damaging: driven,
+      // a wildcard-named entry that slipped into `toUnstage` globbed and
+      // unstaged the CALLER'S OWN pre-staged deletion and modification, then
+      // reported only the contradiction that triggered the rollback.
+      execGit(['reset', '-q', '--', ...toUnstage.map(asPathspec)], { cwd });
     }
     // Removals are restored from the recorded entries, never via `reset`
     // (no HEAD to reset to on an unborn branch; not the pre-staged blob when

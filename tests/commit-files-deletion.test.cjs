@@ -1032,7 +1032,15 @@ describe('commit --files-removed: index states absent by design are never remova
     fs.writeFileSync(path.join(tmpDir, PENDING, '*.md'), 'wildcard\n');
     git(['add', '-N', '--', ':(literal)' + path.join(PENDING, '*.md')]);
     fs.unlinkSync(path.join(tmpDir, PENDING, '*.md'));
-    const flagsBefore = git(['ls-files', '-v', '--', ':(literal)' + path.join(PENDING, '*.md')]);
+    // OBSERVE THE FLAG, not the entry. `ls-files -v` renders an intent-to-add
+    // exactly like an ordinary cached entry, so comparing it cannot see the
+    // flag at all -- an earlier cut of this test did that and passed with the
+    // fix reverted. An intent-to-add is absent from `diff --cached`; losing the
+    // flag turns it into a real staged addition, which is what to assert on.
+    assert.doesNotMatch(
+      git(['diff', '--cached', '--name-status']), /^A\t.*\*\.md$/m,
+      'fixture: the intent-to-add entry is not a staged addition yet',
+    );
 
     // A directory entry: the intent-to-add path must be SKIPPED, not removed.
     const result = runGsdTools(
@@ -1040,11 +1048,55 @@ describe('commit --files-removed: index states absent by design are never remova
       tmpDir,
     );
     assert.ok(result.output, 'the tool produced output');
-    assert.strictEqual(
-      git(['ls-files', '-v', '--', ':(literal)' + path.join(PENDING, '*.md')]), flagsBefore,
-      'the intent-to-add entry must be left exactly as it was, flag included',
+    assert.doesNotMatch(
+      git(['diff', '--cached', '--name-status']), /^A\t.*\*\.md$/m,
+      'the intent-to-add entry must keep its flag -- a --cacheinfo restore turns it into a real staged addition',
+    );
+    assert.match(
+      git(['ls-files', '--', ':(literal)' + path.join(PENDING, '*.md')]), /\*\.md/,
+      'and it must still be in the index at all',
     );
   });
+
+  test("a nested project's rollback leaves the caller's own staged work alone", (t) => {
+    // `diff --cached` prints REPO-relative paths whatever the cwd, while
+    // stagedPaths holds the caller's cwd-relative names. In a project nested
+    // inside its repo the two name spaces never intersect, so `preStaged`
+    // matched NOTHING and the rollback unstaged everything -- including work
+    // the caller had staged themselves, which is precisely what preStaged
+    // exists to protect. Pre-existing: it governs the --files side too.
+    const repo = createTempGitProject();
+    t.after(() => cleanup(repo));
+    const proj = path.join(repo, 'sub');
+    const pending = path.join(proj, PENDING);
+    fs.mkdirSync(pending, { recursive: true });
+    fs.writeFileSync(path.join(pending, 'mine.md'), 'mine\n');
+    fs.writeFileSync(path.join(pending, 'peer.md'), 'peer\n');
+    fs.writeFileSync(path.join(pending, 'stays.md'), 'stays\n');
+    const g = (args) => gitOrThrow(args, { cwd: repo, timeoutMs: GIT_TIMEOUT_MS }).trim();
+    g(['add', 'sub']);
+    g(['commit', '-q', '-m', 'seed a nested project']);
+    // The caller stages their OWN work: a deletion and a modification.
+    fs.unlinkSync(path.join(pending, 'mine.md'));
+    g(['add', '-A', '--', 'sub/.planning/todos/pending/mine.md']);
+    fs.writeFileSync(path.join(pending, 'peer.md'), 'peer, modified\n');
+    g(['add', 'sub/.planning/todos/pending/peer.md']);
+    const before = g(['diff', '--cached', '--name-status']);
+
+    // stays.md is present, so the declaration is contradictory and the call
+    // rolls back. The rollback must not touch what the caller staged.
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration',
+        '--files-removed', '.planning/todos/pending/', '.planning/todos/pending/stays.md'],
+      proj,
+    );
+    assert.strictEqual(JSON.parse(result.output).reason, 'staging_failed', result.output);
+    assert.strictEqual(
+      g(['diff', '--cached', '--name-status']), before,
+      "the caller's own staged deletion and modification must survive the rollback",
+    );
+  });
+
 
 
 
