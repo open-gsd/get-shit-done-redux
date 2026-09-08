@@ -166,6 +166,11 @@ function normalizeAntigravityPayload(data) {
     if (typeof args.TargetFile === 'string') input.file_path = args.TargetFile;
     if (typeof args.AbsolutePath === 'string') input.file_path = args.AbsolutePath;
     if (typeof args.CommandLine === 'string') input.command = args.CommandLine;
+    // grep_search uses a search root plus an optional include pattern. Lift
+    // both documented fields into the Grep vocabulary consumed by the secret
+    // guard; other guards ignore these extra, typed fields.
+    if (raw === 'grep_search' && typeof args.SearchPath === 'string') input.path = args.SearchPath;
+    if (raw === 'grep_search' && typeof args.Includes === 'string') input.glob = args.Includes;
     data.tool_input = input;
   }
   return data;

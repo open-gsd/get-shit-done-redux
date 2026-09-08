@@ -11,8 +11,9 @@
 // This hook enforces the constraint at the tooling layer, making it HARD-BLOCKING.
 //
 // Triggers on: Edit, Write, and MultiEdit tool calls
-// Action: BLOCK (exit 2) if file_path is absolute and outside the worktree root
-// No-op: relative paths, non-worktree CWDs, hook errors (silent fail)
+// Action: BLOCK (exit 2) if file_path is absolute and outside the worktree root,
+//         or if Antigravity multi_replace_file_content supplies a relative path
+// No-op: other relative paths, non-worktree CWDs, hook errors (silent fail)
 
 const fs = require('fs');
 const path = require('path');
@@ -185,6 +186,11 @@ function normalizeAntigravityPayload(data) {
     if (typeof args.TargetFile === 'string') input.file_path = args.TargetFile;
     if (typeof args.AbsolutePath === 'string') input.file_path = args.AbsolutePath;
     if (typeof args.CommandLine === 'string') input.command = args.CommandLine;
+    // grep_search uses a search root plus an optional include pattern. Lift
+    // both documented fields into the Grep vocabulary consumed by the secret
+    // guard; other guards ignore these extra, typed fields.
+    if (raw === 'grep_search' && typeof args.SearchPath === 'string') input.path = args.SearchPath;
+    if (raw === 'grep_search' && typeof args.Includes === 'string') input.glob = args.Includes;
     data.tool_input = input;
   }
   return data;
@@ -270,6 +276,11 @@ process.stdin.on('end', () => {
       allow(undefined);
     }
 
+    const antigravityToolName = data.toolCall !== null && typeof data.toolCall === 'object'
+      && typeof data.toolCall.name === 'string'
+      ? data.toolCall.name
+      : '';
+
     // Relative paths resolve against the tool's CWD, which is inside the worktree
     // — so under the runtime this guard was written for they cannot leave it.
     //
@@ -285,6 +296,22 @@ process.stdin.on('end', () => {
     // `../`-laden path exits 0 at this line and escapes the worktree. Stating a
     // mechanism and an unverified premise — not asserting a live bypass.
     if (!path.isAbsolute(rawFilePath)) {
+      // #4332: Antigravity documents multi_replace_file_content with only a
+      // TargetFile argument, but does not promise that it is absolute or state
+      // which directory resolves a relative value. This PR makes that payload
+      // reach this guard for the first time. Refuse the ambiguous shape inside
+      // a managed executor worktree instead of assuming it resolves from cwd
+      // and silently allowing a ../ escape.
+      if (antigravityToolName === 'multi_replace_file_content') {
+        const output = {
+          decision: 'block',
+          reason:
+            `Worktree path guard: Antigravity multi_replace_file_content supplied the relative ` +
+            `TargetFile '${rawFilePath}'. Its resolution base is not guaranteed by the hook ` +
+            `contract, so an absolute path inside the active worktree is required.`,
+        };
+        deny(output, output.reason);
+      }
       allow(undefined);
     }
 

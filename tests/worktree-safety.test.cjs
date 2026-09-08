@@ -5122,6 +5122,19 @@ describe('bug #260: gsd-worktree-path-guard.js', () => {
       assert.strictEqual(result.status, 0);
       assert.strictEqual(result.stdout, '');
     });
+
+    test('Antigravity multi_replace_file_content with relative TargetFile is blocked', () => {
+      const result = runHook(worktreeDir, {
+        cwd: worktreeDir,
+        toolCall: {
+          name: 'multi_replace_file_content',
+          args: { TargetFile: '../escape.ts', ReplacementChunks: [] },
+        },
+      });
+      assert.strictEqual(result.status, 2,
+        `an unverified relative resolution base must not permit an escape; stderr: ${result.stderr}`);
+      assert.strictEqual(JSON.parse(result.stdout).decision, 'block');
+    });
   });
 
   // 3. Non-Edit/Write tools always pass

@@ -568,6 +568,19 @@ test('a run_command payload exposes its command line where guards read it (#4332
   assert.equal(out.tool_input.command, 'git commit -m x');
 });
 
+test('a grep_search payload exposes its documented path and include glob (#4332)', () => {
+  const out = normalizeAntigravityPayload({
+    toolCall: {
+      name: 'grep_search',
+      args: { SearchPath: '/repo/.env', Query: 'TOKEN', Includes: '.env*' },
+    },
+  });
+  assert.equal(out.tool_name, 'Grep');
+  assert.equal(out.tool_input.path, '/repo/.env');
+  assert.equal(out.tool_input.glob, '.env*');
+  assert.equal(out.tool_input.Query, undefined, 'unconsumed fields are not copied wholesale');
+});
+
 test('an undocumented Command alias is not treated as Antigravity CommandLine (#4332)', () => {
   const out = normalizeAntigravityPayload({ toolCall: { name: 'run_command', args: { Command: 'git commit -m x' } } });
   assert.equal(out.tool_name, 'Bash');
@@ -630,6 +643,8 @@ test('normalization is total over generated JSON payloads and targeted envelopes
     TargetFile: json,
     CommandLine: json,
     Command: json,
+    SearchPath: json,
+    Includes: json,
   });
   const targetedPayload = fc.record({
     toolCall: fc.oneof(
