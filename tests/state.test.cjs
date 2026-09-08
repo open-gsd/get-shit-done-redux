@@ -4923,12 +4923,47 @@ describe('updatePerformanceMetricsSection', () => {
 describe('state planned-phase command', () => {
   let tmpDir;
 
+  function seedState() {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '# Project State\n\n**Status:** Planning\n**Total Plans in Phase:** 0\n**Last Activity:** 2024-01-01\n**Current Phase:** 1\n',
+    );
+  }
+
   beforeEach(() => {
     tmpDir = createFixture();
   });
 
   afterEach(() => {
     cleanup(tmpDir);
+  });
+
+  for (const { label, args } of [
+    { label: 'missing', args: ['state', 'planned-phase'] },
+    { label: 'flag-shaped', args: ['state', 'planned-phase', '--phase', '--name', 'API'] },
+    { label: 'empty', args: ['state', 'planned-phase', '--phase', ''] },
+    { label: 'whitespace-only', args: ['state', 'planned-phase', '--phase', '   '] },
+  ]) {
+    test(`#4383: ${label} --phase fails before writing STATE.md`, () => {
+      seedState();
+      const statePath = path.join(tmpDir, '.planning', 'STATE.md');
+      const before = fs.readFileSync(statePath, 'utf8');
+
+      const result = runGsdTools(args, tmpDir);
+
+      assert.strictEqual(result.success, false, `${label} --phase must fail the command`);
+      assert.notStrictEqual(result.exitCode, 0, 'usage error must exit non-zero');
+      assert.match(result.error, /--phase/, `usage message must name --phase; got: ${result.error}`);
+      assert.strictEqual(fs.readFileSync(statePath, 'utf8'), before, 'STATE.md must stay byte-identical');
+    });
+  }
+
+  test('#4383: phase zero remains a valid present value', () => {
+    seedState();
+    const result = runGsdTools(['state', 'planned-phase', '--phase', '0', '--plans', '1'], tmpDir);
+
+    assert.ok(result.success, `phase zero must not be treated as missing: ${result.error}`);
+    assert.strictEqual(JSON.parse(result.output).phase, '0');
   });
 
   test('after call: Status is "Ready to execute"', () => {
