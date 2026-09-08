@@ -722,7 +722,10 @@ function preservedValuesEqual(a: unknown, b: unknown): boolean {
  *   (a hand-corrected or previously-correct counter can never be re-derived
  *   downward — the #4129 clobber).
  * - any other key keeps the curated value (the existing branch's convention).
- * - percent is RECOMPUTED from the merged counters through the single kernel
+ * - percent is RECOMPUTED from the merged counters through the single kernel, but only
+ *   when a curated counter actually OVERRODE a derived one (#4210: percent is composed
+ *   per phase slot from data this layer does not have, so an unconditional recompute
+ *   discards it)
  *   (`computeProgressPercent`), because either side's stored percent was
  *   computed against that side's counters and the merged block may mix them
  *   (curated completed, derived totals). Recomputation runs ONLY when the
