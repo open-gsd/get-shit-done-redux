@@ -120,6 +120,44 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
     assert.equal(result.exitCode, 0, `bash rejected the shipped fence:\n${result.stderr}`);
   });
 
+  test('#4461: the shipped heredoc treats adversarial SUMMARY text and paths as inert data', () => {
+    const src = readFileNormalized(WORKFLOW_PATH);
+    const helperStart = src.indexOf('  extract_summary_files() {');
+    const helperEnd = src.indexOf('\n  \n  if [ -n "$SUMMARIES" ]; then', helperStart);
+    assert.ok(helperStart !== -1 && helperEnd !== -1, 'extract_summary_files helper must be extractable');
+    const helper = src.slice(helperStart, helperEnd);
+
+    const dir = createTempDir('gsd-4461-adversarial-');
+    try {
+      const sentinel = path.join(dir, 'MUST-NOT-EXIST');
+      const summary = path.join(dir, 'SUMMARY $(not-a-command) "quoted".md');
+      const dollarPath = `src/$(touch ${sentinel}).js`;
+      const backtickPath = `src/\`touch ${sentinel}\`.js`;
+      fs.writeFileSync(summary, [
+        '---',
+        'key-files:',
+        '  created:',
+        `    - ${dollarPath}`,
+        '  modified:',
+        `    - ${backtickPath}`,
+        '---',
+        '',
+      ].join('\n'));
+
+      const script = ['set -eu', helper, 'extract_summary_files "$SUMMARY_PATH"'].join('\n');
+      const result = toLegacyResult(runHook('-c', [script, 'bash'], {
+        interpreter: 'bash',
+        env: { ...process.env, SUMMARY_PATH: summary },
+        timeoutMs: PROBE_TIMEOUT_MS,
+      }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepStrictEqual(result.stdout.trim().split('\n'), [dollarPath, backtickPath]);
+      assert.ok(!fs.existsSync(sentinel), 'SUMMARY payload must never execute command substitutions');
+    } finally {
+      cleanup(dir);
+    }
+  });
+
   test('extracts only key-files.created and key-files.modified entries', () => {
     const yaml = [
       'key-files:',
