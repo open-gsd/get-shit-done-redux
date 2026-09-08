@@ -1590,6 +1590,18 @@ describe('cmdStateGet (state get)', () => {
     assert.strictEqual(output['Status'], 'Active', 'should extract Status field value');
   });
 
+  test('bold field lookup ignores prose lookalikes and accepts indentation (#4481)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '# Project State\n\nA note cites **Status:** stale prose.\n  **Status:** Active\n'
+    );
+
+    const result = runGsdTools('state get Status', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output['Status'], 'Active');
+  });
+
   test('extracts markdown section content', () => {
     fs.writeFileSync(
       path.join(tmpDir, '.planning', 'STATE.md'),
@@ -3902,9 +3914,9 @@ describe('#4481: stateExtractField ignores mid-sentence bold lookalikes', () => 
     '',
     'A note cites **Progress:** dashboards, **Total Plans in Phase:** aggregation, and **Last Activity:** retention.',
     '',
-    '**Progress:** [█░░░░░░░░░] 10%',
-    '**Total Plans in Phase:** 2',
-    '**Last Activity:** 2026-01-01',
+    '  **Progress:** [█░░░░░░░░░] 10%',
+    '\t**Total Plans in Phase:** 2',
+    '  **Last Activity:** 2026-01-01',
     '',
   ].join('\n');
 
@@ -3925,6 +3937,10 @@ describe('#4481: stateExtractField ignores mid-sentence bold lookalikes', () => 
     assert.ok(changes.includes('Total Plans in Phase: 2 -> 3'));
     assert.ok(changes.some((change) => change.startsWith('Progress: [█░░░░░░░░░] 10% -> ')));
     assert.ok(changes.includes('Last Activity: 2026-01-01 -> 2026-09-07'));
+    assert.ok(result.content.includes('A note cites **Progress:** dashboards, **Total Plans in Phase:** aggregation, and **Last Activity:** retention.'));
+    assert.ok(result.content.includes('\t**Total Plans in Phase:** 3'));
+    assert.ok(result.content.includes('  **Progress:** [██░░░░░░░░] 20%'));
+    assert.ok(result.content.includes('  **Last Activity:** 2026-09-07'));
   });
 });
 
