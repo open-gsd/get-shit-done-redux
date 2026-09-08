@@ -26,12 +26,15 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const fc = require('fast-check');
 const { runHook } = require('./helpers/process-seam.cjs');
 const { toLegacyResult, gitOrThrow } = require('./helpers/git-fixture.cjs');
 const { PROBE_TIMEOUT_MS, GIT_TIMEOUT_MS, HOOK_FANOUT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const { createTempDir, createTempGitProject, cleanup, readFileNormalized } = require('./helpers.cjs');
-const { scanFencedBlocks } = require('../gsd-core/bin/lib/markdown-sectionizer.cjs');
-const { splitLines } = require('../gsd-core/bin/lib/text-lines.cjs');
+const {
+  foldShellContinuations,
+  findShellFencedMatches,
+} = require('./helpers/shell-doc-scan.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const WORKFLOW_PATH = path.join(ROOT, 'gsd-core', 'workflows', 'code-review.md');
@@ -61,30 +64,9 @@ const REVIEWER_PATH = path.join(ROOT, 'agents', 'gsd-code-reviewer.md');
 // across unrelated statements. The fold corrects the input, so everything built
 // on the scan is fixed at once.
 //
-// A newline is continued only when its immediately preceding run contains an
-// ODD number of backslashes: one is consumed by the continuation and every
-// preceding pair represents literal backslashes. An even run ends the shell
-// statement normally. `[ \t]*` deliberately cannot swallow a blank line.
-const foldShellContinuations = (src) => src.replace(
-  /(^|[^\\])((?:\\\\)*)\\\n[ \t]*/gm,
-  (_match, prefix, literalPairs) => `${prefix}${literalPairs} `,
-);
-
 const GREP_SITE_RE = /^\s*[A-Z_]+=\$\(git log[^\n]*--grep=[^\n]*$/gm;
 
-const findGrepSites = (src) => {
-  const lines = splitLines(src);
-  return scanFencedBlocks(lines).flatMap((block) => {
-    if (block.closeLineIdx === -1) return [];
-    const language = block.infoString.trim().toLowerCase();
-    if (language !== 'bash' && language !== 'sh') return [];
-    const body = lines.slice(block.openLineIdx + 1, block.closeLineIdx).join('\n');
-    return Array.from(
-      foldShellContinuations(body).matchAll(GREP_SITE_RE),
-      (match) => match[0],
-    );
-  });
-};
+const findGrepSites = (src) => findShellFencedMatches(src, GREP_SITE_RE);
 
 // ---------------------------------------------------------------------------
 // Pure-function implementation of the compute_file_scope Node script body.
@@ -1208,6 +1190,35 @@ describe('Bug 5 (#3191) — same anchored, portable phase-scope grep at all thre
       [],
       'an even trailing-backslash run is not a shell continuation',
     );
+
+    // Three trailing backslashes retain one literal pair while the final
+    // backslash continues the command. This pins the non-trivial odd boundary.
+    const oddBackslashes = [
+      '```bash',
+      `PHASE_START=$(git log ${'\\'.repeat(3)}`,
+      '  --grep="phase-${PHASE_SCOPE_NUM}")',
+      '```',
+    ].join('\n');
+    assert.deepStrictEqual(
+      findGrepSites(oddBackslashes),
+      [`PHASE_START=$(git log ${'\\'.repeat(2)} --grep="phase-\${PHASE_SCOPE_NUM}")`],
+      'an odd trailing-backslash run keeps its literal pairs and continues the line',
+    );
+  });
+
+  test('#4259 continuation folding preserves every odd/even backslash-run boundary', () => {
+    fc.assert(fc.property(
+      fc.integer({ min: 0, max: 31 }),
+      fc.array(fc.constantFrom(' ', '\t'), { maxLength: 8 }).map((chars) => chars.join('')),
+      (runLength, indentation) => {
+        const slashes = '\\'.repeat(runLength);
+        const source = `cmd ${slashes}\n${indentation}tail`;
+        const expected = runLength % 2 === 1
+          ? `cmd ${'\\'.repeat(runLength - 1)} tail`
+          : source;
+        assert.strictEqual(foldShellContinuations(source), expected);
+      },
+    ), { numRuns: 200 });
   });
 
   test('#4259 T6 site scan reports nothing on the live workflow files', () => {
