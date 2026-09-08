@@ -704,6 +704,45 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
+  test('a removal the call cannot put back is reported, never as nothing_to_commit', (t) => {
+    // The restore is best-effort, so it can FAIL -- and reporting
+    // nothing_to_commit over a removal we tried and could not undo is the same
+    // false "no state changed" the restore exists to prevent, one level down.
+    // Driven with a post-index-change hook that makes the git dir unwritable
+    // the moment `rm --cached` lands, so the `update-index --cacheinfo` restore
+    // cannot take its lock.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'seed.md'), 'seed\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed todo']);
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'gone.md'), 'gone\n');
+    git(['add', path.join(PENDING, 'gone.md')]);
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'gone.md'));
+    const gitDir = path.join(tmpDir, '.git');
+    const hooksDir = path.join(gitDir, 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'post-index-change'),
+      '#!/bin/sh\nchmod a-w "$(git rev-parse --git-dir)"\n', { mode: 0o755 });
+    // Always give the dir back, or afterEach's cleanup cannot remove the fixture.
+    t.after(() => { try { fs.chmodSync(gitDir, 0o755); } catch { /* already writable */ } });
+    const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
+    fs.writeFileSync(emptyConfig, '');
+
+    const result = runGsdTools(
+      ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/gone.md'],
+      tmpDir,
+      { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+    );
+    fs.chmodSync(gitDir, 0o755);
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, false, result.output);
+    assert.notStrictEqual(parsed.reason, 'nothing_to_commit', 'a removal left staged must never be reported as no state change');
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.match(parsed.error, /could not be restored/);
+    assert.match(parsed.error, /gone\.md/);
+  });
+
+
 
   test('a file that reappears between the absence check and the rm is refused, and the rollback restores its entry', () => {
     // The window this PR's own headline scenario names: a concurrent session

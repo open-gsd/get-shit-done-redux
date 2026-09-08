@@ -2090,10 +2090,28 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   // index mutation this call owns, and an exit reporting `nothing_to_commit`
   // tells the caller no state changed. Leaving the removal staged there makes
   // that report false and hands the removal to the caller's NEXT commit.
-  const restoreRemovedEntries = (): void => {
-    if (removedEntries.length === 0) return;
-    execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
+  // Returns FALSE when the restore itself failed. The rollback path below may
+  // ignore that (it is already reporting a failure, and an unwritable index is
+  // usually the failure being reported); the no-change exits may NOT. Reporting
+  // `nothing_to_commit` over a removal we tried and FAILED to put back is the
+  // same false "no state changed" this helper exists to prevent, surviving one
+  // level down on the restore-failure path.
+  const restoreRemovedEntries = (): boolean => {
+    if (removedEntries.length === 0) return true;
+    const r = execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
+    return r.exitCode === 0;
   };
+  // The no-change exits' shared arm: restore, and if the restore failed, say so
+  // instead of claiming nothing changed. `staging_failed` is the honest reason —
+  // the index carries a mutation this call made and could not undo.
+  const removalsLeftStaged = () => ({
+    committed: false,
+    hash: null,
+    reason: 'staging_failed',
+    file: removedEntries[0]?.path ?? null,
+    error: `declared removal(s) staged but could not be restored after the commit recorded nothing: ${removedEntries.map(e => e.path).join(', ')}`,
+    failures: removedEntries.map(e => ({ file: e.path, error: 'update-index --cacheinfo restore failed', timed_out: false })),
+  });
 
   // #2608: fail closed before `git commit` runs. Checked ahead of the
   // nothing_to_commit branch below so a run where EVERY path failed to stage
@@ -2372,7 +2390,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // empty), and a HEAD that simply does not carry the removed path -- an
     // index-only entry the caller `git add`ed but never committed, where the
     // `diff HEAD` probe reads clean because the path is absent on both sides.
-    restoreRemovedEntries();
+    if (!restoreRemovedEntries()) { output(removalsLeftStaged(), raw, 'failed'); return; }
     // #4454: an explicit --files list where every named path was missing
     // reaches this branch via `stagedPaths.length === 0` above — surface
     // which path(s) were the reason, same as the success result below.
@@ -2455,7 +2473,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
       // report. The failure exits below are deliberately NOT restored -- they
       // report a failure rather than "no state changed", and the addition side
       // leaves its own staged paths in place there too.
-      restoreRemovedEntries();
+      if (!restoreRemovedEntries()) { output(removalsLeftStaged(), raw, 'failed'); return; }
       // #4454: this is the residual window the surrounding comments already
       // document (a partial skip + partialCommitRefused bypassing the diff
       // probe + git's own empty-commit refusal) — skippedFiles can be
