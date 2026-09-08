@@ -173,7 +173,19 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
   });
 
   test('real execution: --files=src/alpha.js stays scoped to exactly that file (issue #4460 repro)', () => {
-    const tmpDir = fs.realpathSync(createTempDir('gsd-4460-'));
+    // fs.realpathSync.native (not the plain fs.realpathSync used elsewhere in
+    // this file's original revision) — tests/helpers.cjs's own
+    // tmpRootCandidates() documents that GitHub's Windows runners report
+    // os.tmpdir() in the 8.3 SHORT form (C:\Users\RUNNER~1\...) and that
+    // fs.realpathSync() does not reliably expand it, only the .native variant
+    // does. Without this, this test's tmpDir can carry a short-name segment
+    // that bash's own `git rev-parse --show-toplevel` / `realpath` resolve
+    // differently inside Tier 1, so its REPO_ROOT-prefix containment check
+    // spuriously treats every --files entry as "outside the repository" —
+    // REVIEW_FILES stays empty and control falls through to the full-diff
+    // path, which is what actually caused this test's prior Windows CI
+    // failure (all 5 files instead of the requested 1), not the `-m` flag.
+    const tmpDir = fs.realpathSync.native(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
       const files = runTiers(tmpDir, { filesOverride: 'src/alpha.js' });
@@ -188,7 +200,7 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
   });
 
   test('without --files, the #2666 cross-check still widens a partial (Tier-2-equivalent) scope (no regression to the cross-check itself)', () => {
-    const tmpDir = fs.realpathSync(createTempDir('gsd-4460-'));
+    const tmpDir = fs.realpathSync.native(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
       // seedReviewFiles stands in for Tier 2's real output (["src/alpha.js"],
