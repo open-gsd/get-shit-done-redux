@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/benchmark-compact-content-variants.cjs",
+  "tokenizer": {
+    "name": "gpt-tokenizer",
+    "version": "4.0.0"
+  },
+  "label": "PROXY-TOKENIZER DELTA — gpt-tokenizer is a stand-in; Anthropic publishes no tokenizer for Claude 3+. The on/off COMPARISON is exact under this pinned tokenizer; absolute counts are not Claude's real token counts.",
+  "pairs": {
+    "gsd-core/templates/summary.md": {
+      "offTokens": 2938,
+      "onTokens": 2299,
+      "reductionPct": 21.75
+    },
+    "gsd-core/templates/user-setup.md": {
+      "offTokens": 2061,
+      "onTokens": 1363,
+      "reductionPct": 33.87
+    },
+    "gsd-core/workflows/help/modes/full.md": {
+      "offTokens": 9950,
+      "onTokens": 6579,
+      "reductionPct": 33.88
+    }
+  },
+  "aggregate": {
+    "offTokens": 14949,
+    "onTokens": 10241,
+    "reductionPct": 31.49
+  }
+}
