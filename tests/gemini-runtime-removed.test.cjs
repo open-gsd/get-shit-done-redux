@@ -330,9 +330,10 @@ describe('#4347 shell launcher / JS registry runtime-home parity', () => {
     // AC4 of the issue: propagated copies move WITH the source, never as a
     // hand-patched subset. `commands/` carries an older if/elif form that
     // sync-runtime-launcher.cjs does not regenerate, so it is swept here too.
-    // skills/ carries copies emitted from commands/ by gen-plugin-skills, so a
-    // stale emitted skill is exactly the "hand-patched subset" AC4 forbids.
-    const roots = ['gsd-core/workflows', 'agents', 'commands', 'skills'];
+    // skills/ carries copies emitted from commands/ by gen-plugin-skills, while
+    // gsd-core/references/ carries resolver text included by delegating workflows;
+    // either stale copy is exactly the "hand-patched subset" AC4 forbids.
+    const roots = ['gsd-core/workflows', 'gsd-core/references', 'agents', 'commands', 'skills'];
     const recognized = registryHomeEnvVars();
     const offenders = [];
     const walk = (dir) => {
