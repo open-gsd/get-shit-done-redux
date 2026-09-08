@@ -1356,6 +1356,33 @@ EOF
     assert.strictEqual(runHookCmd(`git commit -m ${HD_OK}`).status, 0, 'non-vacuity: canonical form still resolves');
   });
 
+  test('subject extraction uses no pipe-to-head (SIGPIPE race, #4447 follow-on)', () => {
+    // `echo "$MSG" | head -1` (and the equivalent `printf ... | head -1` for
+    // the opt-in ENABLED flag) is a SIGPIPE race under `set -euo pipefail`:
+    // `head -1` can close its read end as soon as it has one line, and a real
+    // commit message/config output is multi-line, so `echo`/`printf` can die
+    // with signal 13 (exit 141) if its write lands after that close — which
+    // aborts the whole hook instead of the expected exit 2. This is a static,
+    // by-construction pin (not a timing repro, per this repo's policy against
+    // forcing scheduling races to reproduce deterministically): the fix
+    // (`${VAR%%$'\n'*}`, a pure parameter expansion with zero subprocesses and
+    // therefore zero pipe/race surface) must be present, and the vulnerable
+    // pipe pattern must be gone.
+    const hookSrc = fs.readFileSync(path.join(HOOKS_DIR, 'gsd-validate-commit.sh'), 'utf8');
+    // Regexes require the `$(...)` command-substitution wrapper so this only
+    // matches the actual dangerous CODE pattern, never the explanatory prose
+    // comments left at the fix site (which quote the bare pipeline, without
+    // the `$(...)` wrapper, for documentation purposes).
+    assert.ok(!/\$\(echo "\$MSG" \| head -1\)/.test(hookSrc),
+      'the SIGPIPE-prone `$(echo "$MSG" | head -1)` subject extraction must not reappear');
+    assert.ok(!/\$\(printf '%s\\n' "\$CONFIG_OUT" \| head -1\)/.test(hookSrc),
+      'the SIGPIPE-prone `$(printf ... | head -1)` ENABLED extraction must not reappear');
+    assert.ok(hookSrc.includes('SUBJECT="${MSG%%$\'\\n\'*}"'),
+      'subject extraction must use the pure parameter-expansion form');
+    assert.ok(hookSrc.includes('ENABLED="${CONFIG_OUT%%$\'\\n\'*}"'),
+      'ENABLED extraction must use the pure parameter-expansion form');
+  });
+
   test('validate-commit does not trust a relative path ending in cat (round-4 Codex MAJOR)', () => {
     // Recognition accepted any path ending in `/cat`, so a planted `./cat` or
     // `../evil/cat` was trusted to echo its stdin. With such an executable
