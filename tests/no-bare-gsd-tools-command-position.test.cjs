@@ -108,6 +108,11 @@ const PROSE_ALLOWLIST = [
   { file: 'agents/gsd-roadmapper.md', line: 660, reason: 'parenthetical "e.g." naming SDK queries a user *could* run; not an agent instruction (#4134 shifted it from 647: the H1 template section added above moved the line, the mention is unchanged)' },
   { file: 'agents/gsd-intel-updater.md', line: 40, reason: 'cross-platform note names the `gsd-tools intel <subcommand>` CLI surface descriptively ("CLI invocations go through..."); not an agent instruction' },
   { file: 'gsd-core/workflows/execute-plan.md', line: 419, reason: 'describes the downstream SDK validation step (`validated downstream by ...`); names the mechanism, does not instruct the agent to type it' },
+  // #4407: .compact.md variant siblings carry the same descriptive prose as
+  // their already-allowlisted canonical line above, at a different line
+  // number in a different file.
+  { file: 'agents/gsd-intel-updater.compact.md', line: 32, reason: 'compact variant of the already-allowlisted gsd-intel-updater.md:40 cross-platform note; same descriptive mention' },
+  { file: 'agents/gsd-roadmapper.compact.md', line: 363, reason: 'compact variant of the already-allowlisted gsd-roadmapper.md:660 parenthetical; same descriptive mention' },
 ];
 
 // Resolver-snippet definition lines / probes that must never be flagged. A line

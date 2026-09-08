@@ -16,7 +16,6 @@
       "gsd-debug-session-manager",
       "gsd-debug-session-manager.compact",
       "gsd-debugger",
-      "gsd-debugger.compact",
       "gsd-doc-classifier",
       "gsd-doc-classifier.compact",
       "gsd-doc-synthesizer",
@@ -34,7 +33,6 @@
       "gsd-eval-planner",
       "gsd-eval-planner.compact",
       "gsd-executor",
-      "gsd-executor.compact",
       "gsd-framework-selector",
       "gsd-framework-selector.compact",
       "gsd-integration-checker",
@@ -48,11 +46,8 @@
       "gsd-pattern-mapper",
       "gsd-pattern-mapper.compact",
       "gsd-phase-researcher",
-      "gsd-phase-researcher.compact",
       "gsd-plan-checker",
-      "gsd-plan-checker.compact",
       "gsd-planner",
-      "gsd-planner.compact",
       "gsd-project-researcher",
       "gsd-project-researcher.compact",
       "gsd-research-synthesizer",
@@ -69,8 +64,7 @@
       "gsd-ui-researcher.compact",
       "gsd-user-profiler",
       "gsd-user-profiler.compact",
-      "gsd-verifier",
-      "gsd-verifier.compact"
+      "gsd-verifier"
     ],
     "commands": [
       "/gsd-add-tests",

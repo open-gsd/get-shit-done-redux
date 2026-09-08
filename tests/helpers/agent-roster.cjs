@@ -10,6 +10,14 @@
  * NOTE: This returns the SOURCE roster (basenames without `.md`, sorted). Sites
  * with different semantics — installed-destination dirs, absolute-path returns,
  * or `.toml`-inclusive Codex rosters — must NOT use this helper.
+ *
+ * NOTE (#4407): `agents/*.compact.md` variant siblings are deliberately EXCLUDED.
+ * A compact variant is not a new agent — it is an alternate rendition of an
+ * existing roster entry, served by the `#2454` fallback in `cmdAgentSkills`
+ * (`src/init.cts`) when `workflow.compact_content` is on. Every roster-identity
+ * check this helper backs (frontmatter/tools invariants, "every shipped agent"
+ * install assertions, etc.) is about the SET of distinct agents GSD ships, which
+ * a variant does not add to.
  */
 
 const fs = require('node:fs');
@@ -29,7 +37,7 @@ const AGENTS_DIR = path.join(__dirname, '..', '..', 'agents');
 function listAgentFiles(agentsDir = AGENTS_DIR) {
   return fs
     .readdirSync(agentsDir)
-    .filter((f) => /^gsd-.*\.md$/.test(f))
+    .filter((f) => /^gsd-.*\.md$/.test(f) && !f.endsWith('.compact.md'))
     .map((f) => f.replace(/\.md$/, ''))
     .sort();
 }

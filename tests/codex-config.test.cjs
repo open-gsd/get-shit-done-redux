@@ -1020,9 +1020,16 @@ describe('#3897 rung 3: sandbox_mode derivation and the hold list', () => {
   // rung-3 block instead of failing loudly. Driven from the real roster
   // instead; a dedicated parity test below fails loudly, naming any file
   // present in one set and not the other, the moment the two diverge.
+  // #4407: .compact.md variant siblings carry byte-identical `tools:`
+  // frontmatter to their canonical agent (verified mechanically elsewhere —
+  // see tests/agent-skills-compact-variant.test.cjs), so deriveCodexSandboxMode
+  // produces the same, correct sandbox_mode for both — confirmed directly
+  // against generateCodexAgentToml, not assumed. Excluded from this roster so
+  // EXPECTED_SANDBOX_BY_ROLE doesn't need a redundant second entry per agent
+  // that could only ever match its canonical sibling's value or be a bug.
   const AGENT_ROSTER_ROLES = fs
     .readdirSync(AGENTS_DIR)
-    .filter((f) => f.endsWith('.md'))
+    .filter((f) => f.endsWith('.md') && !f.endsWith('.compact.md'))
     .map((f) => f.slice(0, -'.md'.length))
     .sort();
 

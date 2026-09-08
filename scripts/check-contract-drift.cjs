@@ -159,8 +159,11 @@ function main() {
   const agentTexts = new Map();
   const unclosedFenceViolations = [];
 
+  // #4407: .compact.md variant siblings are an alternate rendering of their
+  // canonical agent's SAME contract, not a distinct one — excluded so they
+  // don't need (and can't drift from) their own registry row.
   const agentFiles = fs.existsSync(AGENTS_DIR)
-    ? fs.readdirSync(AGENTS_DIR).filter(f => f.endsWith('.md'))
+    ? fs.readdirSync(AGENTS_DIR).filter(f => f.endsWith('.md') && !f.endsWith('.compact.md'))
     : [];
 
   for (const file of agentFiles) {

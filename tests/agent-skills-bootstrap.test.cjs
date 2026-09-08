@@ -50,7 +50,10 @@ function readAgent(name) {
 }
 
 function allAgentFiles() {
-  return fs.readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'));
+  // #4407: .compact.md variant siblings carry the same self-load line as their
+  // canonical agent (preserved verbatim by design) but are not a distinct
+  // consumer identity — exclude them from the CONSUMER_AGENTS bijection.
+  return fs.readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md') && !f.endsWith('.compact.md'));
 }
 
 describe('agent_skills self-load bootstrap', () => {

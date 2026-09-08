@@ -42,11 +42,6 @@
       "onTokens": 4477,
       "reductionPct": 6.06
     },
-    "agents/gsd-debugger.md": {
-      "offTokens": 11238,
-      "onTokens": 9293,
-      "reductionPct": 17.31
-    },
     "agents/gsd-doc-classifier.md": {
       "offTokens": 2901,
       "onTokens": 2340,
@@ -87,11 +82,6 @@
       "onTokens": 1567,
       "reductionPct": 6.39
     },
-    "agents/gsd-executor.md": {
-      "offTokens": 12238,
-      "onTokens": 10357,
-      "reductionPct": 15.37
-    },
     "agents/gsd-framework-selector.md": {
       "offTokens": 1513,
       "onTokens": 1095,
@@ -121,21 +111,6 @@
       "offTokens": 3155,
       "onTokens": 2670,
       "reductionPct": 15.37
-    },
-    "agents/gsd-phase-researcher.md": {
-      "offTokens": 10957,
-      "onTokens": 9854,
-      "reductionPct": 10.07
-    },
-    "agents/gsd-plan-checker.md": {
-      "offTokens": 11888,
-      "onTokens": 8501,
-      "reductionPct": 28.49
-    },
-    "agents/gsd-planner.md": {
-      "offTokens": 12256,
-      "onTokens": 10893,
-      "reductionPct": 11.12
     },
     "agents/gsd-project-researcher.md": {
       "offTokens": 5464,
@@ -177,11 +152,6 @@
       "onTokens": 1481,
       "reductionPct": 20.33
     },
-    "agents/gsd-verifier.md": {
-      "offTokens": 12246,
-      "onTokens": 10904,
-      "reductionPct": 10.96
-    },
     "gsd-core/templates/summary.md": {
       "offTokens": 2938,
       "onTokens": 2299,
@@ -199,8 +169,8 @@
     }
   },
   "aggregate": {
-    "offTokens": 189514,
-    "onTokens": 154135,
-    "reductionPct": 18.67
+    "offTokens": 118691,
+    "onTokens": 94333,
+    "reductionPct": 20.52
   }
 }
