@@ -214,7 +214,24 @@ if [ "$CLASSIFY_STATUS" = "0" ]; then
       # the message — the window a guard must use when the token it scans for
       # is also legal English inside a commit message, but may legally appear
       # on EITHER side of the message on the command line.
-      MSG_SUFFIX="${CMD#*"$MSG_MATCH"}"
+      # Indexed, not searched (#4492). `${CMD#*"$MSG_MATCH"}` is quadratic in
+      # the message: bash walks every prefix length and compares the whole
+      # matched literal at each one, and MSG_MATCH is BASH_REMATCH[0] — the
+      # entire `-m "..."` — so the cost grows with the thing being scanned.
+      # Measured on the path EVERY commit takes (conforming and non-conforming
+      # cost the same): 10.0 s at a 64 KB message, 22.0 s at 96 KB, 30.2 s at
+      # 112 KB. Sizes stop there deliberately — a single argument above Linux's
+      # MAX_ARG_STRLEN (131072 on a 4 KB-page kernel) never reaches this code
+      # at all, because execve fails and the hook fails open, so a larger
+      # "measurement" would be timing the wrong thing.
+      #
+      # MSG_PREFIX above has already located the match, so the suffix is
+      # arithmetic rather than a search: skip the prefix and the match. This
+      # removes the quadratic SEARCH; the expansion still counts characters and
+      # materialises a substring, so it is linear in the command, not O(1).
+      # Same first-occurrence assumption both expansions here always made —
+      # MSG_MATCH is a literal substring of CMD by construction.
+      MSG_SUFFIX="${CMD:$(( ${#MSG_PREFIX} + ${#MSG_MATCH} ))}"
       # LINE CONTINUATIONS ARE NOT SEPARATORS (review of #3816, rounds 8 and 9).
       # `git commit \` newline `  -m "$(cat <<'EOF' …` is an ordinary way to
       # spread an invocation over lines, and every guard below reads a newline in
