@@ -292,7 +292,13 @@ if [ ${#REVIEW_FILES[@]} -eq 0 ]; then
     echo "Warning: No phase commits found for '${PADDED_PHASE}'. Cannot determine reliable diff scope."
     echo "Use --files flag to specify files explicitly: /gsd:code-review ${PHASE_ARG} --files=file1,file2,..."
   fi
-elif [ -n "$DIFF_BASE" ]; then
+elif [ -z "$FILES_OVERRIDE" ] && [ -n "$DIFF_BASE" ]; then
+  # #4460: gated on FILES_OVERRIDE being unset — without this, REVIEW_FILES is
+  # already non-empty under --files (Tier 1 filled it), so this elif was
+  # reached anyway and the #2666 cross-check below appended the whole phase
+  # diff onto an explicit user-supplied file list, contradicting line 144's
+  # "Skip SUMMARY/git scoping entirely when --files is provided" and Tier 2's
+  # own --files guard immediately above.
   # #2666 cross-check: SUMMARY yielded a non-empty (possibly partial) scope.
   # Warn about — and add — any changed files the SUMMARY extractor did not surface,
   # so a partial result can no longer silently ship an incomplete review scope.
