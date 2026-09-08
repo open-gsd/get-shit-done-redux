@@ -277,7 +277,7 @@ Markdown templates for all planning artifacts. Used by `gsd-tools.cjs template f
 - `DEBUG.md` — Debug session tracking template
 - `UI-SPEC.md`, `UAT.md`, `VALIDATION.md` — Specialized verification templates
 - `discussion-log.md` — Discussion audit trail template
-- `codebase/` — Brownfield mapping templates (stack, architecture, conventions, concerns, structure, testing, integrations)
+- `codebase/` — Brownfield mapping templates (architecture, stack)
 - `research-project/` — Research output templates (SUMMARY, STACK, FEATURES, ARCHITECTURE, PITFALLS)
 
 ### Hooks (`hooks/`)
@@ -294,6 +294,7 @@ Runtime hooks that integrate with the host AI agent:
 | `gsd-prompt-guard.js` | `PreToolUse` | Scans `.planning/` writes for prompt injection patterns (advisory) |
 | `gsd-read-injection-scanner.js` | `PostToolUse` | Scans Read tool output for injected instructions in untrusted content |
 | `gsd-workflow-guard.js` | `PreToolUse` | Detects file edits outside GSD workflow context (advisory, opt-in via `hooks.workflow_guard`) |
+| `gsd-secret-read-guard.js` | `PreToolUse` | Hard-blocks Read / Grep / Bash reads of `.env`, `.env.<suffix>` (templates such as `.env.example` exempt) and `.secrets`; replaces the installer-written `Read(.env*)` permission deny rules, which made every `cd DIR && grep …` compound prompt for approval on Claude Code ≥ 2.1.259 (#4221) |
 | `gsd-read-guard.js` | `PreToolUse` | Advisory guard preventing Edit/Write on files not yet read in the session |
 | `gsd-session-state.sh` | `SessionStart` | Session state tracking for shell-based runtimes |
 | `gsd-validate-commit.sh` | `PreToolUse` | Commit validation for conventional commit enforcement |
@@ -327,6 +328,10 @@ Command families declared by capabilities (`commands: [{ family, module, router 
 2. **Third-party (installed overlay)** — `dispatchOverlayCapabilityCommand` calls `loadRegistry({ includeInstalled })` and dispatches a family only when its `capId` appears in `_overlay.commandRoots`. The loader lists a command root **only** for an accepted overlay capability with a **committed** ledger entry (consent gate), and the router module is `require()`'d **from that capability's install root**, confined by basename validation + `realpath` containment (rejecting `..` traversal and symlink escape). This is the one point where third-party capability code executes; see [the capability trust model](explanation/capability-trust-model.md) for the consent + confinement + project-scope trust boundary.
 
 Both paths share the same guards: prototype-pollution-safe command keys, an own-property router check, and synchronous-only routers (an async router is a fail-fast error).
+
+### Reviewer-Lane Capability Trait (#4209, ADR-2782)
+
+`/gsd-code-review` optionally corroborates its internal review with external reviewer lanes (`--codex`, `--agy`, ...), gated by the reusable `supportsReviewerLanes` capability-step trait and dispatched through the single `dispatchReviewerLanes` interpreter — see `gsd-core/references/loop-hook-dispatch.md` for the trait and `src/reviewer-step-dispatch.cts` for the interpreter's fail-closed contract. `gsd-code-reviewer` is the sole consolidator: it independently re-verifies every external claim against the actual source before writing anything to `REVIEW.md`, so a lane's evidence is corroborating input, never a second output schema.
 
 ### Research Module (`src/research-{store,provider}.cts`, `src/package-legitimacy.cts`)
 

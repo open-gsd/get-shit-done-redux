@@ -1,7 +1,7 @@
 {
   "id": "code-review",
   "role": "feature",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "title": "Code review",
   "description": "Source-file code review and review-fix workflow support for completed execution work.",
   "tier": "full",
@@ -61,6 +61,7 @@
       "consumes": [
         "SUMMARY.md"
       ],
+      "supportsReviewerLanes": true,
       "when": "workflow.code_review",
       "pointFrom": "workflow.code_review_point",
       "onError": "skip"
@@ -74,6 +75,7 @@
         "REVIEW.md"
       ],
       "consumes": [],
+      "supportsReviewerLanes": true,
       "when": "workflow.code_review",
       "pointFrom": "workflow.code_review_point",
       "onError": "skip"
