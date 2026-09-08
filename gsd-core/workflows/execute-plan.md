@@ -547,8 +547,21 @@ fi
 If .planning/codebase/ doesn't exist: skip.
 
 ```bash
-FIRST_TASK=$(git log --oneline --grep="feat({phase}-{plan}):" --grep="fix({phase}-{plan}):" --grep="test({phase}-{plan}):" --reverse | head -1 | cut -d' ' -f1)
-git diff --name-only ${FIRST_TASK}^..HEAD 2>/dev/null || true
+# #4459: a phase number is unique within a MILESTONE, not a repository. The
+# former commit-subject grep had no milestone bound, and its `--reverse |
+# head -1` deliberately selected the OLDEST matching subject — on a
+# milestone that reuses this phase number, that drags in the PREVIOUS
+# milestone's same-numbered phase's commits too. The phase's own directory
+# is the unique identity: base = the parent of the first commit that added
+# anything under the phase directory — the same anchor code-review.md's
+# structural-pre-pass step already uses for the identical problem (#3995).
+PHASE_START=$(git log --format="%H" --diff-filter=A -- ".planning/phases/XX-name" 2>/dev/null | tail -1)
+if [ -n "$PHASE_START" ] && git rev-parse "${PHASE_START}^" >/dev/null 2>&1; then
+  DIFF_BASE="${PHASE_START}^"
+else
+  DIFF_BASE="${PHASE_START:-HEAD}"
+fi
+git diff --name-only ${DIFF_BASE}..HEAD 2>/dev/null || true
 ```
 
 Update only structural changes: new src/ dir → STRUCTURE.md | deps → STACK.md | file pattern → CONVENTIONS.md | API client → INTEGRATIONS.md | config → STACK.md | renamed → update paths. Skip code-only/bugfix/content changes.
