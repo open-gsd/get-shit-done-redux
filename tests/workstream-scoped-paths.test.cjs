@@ -324,37 +324,42 @@ describe('complete-milestone.md workstream-scoped paths (#4455)', () => {
       assert.ok(out.includes(projectPath), `expected root PROJECT.md in --files, got: ${out}`);
     });
 
-    test('GSD_WORKSTREAM=alpha: --files lists workstream-scoped STATE/ROADMAP/archive/MILESTONES/PROJECT paths, not root (#4455 regression)', () => {
+    test('GSD_WORKSTREAM=alpha: --files lists workstream-scoped STATE/ROADMAP/archive/MILESTONES paths, but PROJECT.md STAYS root (#4455 regression)', () => {
       const wsStatePath = path.join(tmpDir, 'STATE-alpha.md');
       const wsRoadmapPath = path.join(tmpDir, 'ROADMAP-alpha.md');
       const wsArchiveDir = path.join(tmpDir, 'milestones-alpha');
       const wsMilestonesPath = path.join(tmpDir, 'MILESTONES-alpha.md');
-      const wsProjectPath = path.join(tmpDir, 'PROJECT-alpha.md');
+      // PROJECT.md is genuinely SHARED across workstreams — never cloned per
+      // workstream (gsd-core/references/workstream-flag.md marks it
+      // `# Shared`; new-milestone.md states it outright; cmdWorkstreamCreate
+      // never creates one under a workstream dir). The real
+      // cmdInitCompleteMilestone therefore ALWAYS returns the root path for
+      // project_path regardless of GSD_WORKSTREAM — reflected here by
+      // passing the SAME root-shaped value the flat-mode test above uses,
+      // not a workstream-shaped one. An earlier version of this fix wrongly
+      // pinned MILESTONES.md and PROJECT.md as identically workstream-scoped
+      // (caught by isolated code review, then re-caught as a genuine
+      // regression after merge — see tests/init-manager.test.cjs's
+      // "milestones_path/project_path/requirements_path" describe block for
+      // the test that exercises the real init.cts function, not just this
+      // fence-mechanics stub).
+      const rootProjectPath = path.join(tmpDir, 'PROJECT-root.md');
       const out = runCommitFence({
         state_path: wsStatePath, roadmap_path: wsRoadmapPath, archive_dir: wsArchiveDir,
-        milestones_path: wsMilestonesPath, project_path: wsProjectPath,
+        milestones_path: wsMilestonesPath, project_path: rootProjectPath,
       });
 
       assert.ok(out.includes(wsStatePath), `expected workstream STATE.md in --files, got: ${out}`);
       assert.ok(out.includes(wsRoadmapPath), `expected workstream ROADMAP.md in --files, got: ${out}`);
       assert.ok(out.includes(`${wsArchiveDir}/v[X.Y]-ROADMAP.md`), `expected workstream archive ROADMAP in --files, got: ${out}`);
-      // MILESTONES.md and PROJECT.md are workstream-scoped too — cmdMilestoneComplete
-      // (src/milestone.cts) writes MILESTONES.md via planningPaths(cwd).planning (the
-      // workstream base), and PROJECT.md resolves the same way (planningPaths().project).
-      // An earlier version of this fix wrongly pinned both as shared root files, which
-      // would have made this safety commit silently miss the actual files
-      // `milestone complete` just wrote under an active workstream (#4455 follow-up,
-      // caught by isolated code review).
       assert.ok(out.includes(wsMilestonesPath), `expected workstream MILESTONES.md in --files, got: ${out}`);
-      assert.ok(out.includes(wsProjectPath), `expected workstream PROJECT.md in --files, got: ${out}`);
+      assert.ok(out.includes(rootProjectPath), `expected root PROJECT.md in --files, got: ${out}`);
       assert.ok(!out.includes(path.join(tmpDir, '.planning', 'STATE.md')),
         `must not fall back to the flat root STATE.md path, got: ${out}`);
       assert.ok(!out.includes(path.join(tmpDir, '.planning', 'ROADMAP.md')),
         `must not fall back to the flat root ROADMAP.md path, got: ${out}`);
       assert.ok(!out.includes(path.join(tmpDir, '.planning', 'MILESTONES.md')),
         `must not fall back to the flat root MILESTONES.md path, got: ${out}`);
-      assert.ok(!out.includes(path.join(tmpDir, '.planning', 'PROJECT.md')),
-        `must not fall back to the flat root PROJECT.md path, got: ${out}`);
     });
   });
 
