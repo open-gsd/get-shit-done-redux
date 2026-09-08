@@ -277,6 +277,7 @@ Markdown templates for all planning artifacts. Used by `gsd-tools.cjs template f
 - `DEBUG.md` — Debug session tracking template
 - `UI-SPEC.md`, `UAT.md`, `VALIDATION.md` — Specialized verification templates
 - `discussion-log.md` — Discussion audit trail template
+- `codebase/` — Brownfield mapping templates (architecture, stack)
 - `research-project/` — Research output templates (SUMMARY, STACK, FEATURES, ARCHITECTURE, PITFALLS)
 
 ### Hooks (`hooks/`)
