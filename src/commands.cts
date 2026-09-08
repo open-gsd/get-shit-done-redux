@@ -1911,6 +1911,16 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   // path on the commit pathspec, where an unborn HEAD makes `git commit`
   // refuse it (driven; see the union note above).
   const removedEntries: Array<{ path: string; mode: string; sha: string }> = [];
+  // Put every entry this call removed back, exactly — mode and blob. Called
+  // from EVERY exit that mutated the index and then records nothing, not just
+  // the staging-failure rollback: a `git rm --cached` that SUCCEEDS is still an
+  // index mutation this call owns, and an exit reporting `nothing_to_commit`
+  // tells the caller no state changed. Leaving the removal staged there makes
+  // that report false and hands the removal to the caller's NEXT commit.
+  const restoreRemovedEntries = (): void => {
+    if (removedEntries.length === 0) return;
+    execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
+  };
   for (const entry of removedDeclared) {
     if (headProbeFailure !== null) {
       stagingFailures.push({ file: entry, ...headProbeFailure });
@@ -2084,9 +2094,7 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // (no HEAD to reset to on an unborn branch; not the pre-staged blob when
     // the caller had one) — and unconditionally, since a removal this call
     // performed is this call's to undo whether or not the path was pre-staged.
-    if (removedEntries.length > 0) {
-      execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
-    }
+    restoreRemovedEntries();
     const first = stagingFailures[0];
     const result = {
       committed: false,
@@ -2333,6 +2341,14 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
         ).exitCode === 0
         && !assumeUnchangedWouldRecord()));
   if (nothingToCommit) {
+    // Nothing is being recorded, so any removal this call staged has no commit
+    // to land in. Put it back before reporting no state change. Reachable on
+    // two shapes, and keying on either one alone leaves the other broken:
+    // an unborn HEAD (a removal never joins `stagedPaths`, so the pathspec is
+    // empty), and a HEAD that simply does not carry the removed path -- an
+    // index-only entry the caller `git add`ed but never committed, where the
+    // `diff HEAD` probe reads clean because the path is absent on both sides.
+    restoreRemovedEntries();
     // #4454: an explicit --files list where every named path was missing
     // reaches this branch via `stagedPaths.length === 0` above — surface
     // which path(s) were the reason, same as the success result below.
@@ -2410,6 +2426,12 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
       return;
     }
     if (commitResult.stdout.includes('nothing to commit') || commitResult.stderr.includes('nothing to commit')) {
+      // Same reading as the guard above: git recorded nothing, so a removal
+      // this call staged must not be left behind under a `nothing_to_commit`
+      // report. The failure exits below are deliberately NOT restored -- they
+      // report a failure rather than "no state changed", and the addition side
+      // leaves its own staged paths in place there too.
+      restoreRemovedEntries();
       // #4454: this is the residual window the surrounding comments already
       // document (a partial skip + partialCommitRefused bypassing the diff
       // probe + git's own empty-commit refusal) — skippedFiles can be

@@ -644,6 +644,65 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.strictEqual(git(['ls-files', '-s', '--', PENDING], fresh), before, 'gone.md is back in the index, same mode and blob');
   });
 
+  test('on an unborn HEAD a removal-only call that stages nothing else leaves no removal behind', (t) => {
+    // The rollback above fires only on a staging FAILURE. On an unborn HEAD a
+    // removal never joins `stagedPaths` (there is no parent to delete from), so
+    // a removal-only call that SUCCEEDS reaches the nothing-to-commit guard with
+    // an empty pathspec -- and `nothing_to_commit` tells the caller no state
+    // changed while `rm --cached` has already mutated the index. The removal
+    // would then ride along on the caller's next commit.
+    const fresh = createTempGitProject();
+    t.after(() => cleanup(fresh));
+    git(['checkout', '-q', '--orphan', 'unborn'], fresh);
+    git(['rm', '-rfq', '--cached', '.'], fresh);
+    fs.mkdirSync(path.join(fresh, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(fresh, PENDING, 'gone.md'), 'gone\n');
+    git(['add', PENDING], fresh);
+    const before = git(['ls-files', '-s', '--', PENDING], fresh);
+    fs.unlinkSync(path.join(fresh, PENDING, 'gone.md'));
+
+    const result = runGsdTools(
+      ['commit', 'docs: root commit', '--files-removed', '.planning/todos/pending/gone.md'],
+      fresh,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, false, result.output);
+    assert.throws(() => git(['rev-parse', '-q', '--verify', 'HEAD'], fresh), 'nothing may be committed');
+    assert.strictEqual(
+      git(['ls-files', '-s', '--', PENDING], fresh), before,
+      'a call reporting no commit must leave the index as it found it',
+    );
+  });
+
+  test('a removal of an index-only path leaves no removal behind when nothing is recorded', () => {
+    // The same defect with a real HEAD, so the fix cannot key on `headExists`.
+    // gone.md was `git add`ed and never committed, then deleted from disk: the
+    // removal DOES join the pathspec here, but `diff HEAD -- gone.md` reads
+    // clean because the path is absent from the worktree and from HEAD alike,
+    // so the guard reports nothing_to_commit over a staged removal.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'seed.md'), 'seed\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed todo']);
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'gone.md'), 'gone\n');
+    git(['add', path.join(PENDING, 'gone.md')]);
+    const before = git(['ls-files', '-s', '--', PENDING]);
+    const head = git(['rev-parse', 'HEAD']);
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'gone.md'));
+
+    const result = runGsdTools(
+      ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/gone.md'],
+      tmpDir,
+    );
+    assert.strictEqual(JSON.parse(result.output).committed, false, result.output);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head, 'nothing may be committed');
+    assert.strictEqual(
+      git(['ls-files', '-s', '--', PENDING]), before,
+      'a call reporting no commit must leave the index as it found it',
+    );
+  });
+
+
   test('a file that reappears between the absence check and the rm is refused, and the rollback restores its entry', () => {
     // The window this PR's own headline scenario names: a concurrent session
     // recreates the path after this call judged it absent. Driven
