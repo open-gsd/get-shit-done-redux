@@ -264,6 +264,23 @@ Check `branching_strategy` from init:
 
 **"phase" or "milestone":** Use pre-computed `branch_name` from init.
 
+**If `branch_name` is null/empty:** Stop with an error naming `git.phase_branch_template` — do NOT
+continue on the current branch. Unlike `quick.md`'s analogous field, a null here is never a legitimate
+"no branch wanted": this arm has already established `branching_strategy` is `phase` or `milestone`, so
+the only way `branch_name` arrives null is a template that renders to nothing (`{slug}` alone, or one
+that reduces to separators only). Continuing would land the phase's commits on whatever HEAD happens to
+be — the #2916 compounding this step exists to prevent. Note the JSON value is `null`, not the string
+`"null"`: guard the literal too, or a transcribed `null` becomes a real branch of that name (#4252).
+
+```bash
+if [ -z "$BRANCH_NAME" ] || [ "$BRANCH_NAME" = "null" ]; then
+  echo "ERROR: branching_strategy is phase/milestone but init computed no branch_name." >&2
+  echo "       Your git.phase_branch_template renders empty for this phase. Fix it in .planning/config.json" >&2
+  echo "       (a template must leave something besides {slug} to name), then re-run." >&2
+  exit 1
+fi
+```
+
 Fork the new phase branch off `origin/HEAD` (the project's default branch), not the current HEAD — otherwise consecutive phases compound and stay unpushed (#2916). If `$BRANCH_NAME` already exists locally, reuse it as-is.
 
 ```bash

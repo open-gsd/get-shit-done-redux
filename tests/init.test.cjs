@@ -1332,6 +1332,61 @@ describe('init plan-phase zero-padded phase number (bug #2391)', () => {
     assert.strictEqual(output.phase_slug, null);
     assert.strictEqual(output.branch_name, 'gsd/phase-07');
   });
+
+  // #4252 round 2 (Major): `renderPhaseBranchName` can return null — "nothing
+  // left to name" — and this is the one call site whose consumer takes
+  // `branch_name` onward to `git checkout -b`. The contract is pinned here on
+  // BOTH sides: init emits a real JSON null (never the string "null", never a
+  // degraded placeholder), and gsd-core/workflows/execute-phase.md's
+  // handle_branching step carries the matching arm that stops rather than
+  // branching. Reachable only via a custom template with nothing but `{slug}`
+  // to name; the shipped default always carries `{phase}`.
+  test('#4252: a template with nothing but {slug} to name emits a real null branch_name', () => {
+    // Bare-numbered dir = no name segment = empty slug (the same route the
+    // '07' test above uses); with `{slug}` the only token, nothing is left.
+    seedPhase(tmpDir, '09', { '09-01-PLAN.md': '# Plan' });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({
+        git: {
+          branching_strategy: 'phase',
+          phase_branch_template: '{slug}',
+        },
+      }, null, 2)
+    );
+
+    const result = runGsdTools('init execute-phase 9', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_found, true);
+    assert.strictEqual(output.branch_name, null,
+      'a template that leaves nothing to name must report null, not a placeholder or a bare separator');
+    assert.notStrictEqual(output.branch_name, 'null',
+      'the JSON value must be a real null — a string "null" would be checked out as a branch of that name');
+  });
+
+  // The same contract for the shape the round-3 edge-trim newly routes to null:
+  // a template that reduces to separators only. Before the trim this rendered
+  // the bare, invalid ref `/`; it must be null rather than a broken checkout.
+  test('#4252: a template reducing to separators only is null, not a bare separator', () => {
+    seedPhase(tmpDir, '10', { '10-01-PLAN.md': '# Plan' });
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({
+        git: {
+          branching_strategy: 'phase',
+          phase_branch_template: '//{slug}',
+        },
+      }, null, 2)
+    );
+
+    const result = runGsdTools('init execute-phase 10', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.branch_name, null);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
