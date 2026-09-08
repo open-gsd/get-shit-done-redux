@@ -1450,8 +1450,15 @@ describe('E2E: Copilot full install verification', () => {
     // rather than hand-listed, with each stem's .compact counterpart added
     // alongside it. A hand-typed 70-entry literal would be exactly the kind of
     // drift this test exists to catch, one level removed.
+    // Not every agent has a .compact.md source sibling (a few exceed the
+    // hard NEW_FILE_CAP even compacted — see agents/*.compact.md and
+    // .gsd/phase/enhance-4407-agent-skill-seam/40-design.md "Coverage
+    // exception"), so check disk per stem rather than assuming universal
+    // coverage.
     const expected = listAgentFiles()
-      .flatMap((stem) => [`${stem}.agent.md`, `${stem}.compact.agent.md`])
+      .flatMap((stem) => fs.existsSync(path.join(__dirname, '..', 'agents', `${stem}.compact.md`))
+        ? [`${stem}.agent.md`, `${stem}.compact.agent.md`]
+        : [`${stem}.agent.md`])
       .sort();
     assert.deepStrictEqual(gsdAgents, expected);
   });
