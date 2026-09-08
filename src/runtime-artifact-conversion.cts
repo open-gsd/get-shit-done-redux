@@ -3171,9 +3171,7 @@ function _applyRuntimeRewrites(content, runtime, pathPrefix, isGlobal = false, a
   const dirName = getDirName(runtime);
   const normalizedPathPrefix = pathPrefix.replace(/\/$/, '');
 
-  if (runtime !== 'claude' && runtime !== 'copilot') {
-    content = filterRuntimeNotesForTarget(content, runtime);
-  }
+  content = filterRuntimeNotesForTarget(content, runtime);
 
   // #1521: stamp runtime identity + use_worktrees=false for every non-Claude runtime
   // before brand-specific path rewrites, so the replace operates on the pristine

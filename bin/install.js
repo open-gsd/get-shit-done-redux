@@ -7911,9 +7911,7 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
         content = composeWorkflow(content, { sourcePath: srcPath });
       }
 
-      if (runtime !== 'claude' && runtime !== 'copilot') {
-        content = filterRuntimeNotesForTarget(content, runtime);
-      }
+      content = filterRuntimeNotesForTarget(content, runtime);
 
       if (!dispatch.mdSkipGenericRewrite) {
         const globalClaudeRegex = /~\/\.claude\//g;

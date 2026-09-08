@@ -113,10 +113,10 @@ describe('#4482: OpenCode conversion strips Copilot-only runtime notes', () => {
     assert.ok(convert(note).includes(note));
   });
 
-  test('the shared audience filter covers every non-Claude runtime and preserves Copilot', () => {
+  test('the shared audience filter covers every non-Copilot runtime and preserves Copilot', () => {
     const note = '<runtime_note>\n**Copilot (VS Code):** Use `vscode_askquestions`.\n\n**TEXT_MODE fallback:** Keep me.\n</runtime_note>';
     const runtimes = [
-      'antigravity', 'augment', 'cline', 'codebuddy', 'codex', 'cursor', 'hermes',
+      'antigravity', 'augment', 'claude', 'cline', 'codebuddy', 'codex', 'cursor', 'hermes',
       'kilo', 'kimi', 'kimi-code', 'opencode', 'pi', 'qwen', 'trae', 'windsurf', 'zcode',
     ];
     for (const runtime of runtimes) {
