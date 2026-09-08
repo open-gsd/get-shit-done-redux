@@ -25,6 +25,7 @@
 const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { createTempDir, cleanup } = require('./helpers.cjs');
 const { runHook: runHookSeam } = require('./helpers/process-seam.cjs');
@@ -609,6 +610,43 @@ describe('workstream-scoped curated paths (#4455)', () => {
     fs.writeFileSync(notesPath, lines(292));
     const r = runHook(writePayload(notesPath, lines(16), { cwd: wsProjectDir }));
     assert.equal(r.status, 0, `non-curated workstream file must pass; stdout: ${r.stdout}`);
+  });
+
+  test('the sentinel hatch unblocks even when cwd sits under a symlink (macOS full-test CI finding)',
+    { skip: process.platform === 'win32' ? 'symlink creation needs privilege on Windows' : false }, () => {
+    // PR CI's macos-latest full-test shard caught this for free — os.tmpdir()
+    // on macOS resolves through a /var -> /private/var symlink, so the
+    // ABOVE test (identical cwd/target shape) failed there while passing
+    // everywhere gsd-test's Linux bench runs, where /tmp is not a symlink.
+    // This test reproduces the same asymmetry deterministically on any
+    // platform via an EXPLICIT symlink, so a regression here is caught by
+    // gsd-test too, not only by a real macOS CI run.
+    //
+    // Root cause: the caller (guard's main flow) realpath-resolves the
+    // WRITE TARGET before the curated match (round 9 Minor 1), but
+    // consumeSentinelFor compared the sentinel TOKEN's resolved path
+    // without the same realpath step — an armed, correct sentinel then
+    // never matched whenever cwd traversed a symlink.
+    const realBase = createTempDir('gsd-write-guard-symlink-real-');
+    const linkedProjectDir = path.join(os.tmpdir(), `gsd-write-guard-symlink-link-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(realBase, linkedProjectDir, 'dir');
+    try {
+      const linkedPlanningDir = path.join(linkedProjectDir, '.planning');
+      const linkedWsDir = path.join(linkedPlanningDir, 'workstreams', 'alpha');
+      fs.mkdirSync(linkedWsDir, { recursive: true });
+      const linkedRoadmapPath = path.join(linkedWsDir, 'ROADMAP.md');
+      fs.writeFileSync(linkedRoadmapPath, lines(292));
+      // Armed with the LEXICAL (through-the-symlink) path, matching exactly
+      // what the workflow's own $ROADMAP_PATH (from init.complete-milestone,
+      // never realpath-resolved) would contain.
+      fs.writeFileSync(path.join(linkedPlanningDir, '.gsd-allow-shrink'), `${linkedRoadmapPath}\n`);
+      const r = runHook(writePayload(linkedRoadmapPath, lines(16), { cwd: linkedProjectDir }));
+      assert.equal(r.status, 0,
+        `expected the sentinel to unblock through the symlinked cwd, got status ${r.status}; stdout: ${r.stdout}`);
+    } finally {
+      cleanup(linkedProjectDir);
+      cleanup(realBase);
+    }
   });
 });
 

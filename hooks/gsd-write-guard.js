@@ -183,7 +183,25 @@ function consumeSentinelFor(filePath, normalized) {
     // Path-bound: the token names exactly one file, resolved against the
     // .planning/ dir's parent (repo root) — same case-insensitive stance as
     // the curated match itself.
-    const namedNorm = path.resolve(path.join(planningDir, '..'), token).replace(/\\/g, '/').toLowerCase();
+    let namedPath = path.resolve(path.join(planningDir, '..'), token);
+    // Symmetry with the caller's own resolution (#4455 CI finding, macOS
+    // full-test shard): `filePath`/`normalized` were already realpath-resolved
+    // before this function was called (round 9 Minor 1's symlink-before-match
+    // fix), but `token` — typically an already-absolute path composed by the
+    // workflow's own init.* fields — was compared WITHOUT that same
+    // resolution. Wherever cwd sits under a symlink (macOS's /var ->
+    // /private/var is the common case, since that's exactly what os.tmpdir()
+    // resolves through, but any symlinked project/worktree checkout hits the
+    // same asymmetry), the token names the lexical path while `normalized`
+    // names the realpath — a validly-armed sentinel then never matches, and a
+    // legitimate milestone-reset Write stays incorrectly blocked. The named
+    // file is already known to exist (the caller only reaches this function
+    // after successfully reading it), so realpath is expected to succeed;
+    // keep the lexical path on failure, matching the caller's own fallback.
+    try {
+      namedPath = fs.realpathSync(namedPath);
+    } catch { /* keep the lexical path */ }
+    const namedNorm = namedPath.replace(/\\/g, '/').toLowerCase();
     if (namedNorm !== normalized.toLowerCase()) {
       return false; // armed for a different file — leave it for that write
     }
