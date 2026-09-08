@@ -569,7 +569,14 @@ else
 fi
 
 if [ -n "$DIFF_BASE" ]; then
-  CHANGED_FILES=$(git diff --name-only "${DIFF_BASE}..HEAD" -- . ':!.planning' 2>/dev/null | tr '\n' ' ')
+  # #4466: bound the tip at the quick task's own last commit, not HEAD --
+  # QUICK_COMMITS is already the complete, newest-first list of this task's
+  # commits, so its first line is the correct tip. An unbounded `..HEAD`
+  # picks up any later commit landed on the same tree in the window between
+  # this task's commits and this review step (worktree merge-back, a shared
+  # tree, another session) and folds it into this task's own review scope.
+  QUICK_TIP=$(echo "$QUICK_COMMITS" | head -1)
+  CHANGED_FILES=$(git diff --name-only "${DIFF_BASE}..${QUICK_TIP}" -- . ':!.planning' 2>/dev/null | tr '\n' ' ')
 else
   CHANGED_FILES=""
 fi
