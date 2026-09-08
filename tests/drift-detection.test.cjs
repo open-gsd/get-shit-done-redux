@@ -1361,4 +1361,22 @@ describe('verify codebase-drift: an absent baseline is not total drift (#3418)',
     assert.strictEqual(data.last_mapped_commit, 'deadbeef'.repeat(5));
     assert.deepStrictEqual(data.elements, []);
   });
+
+  test('a stamp that resolves to a non-commit object skips too (#3418)', () => {
+    // A tree sha resolves with exit 0, and `git diff <tree> HEAD` is valid, so
+    // an exit-code-only probe would diff against the wrong object and report
+    // that as real drift.
+    const tree = git(tmp, 'rev-parse', 'HEAD^{tree}');
+    writeMappedCommit(structure, tree, '2026-04-22');
+
+    const r = runGsdTools(['verify', 'codebase-drift'], tmp);
+    assert.strictEqual(r.success, true, r.error);
+    const data = JSON.parse(r.output);
+
+    assert.strictEqual(data.reason, 'unresolvable-mapped-commit');
+    assert.strictEqual(data.skipped, true);
+    assert.strictEqual(data.block, false);
+    assert.strictEqual(data.last_mapped_commit, tree);
+    assert.deepStrictEqual(data.elements, []);
+  });
 });

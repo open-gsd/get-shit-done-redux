@@ -2420,11 +2420,13 @@ function cmdVerifyCodebaseDrift(cwd: string, raw: boolean): void {
       return;
     }
     const baseProbe = execGit(['cat-file', '-t', lastMapped], { cwd }) as unknown as { exitCode: number; stdout: string };
-    if (baseProbe.exitCode !== 0) {
+    if (baseProbe.exitCode !== 0 || baseProbe.stdout.trim() !== 'commit') {
       // A stamp git cannot resolve: history rewrite, GC, or a shallow clone.
       // Distinct reason from 'no-mapped-commit' -- the map claims a baseline,
       // this repository just cannot see it, which is an operator-actionable
-      // difference (re-map vs. unshallow).
+      // difference (re-map vs. unshallow). A resolvable non-commit (a tree or
+      // blob sha, a ref name) is the same class of bad baseline: git would
+      // happily diff against it and report drift against the wrong object.
       emit({
         block: false,
         skipped: true,
