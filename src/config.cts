@@ -121,6 +121,27 @@ const SCHEMA_DEFAULTS: Record<string, unknown> = {
   // effective default existed only as the workflow's shell fallback and the
   // docs disagreed (settings-advanced said 3). Manifest stays the one owner.
   'workflow.inline_plan_threshold': CONFIG_DEFAULTS.inline_plan_threshold,
+  // #4285 review: an absent threshold resolved to "Key not found" while the
+  // hook silently used 35/25 — the query surface disagreeing with the reader.
+  //
+  // Restated here rather than derived: `CONFIG_DEFAULTS` is re-exported with a
+  // FLATTENED shape that drops the manifest's nested blocks, so
+  // `CONFIG_DEFAULTS.hooks` is undefined at runtime and the manifest cannot
+  // feed these two rows the way `workflow.smart_zone_tokens` above is fed.
+  //
+  // Not added to `buildNewProjectConfig` either, and that one is deliberate
+  // rather than incidental: it writes a `hooks` object into every NEW project's
+  // config.json, which would freeze today's fire-points as an explicit
+  // per-project override everywhere — the opposite of this PR's premise that an
+  // absent key tracks the shipped default. (The manifest alone would NOT have
+  // that effect; `buildNewProjectConfig` builds its own literal. Correcting an
+  // earlier version of this comment that ran the two together.)
+  //
+  // That leaves ONE copy of 35/25 outside the hook — these two rows — and
+  // `tests/config.test.cjs` pins them against the hook's exported
+  // WARNING_THRESHOLD/CRITICAL_THRESHOLD so the copies cannot drift.
+  'hooks.context_warning_threshold': 35,
+  'hooks.context_critical_threshold': 25,
 };
 
 /**
@@ -939,6 +960,32 @@ function cmdConfigSet(cwd: string, keyPath: string | undefined, value: string | 
   if (kp === 'hooks.context_warning_threshold' || kp === 'hooks.context_critical_threshold') {
     if (typeof parsedValue !== 'number' || !Number.isFinite(parsedValue) || parsedValue < 0 || parsedValue > 100) {
       error(`Invalid ${kp} '${val}'. Must be a number between 0 and 100 (percent of context window remaining).`);
+    }
+    // The two ENDPOINTS that are in range but can never form a valid pair are
+    // refused here rather than stored (#4285 review). `critical < warning` must
+    // hold at read time and BOTH sides are clamped to 0-100, so `warning: 0`
+    // has no legal partner (nothing is below 0) and `critical: 100` has none
+    // either (nothing above 100). Either one is silently discarded by the hook
+    // for EVERY value of the other key — verified: both resolve to the 35/25
+    // defaults against a present, absent, or extreme partner, while 0.001 and
+    // 99.999 are honoured.
+    //
+    // Storing a value the reader can never honour is exactly the
+    // accept-then-discard shape this codebase refuses elsewhere, so this fails
+    // at write time where the operator can see it. The pair itself is still NOT
+    // checked here — config-set writes one key per call, so a two-step retune
+    // is legitimately inconsistent on disk in between.
+    if (kp === 'hooks.context_warning_threshold' && parsedValue === 0) {
+      error(`Invalid ${kp} '${val}'. 0 is in range but unusable: the monitor requires `
+        + `hooks.context_critical_threshold < hooks.context_warning_threshold, and no valid `
+        + `critical value is below 0, so a warning of 0 would always fall back to the 35/25 `
+        + `defaults. Use a value above 0.`);
+    }
+    if (kp === 'hooks.context_critical_threshold' && parsedValue === 100) {
+      error(`Invalid ${kp} '${val}'. 100 is in range but unusable: the monitor requires `
+        + `hooks.context_critical_threshold < hooks.context_warning_threshold, and no valid `
+        + `warning value is above 100, so a critical of 100 would always fall back to the `
+        + `35/25 defaults. Use a value below 100.`);
     }
   }
 

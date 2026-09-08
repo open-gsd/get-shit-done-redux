@@ -3080,13 +3080,63 @@ describe('config-set hooks.context_warning_threshold / hooks.context_critical_th
     }
   });
 
-  // The domain is the one the hook compares against (remaining_percentage), and
-  // the bounds are INCLUSIVE on both ends.
-  test('accepts the domain bounds 0 and 100', () => {
-    for (const value of [0, 100]) {
-      const result = runGsdTools(`config-set hooks.context_warning_threshold ${value}`, tmpDir);
-      assert.ok(result.success, `config-set must accept ${value}: ${result.error}`);
-      assert.strictEqual(readConfig(tmpDir).hooks.context_warning_threshold, value);
+  // The domain the hook compares against (remaining_percentage) is 0-100
+  // inclusive, but the two ENDPOINTS that can never form a valid pair are
+  // refused rather than stored (#4285 review). `critical < warning` must hold at
+  // read time and both sides are clamped to 0-100, so `warning: 0` has no legal
+  // partner below it and `critical: 100` has none above it. Each is discarded by
+  // the hook for EVERY value of the other key, so storing one would report a
+  // tuning that can never take effect.
+  //
+  // Stated as a pair of tables rather than one row per case, because the
+  // asymmetry is the point: 0 is legal for critical and illegal for warning, and
+  // 100 is the reverse. A single "bounds are inclusive" row (which this replaces)
+  // asserted the misleading half and was what let the dead value through.
+  test('refuses the two endpoints that can never form a valid pair', () => {
+    for (const [key, dead] of [
+      ['hooks.context_warning_threshold', 0],
+      ['hooks.context_critical_threshold', 100],
+    ]) {
+      const before = JSON.stringify(readConfig(tmpDir));
+      const result = runGsdTools(`config-set ${key} ${dead}`, tmpDir);
+      assert.ok(!result.success, `config-set ${key} ${dead} must fail — no partner value can satisfy the pair check`);
+      assert.strictEqual(JSON.stringify(readConfig(tmpDir)), before,
+        `${key}: a refused write must leave the config byte-identical`);
+    }
+  });
+
+  test('accepts the endpoints that ARE reachable, and the values just inside the dead ones', () => {
+    // The controls for the row above. Without these, refusing 0 and 100
+    // outright would pass it just as well as refusing only the dead pairing.
+    for (const [key, live] of [
+      ['hooks.context_warning_threshold', 100],   // warning 100 pairs with the default critical 25
+      ['hooks.context_critical_threshold', 0],    // critical 0 pairs with the default warning 35
+      ['hooks.context_warning_threshold', 0.001], // just inside the dead endpoint
+      ['hooks.context_critical_threshold', 99.999],
+    ]) {
+      const result = runGsdTools(`config-set ${key} ${live}`, tmpDir);
+      assert.ok(result.success, `config-set ${key} ${live} must succeed: ${result.error}`);
+      assert.strictEqual(readConfig(tmpDir).hooks[key.split('.')[1]], live);
+    }
+  });
+
+  // The query surface must agree with the reader: an ABSENT key resolves to the
+  // hook's own default rather than "Key not found" (#4285 review). SCHEMA_DEFAULTS
+  // necessarily restates 35/25 outside the hook — the hook is a standalone
+  // subprocess on a hot path and cannot read a manifest to learn its own
+  // defaults — so this row pins the two copies against each other. If either
+  // moves alone, this goes red.
+  test('an absent threshold resolves to the hook\'s own constant, not "Key not found"', () => {
+    const monitor = require('../hooks/gsd-context-monitor.js');
+    for (const [key, constant] of [
+      ['hooks.context_warning_threshold', monitor.WARNING_THRESHOLD],
+      ['hooks.context_critical_threshold', monitor.CRITICAL_THRESHOLD],
+    ]) {
+      const result = runGsdTools(`config-get ${key}`, tmpDir);
+      assert.ok(result.success, `config-get ${key} failed: ${result.error}`);
+      assert.strictEqual(Number(String(result.output).trim()), constant,
+        `${key} must resolve to the hook's own default (${constant}); a drift here means ` +
+        'SCHEMA_DEFAULTS and the hook constants disagree');
     }
   });
 

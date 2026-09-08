@@ -70,6 +70,7 @@ degrades:
 | key absent | the default (35 / 25) |
 | not a number, or outside 0-100 | the default for that key |
 | `critical >= warning` after resolution | **both** defaults — an inconsistent pair has no coherent reading, and honouring one side would silently discard the other |
+| `warning` 0, or `critical` 100 | **both** defaults, always. These are in range but have no legal partner — nothing is below 0 and nothing is above 100 — so `critical < warning` can never hold. `config-set` refuses them at write time rather than storing a value the hook will always discard |
 
 Note the two rows are different rules and compose in this order: an unusable
 value is replaced by ITS OWN default first, and only the resulting pair is

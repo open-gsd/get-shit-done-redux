@@ -2998,6 +2998,36 @@ describe('#4285 properties: resolveThresholds holds its domain invariants for ar
     );
   });
 
+  test('the two in-range endpoints with no legal partner always revert', () => {
+    // `warning: 0` and `critical: 100` are inside the 0-100 domain and pass the
+    // per-key check, but `critical < warning` can never hold for either: nothing
+    // is below 0 and nothing is above 100. So each is discarded for EVERY value
+    // of the other key. config-set refuses them at write time (tests/config.test.cjs);
+    // this row pins the READ side, which must stay total and simply fall back.
+    //
+    // The 0.001 / 99.999 controls are what make it a claim about the endpoints
+    // rather than about small and large numbers generally.
+    const D = { warning: WARNING_THRESHOLD, critical: CRITICAL_THRESHOLD };
+
+    for (const partner of [undefined, 0, 50, 100]) {
+      assert.deepStrictEqual(
+        resolveThresholds({ context_warning_threshold: 0, context_critical_threshold: partner }), D,
+        `warning 0 must revert whatever critical is (tried ${partner})`);
+      assert.deepStrictEqual(
+        resolveThresholds({ context_critical_threshold: 100, context_warning_threshold: partner }), D,
+        `critical 100 must revert whatever warning is (tried ${partner})`);
+    }
+
+    assert.deepStrictEqual(
+      resolveThresholds({ context_warning_threshold: 0.001, context_critical_threshold: 0 }),
+      { warning: 0.001, critical: 0 },
+      'control: just inside the dead endpoint still resolves, so the row above is about 0 itself');
+    assert.deepStrictEqual(
+      resolveThresholds({ context_warning_threshold: 100, context_critical_threshold: 99.999 }),
+      { warning: 100, critical: 99.999 },
+      'control: just inside the other dead endpoint still resolves');
+  });
+
   test('a non-object hooks argument of any shape yields the defaults', () => {
     fc.assert(
       fc.property(
