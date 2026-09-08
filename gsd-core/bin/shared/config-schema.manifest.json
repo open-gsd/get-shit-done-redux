@@ -79,6 +79,8 @@
     "hooks.context_warning_threshold",
     "hooks.context_critical_threshold",
     "hooks.workflow_guard",
+    "hooks.commit_types",
+    "hooks.community",
     "workflow.context_coverage_gate",
     "statusline.show_last_command",
     "statusline.context_position",
