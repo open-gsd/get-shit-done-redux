@@ -14,6 +14,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { createTempGitProject, cleanup, runGsdTools } = require('./helpers.cjs');
+const fc = require('fast-check');
+const { collectListFlagValues, COMMIT_LIST_FLAGS } = require('../gsd-core/bin/gsd-tools.cjs');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 // #3145: class-norm timeout, not a per-suite value — see helpers/timeouts.cjs.
 const { GIT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
@@ -761,5 +763,76 @@ describe('commit --files-removed: index states absent by design are never remova
     );
     assert.strictEqual(JSON.parse(result.output).reason, 'staging_failed', result.output);
     assert.strictEqual(git(['ls-files', '-s', '--', path.join(PENDING, 'mine.md')]), staged, 'the pre-staged blob survives the rollback');
+  });
+});
+
+// RULESET.TESTS.property-based-testing: the two-list commit parser is a real
+// parser (split argv into two lists by boundary flags, skip embedded boolean
+// flags, merge repeated occurrences), and its edge cases were already the
+// subject of a review round. The example cases above pin the shapes that broke;
+// this pins the invariant they are instances of, over interleavings nobody
+// enumerated.
+describe('commit --files/--files-removed: the two-list parser upholds its partition invariant (#4208 review)', () => {
+  const LIST = [...COMMIT_LIST_FLAGS];
+  // The alphabet a real invocation draws from: positionals, both list flags,
+  // and the boolean flags that may sit inside a run without ending it.
+  const token = fc.oneof(
+    fc.constantFrom('a', 'b', 'c', 'd'),
+    fc.constantFrom(...LIST),
+    fc.constantFrom('--amend', '--no-verify', '--raw'),
+  );
+  const argv = fc.array(token, { minLength: 0, maxLength: 10 })
+    .map(rest => ['commit', ...rest]);
+
+  // The invariant, stated independently of the implementation: walking argv
+  // left to right, a list flag opens a run that every later positional joins
+  // until the next list flag; a boolean flag is transparent; a positional
+  // before any list flag belongs to the message, not to a list.
+  function partition(args) {
+    const out = Object.fromEntries(LIST.map(f => [f, []]));
+    let open = null;
+    for (const t of args.slice(1)) {
+      if (COMMIT_LIST_FLAGS.has(t)) { open = t; continue; }
+      if (t.startsWith('--')) continue;
+      if (open !== null) out[open].push(t);
+    }
+    return out;
+  }
+
+  test('every positional lands in exactly the run that is open at it, whatever the flag order or count', () => {
+    fc.assert(fc.property(argv, (args) => {
+      const expected = partition(args);
+      for (const flag of LIST) {
+        assert.deepStrictEqual(collectListFlagValues(args, flag), expected[flag]);
+      }
+      return true;
+    }), { numRuns: 500 });
+  });
+
+  test('no positional after the first list flag is dropped, and none is claimed by both lists', () => {
+    fc.assert(fc.property(argv, (args) => {
+      const first = args.findIndex((a, i) => i > 0 && COMMIT_LIST_FLAGS.has(a));
+      if (first === -1) return true;
+      const afterFirst = args.slice(first + 1).filter(a => !a.startsWith('--'));
+      const collected = LIST.flatMap(f => collectListFlagValues(args, f));
+      // Multiset equality: every such positional is collected exactly once.
+      assert.deepStrictEqual([...collected].sort(), [...afterFirst].sort());
+      return true;
+    }), { numRuns: 500 });
+  });
+
+  test('with --files-removed absent the parse is the pre-#4208 slice-to-end parse', () => {
+    // The compatibility half: the only intended change to an invocation that
+    // never names the second list is that a second list flag now exists.
+    const legacy = fc.array(
+      fc.oneof(fc.constantFrom('a', 'b', 'c', 'd'), fc.constantFrom('--files'), fc.constantFrom('--amend', '--no-verify')),
+      { minLength: 0, maxLength: 8 },
+    ).map(rest => ['commit', ...rest]);
+    fc.assert(fc.property(legacy, (args) => {
+      const i = args.indexOf('--files');
+      const old = i === -1 ? [] : args.slice(i + 1).filter(a => !a.startsWith('--'));
+      assert.deepStrictEqual(collectListFlagValues(args, '--files'), old);
+      return true;
+    }), { numRuns: 500 });
   });
 });

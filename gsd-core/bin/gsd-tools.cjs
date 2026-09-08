@@ -961,28 +961,15 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
           // A REPEATED list flag (`--files a --files b`) merges, as the old
           // slice-to-end parse merged it: every occurrence contributes its
           // run, and none of them ends another's silently.
-          const LIST_FLAGS = new Set(['--files', '--files-removed']);
-          const collectList = (flag) => {
-            const values = [];
-            args.forEach((a, i) => {
-              if (a !== flag) return;
-              for (const b of args.slice(i + 1)) {
-                if (LIST_FLAGS.has(b)) break;
-                if (b.startsWith('--')) continue;
-                values.push(b);
-              }
-            });
-            return values;
-          };
-          const firstListFlag = args.findIndex((a, i) => i > 0 && LIST_FLAGS.has(a));
+          const firstListFlag = args.findIndex((a, i) => i > 0 && COMMIT_LIST_FLAGS.has(a));
           // Collect all positional args between command name and first flag,
           // then join them — handles both quoted ("multi word msg") and
           // unquoted (multi word msg) invocations from different shells
           const endIndex = firstListFlag !== -1 ? firstListFlag : args.length;
           const messageArgs = args.slice(1, endIndex).filter(a => !a.startsWith('--'));
           const message = messageArgs.join(' ') || undefined;
-          const files = collectList('--files');
-          const filesRemoved = collectList('--files-removed');
+          const files = collectListFlagValues(args, '--files');
+          const filesRemoved = collectListFlagValues(args, '--files-removed');
           commands.cmdCommit(cwd, message, files, raw, amend, noVerify, filesRemoved);
   }
 
@@ -4305,6 +4292,31 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
  * declares that file "All OS-facing I/O; single platform seam", and a private
  * duplicate here is what made it untrue.
  */
+const COMMIT_LIST_FLAGS = new Set(['--files', '--files-removed']);
+
+// #4208 review: hoisted out of routeCommit's closure so the parser is reachable
+// from a test. It is the whole of the two-list argument contract, and its edge
+// cases (a boolean flag inside a run, a repeated list flag, either order) were
+// already the subject of a review round -- a parser that only the CLI can reach
+// can only be tested by example, one spawn at a time.
+//
+// Every occurrence of `flag` contributes a run; a run ends at the next LIST
+// flag and skips boolean flags on the way, so no token strictly between one
+// list flag and the next is ever dropped. Repeated runs of the same flag merge,
+// as the pre-#4208 slice-to-end parse merged them.
+function collectListFlagValues(args, flag) {
+  const values = [];
+  args.forEach((a, i) => {
+    if (a !== flag) return;
+    for (const b of args.slice(i + 1)) {
+      if (COMMIT_LIST_FLAGS.has(b)) break;
+      if (b.startsWith('--')) continue;
+      values.push(b);
+    }
+  });
+  return values;
+}
+
 function resolveSpawnBinary(name, platform = process.platform, env = process.env) {
   const { resolveExecutableBinary } = require('./lib/shell-command-projection.cjs');
   return resolveExecutableBinary(name, { platform, env });
@@ -5209,6 +5221,10 @@ module.exports = {
   // #3275: exported for tests — the shared PATH+PATHEXT resolver behind
   // review-lane invoke's `deps.spawn` / `deps.hasBinary` seams.
   resolveSpawnBinary,
+  // #4208 review: exported for tests — the two-list commit parser is otherwise
+  // reachable only by spawning the CLI, which a property test cannot afford.
+  collectListFlagValues,
+  COMMIT_LIST_FLAGS,
   // #3714 follow-up: exported for tests — the dispatch model-pin VALUE
   // policy (charset accept/render parity, max-length boundary, leading-char
   // anchor) is otherwise unreachable from outside the dispatchOverlayCapabilityCommand closure.
