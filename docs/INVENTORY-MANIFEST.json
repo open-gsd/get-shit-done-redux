@@ -672,7 +672,12 @@
       "verify-work/steps/mvp-uat-framing.md"
     ],
     "workflow_detail": [
-      "plan-phase/detail/elaboration.md"
+      "complete-milestone/detail/elaboration.md",
+      "docs-update/detail/elaboration.md",
+      "execute-phase/detail/elaboration.md",
+      "new-project/detail/elaboration.md",
+      "plan-phase/detail/elaboration.md",
+      "verify-work/detail/elaboration.md"
     ],
     "workflow_templates": [
       "discuss-phase/templates/context.md",

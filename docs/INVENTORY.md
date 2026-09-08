@@ -280,7 +280,7 @@ none is separately invocable — the parent workflow reaches them.
 |---|---|---|---|
 | `<workflow>/steps/*.md` | Gated section bodies extracted by the fragment model (ADR-1671, epic #1671 Phases 6.1–6.3). The parent carries a `section_manifest`-gated stub; `gsd-core/workflows/section-manifest.json` names which step a given invocation reads. | `workflow_steps` | See `docs/INVENTORY-MANIFEST.json` for the authoritative per-file list |
 | `<workflow>/modes/*.md` | Progressive-disclosure mode files (#717). The parent dispatches to exactly one; `discuss-phase/modes/` is the canonical example. | `workflow_modes` | `discuss-phase`, `help` |
-| `<workflow>/detail/*.md` | Elaboration content deferred from a workflow spine, read at runtime only when `workflow.compact_content` is `false` (ADR-4139; epic #4139 Phase 2 #4402 established the first example, Phase 3 #4403 added the CI guard). | `workflow_detail` | `plan-phase` |
+| `<workflow>/detail/*.md` | Elaboration content deferred from a workflow spine, read at runtime only when `workflow.compact_content` is `false` (ADR-4139; epic #4139 Phase 2 #4402 established the first example, Phase 3 #4403 added the CI guard, Phase 5 #4405 split the rest of the eager-window corpus worth splitting). | `workflow_detail` | `plan-phase`, `execute-phase`, `docs-update`, `new-project`, `verify-work`, `complete-milestone` |
 | `<workflow>/templates/*.md` | Fill-in template bodies the parent workflow renders at runtime; also referenced as a `FRAGMENT_DIRS` entry in `scripts/lint-response-language-coverage.cjs`. | `workflow_templates` | `discuss-phase` |
 
 All four families are keyed by `<workflow>/<subdir>/<file>.md` rather than a bare filename, because
