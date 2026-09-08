@@ -1088,6 +1088,41 @@ describe('init complete-milestone — milestones_path/project_path/requirements_
     assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
     assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'PROJECT.md'));
   });
+
+  test('GSD_PROJECT=second-product: project_path resolves into the PROJECT namespace, not root (#3749 regression — round 1 of this fix broke this)', () => {
+    // The FIRST version of this #4455 follow-up resolved project_path via
+    // planningRoot(cwd), which ignores GSD_PROJECT entirely — gsd-test caught
+    // this immediately (tests/init.test.cjs's pre-existing #3749 coverage) on
+    // this fix's own first push. PROJECT.md is shared across a project's own
+    // WORKSTREAMS, but a DIFFERENT project (GSD_PROJECT) legitimately gets
+    // its own separate PROJECT.md at `.planning/<project>/PROJECT.md`. The
+    // correct resolution is planningDir(cwd, null) — `ws` explicitly nulled
+    // (never read from GSD_WORKSTREAM), `project` left to default from
+    // GSD_PROJECT.
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'second-product'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'second-product', 'PROJECT.md'), '# Second Product\n');
+    writeRootProjectMd(tmpDir); // an unrelated root PROJECT.md must not win
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_PROJECT: 'second-product' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'second-product', 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'));
+  });
+
+  test('GSD_PROJECT=second-product AND GSD_WORKSTREAM=alpha together: project_path follows the PROJECT namespace, ignoring the workstream', () => {
+    fs.mkdirSync(path.join(tmpDir, '.planning', 'second-product', 'workstreams', 'alpha'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'second-product', 'PROJECT.md'), '# Second Product\n');
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_PROJECT: 'second-product', GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'second-product', 'PROJECT.md'));
+    assert.notStrictEqual(output.project_path,
+      absPlanningPath(tmpDir, 'second-product', 'workstreams', 'alpha', 'PROJECT.md'));
+  });
 });
 
 describe('withProjectRoot — project_title reads PROJECT.md from root even under a workstream (#4455 follow-up)', () => {
