@@ -3116,10 +3116,10 @@ function isolateGlobalGitConfig() {
     if (_gitConfigIsolation.refs > 0) return;
     const { prev, dir, cleanupOnExit } = _gitConfigIsolation;
     _gitConfigIsolation = null;
-    process.removeListener('exit', cleanupOnExit);
     if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
     else process.env.GIT_CONFIG_GLOBAL = prev;
     cleanup(dir);
+    process.removeListener('exit', cleanupOnExit);
   };
 }
 
