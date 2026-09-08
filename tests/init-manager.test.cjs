@@ -1131,6 +1131,72 @@ describe('withProjectRoot — project_title reads PROJECT.md from root even unde
   });
 });
 
+describe('init subcommands sharing the project_exists/project_path PROJECT.md pattern (#4455 follow-up)', () => {
+  // A code-review pass on this fix's first draft found the identical
+  // workstream-scoped-PROJECT.md bug (fixed above for cmdInitCompleteMilestone
+  // and withProjectRoot) repeated verbatim, via grep, in six more cmdInit*
+  // functions. Each is exercised here through its real CLI subcommand rather
+  // than re-asserting src/init.cts internals directly, so a regression in the
+  // router wiring would also be caught. `init manager` and `init new-milestone`
+  // are deliberately excluded: `manager` has its own STATE.md/ROADMAP.md
+  // readiness guard (covered separately above via `init complete-milestone`,
+  // which shares withProjectRoot); `new-milestone`'s project_path fix is
+  // real (see src/init.cts) but its dedicated coverage belongs with #4456's
+  // own new-milestone.md workstream-forwarding work, not duplicated here.
+  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project'];
+
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  for (const subcommand of SUBCOMMANDS) {
+    test(`GSD_WORKSTREAM=alpha: "init ${subcommand}" resolves project_path to the shared root PROJECT.md`, () => {
+      seedWorkstream(tmpDir, {
+        name: 'alpha',
+        state: '---\nstatus: active\n---\n# State\n',
+        roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+      });
+      fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# Test Project\n');
+
+      const result = runGsdTools(`init ${subcommand}`, tmpDir, { GSD_WORKSTREAM: 'alpha' });
+      assert.ok(result.success, `init ${subcommand} failed: ${result.error}`);
+      const output = JSON.parse(result.output);
+
+      assert.strictEqual(output.project_exists, true,
+        `init ${subcommand}: project_exists must be true (root PROJECT.md exists), got: ${JSON.stringify(output.project_exists)}`);
+      if ('project_path' in output) {
+        assert.strictEqual(output.project_path, absPlanningPath(tmpDir, 'PROJECT.md'),
+          `init ${subcommand}: project_path must resolve to the shared root PROJECT.md, got: ${output.project_path}`);
+        assert.notStrictEqual(output.project_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'PROJECT.md'),
+          `init ${subcommand}: project_path must not resolve into the workstream directory`);
+      }
+    });
+  }
+
+  test('milestone-op: GSD_WORKSTREAM=alpha does not report project_exists=false for a root-only PROJECT.md', () => {
+    // milestone-op does not expose a project_path field, only project_exists
+    // via buildInitCompletenessFields — the coreComplete/init_incomplete fix.
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'PROJECT.md'), '# Test Project\n');
+
+    const result = runGsdTools('init milestone-op', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `init milestone-op failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.project_exists, true,
+      `init milestone-op: project_exists must be true for a root-only PROJECT.md under a workstream, got: ${JSON.stringify(output.project_exists)}`);
+  });
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Folded from tests/bug-3584-runtime-slash-emitters.test.cjs — consolidation epic #1969 (B2 #1971)

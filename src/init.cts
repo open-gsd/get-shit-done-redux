@@ -1325,8 +1325,14 @@ function buildInitCompletenessFields(cwd: string): Record<string, boolean> {
   const planningExists = fs.existsSync(dir);
   const requirementsExists = fs.existsSync(path.join(dir, 'REQUIREMENTS.md'));
   const milestonesExists = fs.existsSync(path.join(dir, 'MILESTONES.md'));
+  // #4455 follow-up (code-review finding): PROJECT.md is shared across
+  // workstreams (see cmdInitCompleteMilestone's projectPath comment for the
+  // full evidence) — checked at planningRoot(cwd), never the workstream-scoped
+  // `dir`, so a workstream whose own REQUIREMENTS/ROADMAP/STATE are all
+  // present isn't wrongly reported incomplete just because the shared
+  // PROJECT.md isn't ALSO duplicated under its own directory.
   const coreComplete =
-    fs.existsSync(path.join(dir, 'PROJECT.md')) &&
+    fs.existsSync(path.join(planningRoot(cwd), 'PROJECT.md')) &&
     requirementsExists &&
     fs.existsSync(path.join(dir, 'ROADMAP.md')) &&
     fs.existsSync(path.join(dir, 'STATE.md'));
@@ -1370,7 +1376,10 @@ function cmdInitNewProject(cwd: string, raw: boolean, options: Record<string, un
     // one key stay byte-identical for existing consumers.
     ...buildInitCompletenessFields(cwd),
 
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     has_codebase_map: hasCodebaseMap,
     planning_exists: pathExistsInternal(cwd, '.planning'),
 
@@ -1386,7 +1395,8 @@ function cmdInitNewProject(cwd: string, raw: boolean, options: Record<string, un
     exa_search_available: hasExaSearch,
 
     // #2376: absolute — see comment on phase_dir in cmdInitExecutePhase.
-    project_path: toPosixPath(path.join(planningDir(cwd), 'PROJECT.md')),
+    // #4455 follow-up: PROJECT.md is shared across workstreams.
+    project_path: toPosixPath(path.join(planningRoot(cwd), 'PROJECT.md')),
     // #2376: new-project.md's research-synthesizer/roadmapper spawn prompts
     // read these instead of hardcoding '.planning/...' literals.
     requirements_path: toPosixPath(path.join(planningDir(cwd), 'REQUIREMENTS.md')),
@@ -1441,11 +1451,15 @@ function cmdInitNewMilestone(cwd: string, raw: boolean, options: Record<string, 
         )
       : null,
 
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
 
-    project_path: toPosixPath(path.join(planningDir(cwd), 'PROJECT.md')),
+    // #4455 follow-up: PROJECT.md is shared across workstreams.
+    project_path: toPosixPath(path.join(planningRoot(cwd), 'PROJECT.md')),
     roadmap_path: toPosixPath(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_path: toPosixPath(path.join(planningDir(cwd), 'STATE.md')),
     // #2376: new-milestone.md's research-synthesizer/roadmapper spawn prompts
@@ -1623,7 +1637,10 @@ function cmdInitQuickBatch(
 function cmdInitIngestDocs(cwd: string, raw: boolean): void {
   const config = loadConfig(cwd);
   const result: Record<string, unknown> = {
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     planning_exists: fs.existsSync(planningRoot(cwd)),
     ...getInitGitState(cwd),
     // #2376: absolute — see comment on phase_dir in cmdInitExecutePhase. The
@@ -1632,7 +1649,8 @@ function cmdInitIngestDocs(cwd: string, raw: boolean): void {
     // hardcoded bare '.planning/intel/...', '.planning/PROJECT.md', etc.
     // literals into their Agent(prompt=...) blocks; those now interpolate
     // these fields instead.
-    project_path: toPosixPath(path.join(planningDir(cwd), 'PROJECT.md')),
+    // #4455 follow-up: PROJECT.md is shared across workstreams.
+    project_path: toPosixPath(path.join(planningRoot(cwd), 'PROJECT.md')),
     requirements_path: toPosixPath(path.join(planningDir(cwd), 'REQUIREMENTS.md')),
     roadmap_path: toPosixPath(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_path: toPosixPath(path.join(planningDir(cwd), 'STATE.md')),
@@ -1679,13 +1697,17 @@ function cmdInitResume(cwd: string, raw: boolean): void {
 
     state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     planning_exists: fs.existsSync(planningRoot(cwd)),
 
     // #2376: absolute — see comment on phase_dir in cmdInitExecutePhase.
     state_path: toPosixPath(path.join(planningDir(cwd), 'STATE.md')),
     roadmap_path: toPosixPath(path.join(planningDir(cwd), 'ROADMAP.md')),
-    project_path: toPosixPath(path.join(planningDir(cwd), 'PROJECT.md')),
+    // #4455 follow-up: PROJECT.md is shared across workstreams.
+    project_path: toPosixPath(path.join(planningRoot(cwd), 'PROJECT.md')),
 
     has_interrupted_agent: !!interruptedAgentId,
     interrupted_agent_id: interruptedAgentId,
@@ -2601,7 +2623,10 @@ function cmdInitMilestoneOp(cwd: string, raw: boolean): void {
     archived_milestones: archivedMilestones,
     archive_count: archivedMilestones.length,
 
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
     archive_exists: fs.existsSync(path.join(planningRoot(cwd), 'archive')),
@@ -3046,7 +3071,10 @@ function cmdInitManager(cwd: string, raw: boolean): void {
     waiting_signal: waitingSignal,
     all_complete:
       completedCount === nonBacklogPhases.length && nonBacklogPhases.length > 0,
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     roadmap_exists: true,
     state_exists: true,
     manager_flags: managerFlags,
@@ -3614,7 +3642,10 @@ function cmdInitProgress(cwd: string, raw: boolean, options: Record<string, unkn
     has_work_in_progress: !!currentPhase,
     phase_mvp_mode: phaseMvpMode,
 
-    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningDir(cwd), 'PROJECT.md')))),
+    // #4455 follow-up (code-review finding): PROJECT.md is shared across
+    // workstreams — see cmdInitCompleteMilestone's projectPath comment for
+    // the full evidence.
+    project_exists: pathExistsInternal(cwd, toPosixPath(path.relative(cwd, path.join(planningRoot(cwd), 'PROJECT.md')))),
     roadmap_exists: fs.existsSync(path.join(planningDir(cwd), 'ROADMAP.md')),
     state_exists: fs.existsSync(path.join(planningDir(cwd), 'STATE.md')),
     // #4040: partial-init discriminator (see buildInitCompletenessFields) —
@@ -3624,7 +3655,8 @@ function cmdInitProgress(cwd: string, raw: boolean, options: Record<string, unkn
     // #2376: absolute — see comment on phase_dir in cmdInitExecutePhase.
     state_path: toPosixPath(path.join(planningDir(cwd), 'STATE.md')),
     roadmap_path: toPosixPath(path.join(planningDir(cwd), 'ROADMAP.md')),
-    project_path: toPosixPath(path.join(planningDir(cwd), 'PROJECT.md')),
+    // #4455 follow-up: PROJECT.md is shared across workstreams.
+    project_path: toPosixPath(path.join(planningRoot(cwd), 'PROJECT.md')),
     config_path: toPosixPath(path.join(planningDir(cwd), 'config.json')),
   };
 
