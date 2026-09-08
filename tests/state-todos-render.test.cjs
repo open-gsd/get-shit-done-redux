@@ -103,6 +103,27 @@ test('renderPendingTodosMarkdown: boundary — 240 chars (limit) is not truncate
   assert.equal(line, `- [2026-09-01] [api] ${title} — [todo file](${todo.path})`);
 });
 
+test('renderPendingTodosMarkdown: full ISO-8601 \'created\' renders a date-only bracket (#4439)', () => {
+  const line = renderPendingTodosMarkdown([makeTodo({ created: '2026-09-01T00:00:00.000Z', needs: undefined })]);
+  assert.match(line, /^- \[2026-09-01\] \[api\]/);
+  assert.doesNotMatch(line, /2026-09-01T/, 'full ISO timestamp must not leak into the rendered bullet');
+});
+
+test('renderPendingTodosMarkdown: \'created\' fallback (\'unknown\') is not sliced by the date-only formatter', () => {
+  const line = renderPendingTodosMarkdown([makeTodo({ created: undefined, needs: undefined })]);
+  assert.match(line, /^- \[unknown\] \[api\]/);
+});
+
+test('renderPendingTodosMarkdown: a malformed non-padded date is passed through unchanged, not mis-sliced', () => {
+  const line = renderPendingTodosMarkdown([makeTodo({ created: '2026-9-1', needs: undefined })]);
+  assert.match(line, /^- \[2026-9-1\] \[api\]/);
+});
+
+test('renderPendingTodosMarkdown: a non-4-digit year is not mis-sliced (near-miss YYYY-MM-DD shape)', () => {
+  const line = renderPendingTodosMarkdown([makeTodo({ created: '202-09-01T00:00:00.000Z', needs: undefined })]);
+  assert.match(line, /^- \[202-09-01T00:00:00\.000Z\] \[api\]/);
+});
+
 test('renderPendingTodosMarkdown: boundary — 241 chars (limit+1) truncates, needs dropped first', () => {
   const base = makeTodo({ needs: 'x', title: 'X' });
   const probe = renderPendingTodosMarkdown([base]);
@@ -142,7 +163,7 @@ test('property: rendered body always has one line per todo, each line <= 240 cha
   // than a vacuous one; the pathological "cap not achievable" case is
   // covered separately by the fixed "pathological" unit test above.
   const todoArb = fc.record({
-    created: fc.constantFrom('2026-01-01', '2025-12-31', 'unknown'),
+    created: fc.constantFrom('2026-01-01', '2025-12-31', 'unknown', '2026-01-01T00:00:00.000Z', '2026-9-1'),
     area: fc.string({ minLength: 0, maxLength: 40 }),
     title: fc.string({ minLength: 0, maxLength: 500 }),
     path: fc
@@ -319,9 +340,20 @@ test('cmdInitTodos: real todo file produces a rendered bullet via the CLI', (t) 
 
   const json = runQueryInitTodos(dir);
   assert.equal(json.pending_read_ok, true);
-  assert.equal(json.todo_count, 1);
   assert.match(json.pending_todos_markdown, /Fix retry logic/);
-  assert.match(json.pending_todos_markdown, /Needs Add a max-attempts cap\.$/m);
+  assert.match(json.pending_todos_markdown, /^- \[2026-09-01\] \[api\]/m);
+  // The Needs clause is asserted on the STRUCTURED field, not the rendered
+  // bullet: the bullet embeds the todo file's ABSOLUTE path, so its total
+  // length varies by runner tmpdir (macOS CI's /private/var/folders/… plus
+  // the test harness's gsd-test-run-* wrapper pushed the full bullet past
+  // renderPendingTodoBullet's intended 240-char cap, whose documented first
+  // degradation step is to drop the Needs clause — a correct product
+  // behavior this test must not depend on the runner's path length for).
+  assert.equal(json.todo_count, 1);
+  assert.ok(Array.isArray(json.todos) && json.todos.length === 1, 'todos array must carry the one todo');
+  // (the raw field keeps the trailing period; only the rendered bullet
+  // strips it — renderPendingTodoBullet's own unit rows pin that.)
+  assert.equal(json.todos[0].needs, 'Add a max-attempts cap.');
 });
 
 test('cmdInitTodos: needs clause survives a deterministically long base path (#4384 macOS shape)', (t) => {
