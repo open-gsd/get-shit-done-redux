@@ -452,10 +452,10 @@ After `milestone complete` has archived, reorganize ROADMAP.md with milestone gr
 Extract the Backlog section from the current ROADMAP.md before making any changes:
 
 ```bash
-INIT_CM=$(gsd_run query init.complete-milestone)
-if [[ "$INIT_CM" == @file:* ]]; then INIT_CM=$(cat "${INIT_CM#@file:}"); fi
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
 _gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
-ROADMAP_PATH=$(_gsd_field "$INIT_CM" roadmap_path)
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
 # Extract lines under ## Backlog through end of file (or next ## section)
 BACKLOG_SECTION=$(awk '/^## Backlog/{found=1} found{print}' "$ROADMAP_PATH")
 ```
@@ -469,10 +469,10 @@ This rewrite is an *intentional* catastrophic shrink: phase detail was just arch
 1. Arm the sentinel (single-use; the guard checks it is fresh — within 15 minutes — and names exactly this file, then consumes it):
 
 ```bash
-INIT_CM=$(gsd_run query init.complete-milestone)
-if [[ "$INIT_CM" == @file:* ]]; then INIT_CM=$(cat "${INIT_CM#@file:}"); fi
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
 _gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
-ROADMAP_PATH=$(_gsd_field "$INIT_CM" roadmap_path)
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
 printf '%s\n' "$ROADMAP_PATH" > .planning/.gsd-allow-shrink
 echo "Write target: $ROADMAP_PATH"
 ```
@@ -507,12 +507,12 @@ Append the extracted Backlog content verbatim to the end of the newly written RO
 **Safety commit — commit archive files BEFORE deleting any originals:**
 
 ```bash
-INIT_CM=$(gsd_run query init.complete-milestone)
-if [[ "$INIT_CM" == @file:* ]]; then INIT_CM=$(cat "${INIT_CM#@file:}"); fi
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
 _gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
-STATE_PATH=$(_gsd_field "$INIT_CM" state_path)
-ROADMAP_PATH=$(_gsd_field "$INIT_CM" roadmap_path)
-ARCHIVE_DIR=$(_gsd_field "$INIT_CM" archive_dir)
+STATE_PATH=$(_gsd_field "$INIT_REORG" state_path)
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
+ARCHIVE_DIR=$(_gsd_field "$INIT_REORG" archive_dir)
 gsd_run query commit "chore: archive v[X.Y] milestone files" --files "${ARCHIVE_DIR}/v[X.Y]-ROADMAP.md" "${ARCHIVE_DIR}/v[X.Y]-REQUIREMENTS.md" "${ARCHIVE_DIR}/v[X.Y]-MILESTONE-AUDIT.md" .planning/MILESTONES.md .planning/PROJECT.md "$STATE_PATH" "$ROADMAP_PATH"
 ```
 

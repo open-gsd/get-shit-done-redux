@@ -90,11 +90,24 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
     cleanup(tmpDir);
   });
 
-  /** Write a canned init.manager-shaped JSON payload and a gsd_run stub that returns it verbatim. */
+  /**
+   * Write a canned init.manager-shaped JSON payload and a gsd_run stub that
+   * returns it verbatim. Each call also appends one byte to a call-log file
+   * — NOT a shell variable increment, because `INIT_MANAGER=$(gsd_run ...)`
+   * runs gsd_run inside the command-substitution SUBSHELL, so a variable
+   * mutated there never survives back into the caller's shell.
+   */
   function stubGsdRun(jsonPayload) {
     const jsonPath = path.join(tmpDir, 'init-manager.json');
+    const callLogPath = path.join(tmpDir, 'gsd-run-calls.log');
     fs.writeFileSync(jsonPath, JSON.stringify(jsonPayload));
-    return `GSD_RUN_CALLS=0\ngsd_run() { GSD_RUN_CALLS=$((GSD_RUN_CALLS+1)); cat "${jsonPath}"; }\n`;
+    fs.writeFileSync(callLogPath, '');
+    return `gsd_run() { printf 'x' >> "${callLogPath}"; cat "${jsonPath}"; }\n`;
+  }
+
+  /** Number of gsd_run invocations recorded by the most recent stubGsdRun-backed script. */
+  function gsdRunCallCount() {
+    return fs.readFileSync(path.join(tmpDir, 'gsd-run-calls.log'), 'utf8').length;
   }
 
   describe('discover_phases step: reads STATE.md from init.manager state_path, not a hardcoded literal', () => {
@@ -128,11 +141,10 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
     test('flat mode: resolves the root STATE.md path (regression guard)', () => {
       const statePath = path.join(tmpDir, 'STATE-root.md');
       fs.writeFileSync(statePath, '# Root State\n');
-      const script = `${stubGsdRun({ state_path: statePath })}${iterateFence}\nprintf 'CALLS=[%s]\\n' "$GSD_RUN_CALLS"`;
+      const script = `${stubGsdRun({ state_path: statePath })}${iterateFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
       throwIfFailed(r, 'bash <iterate fence>');
-      // The fresh `cat "$STATE_PATH"` print plus the CALLS line — root content
-      // must appear in the raw re-read.
+      // The fence's own `cat "$STATE_PATH"` line prints the raw re-read to stdout.
       assert.ok(r.stdout.includes('# Root State'), `expected root STATE.md content, got: ${r.stdout}`);
     });
 
@@ -142,7 +154,7 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
       const wsStatePath = path.join(tmpDir, 'STATE-alpha.md');
       fs.writeFileSync(wsStatePath, '# Workstream Alpha State\n');
 
-      const script = `${stubGsdRun({ state_path: wsStatePath })}${iterateFence}\nprintf 'CALLS=[%s]\\n' "$GSD_RUN_CALLS"`;
+      const script = `${stubGsdRun({ state_path: wsStatePath })}${iterateFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
       throwIfFailed(r, 'bash <iterate fence>');
       assert.ok(r.stdout.includes('# Workstream Alpha State'),
@@ -154,11 +166,11 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
     test('does not double-fetch init.manager within the iterate fence (no-double-fetch requirement)', () => {
       const statePath = path.join(tmpDir, 'STATE-root.md');
       fs.writeFileSync(statePath, '# Root State\n');
-      const script = `${stubGsdRun({ state_path: statePath })}${iterateFence}\nprintf 'CALLS=[%s]\\n' "$GSD_RUN_CALLS"`;
+      const script = `${stubGsdRun({ state_path: statePath })}${iterateFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
       throwIfFailed(r, 'bash <iterate fence>');
-      assert.match(r.stdout, /CALLS=\[1\]/,
-        `iterate fence must call gsd_run exactly once (no double-fetch), got: ${r.stdout}`);
+      assert.strictEqual(gsdRunCallCount(), 1,
+        `iterate fence must call gsd_run exactly once (no double-fetch), got ${gsdRunCallCount()}; stdout: ${r.stdout}`);
     });
   });
 
