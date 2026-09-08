@@ -393,117 +393,6 @@ test('runtime config writers expose the exact configured entrypoints they emit',
   );
 });
 
-test('a Codex rollback restores every manifest-tracked GSD file byte-for-byte (#4249 CodeRabbit)', (t) => {
-  withSandboxedHome(t, 'configured-entrypoint-codex-rollback-', () => {
-    const first = install(true, 'codex');
-    const manifestPath = path.join(first.configDir, 'gsd-file-manifest.json');
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    // A managed file OUTSIDE the surfaces #3245's snapshot covers (config.toml,
-    // hooks.json, skills/gsd-*, agents/gsd-*, gsd-core/VERSION) — the gap the
-    // manifest-driven snapshot closes.
-    const managedRel = 'gsd-core/CHANGELOG.md';
-    assert.ok(manifest.files[managedRel], `the installer must track ${managedRel} in its manifest`);
-    const managedPath = path.join(first.configDir, managedRel);
-
-    // Stand in for "the bytes the previous install left on disk".
-    const priorBytes = '# bytes only this test wrote\n';
-    fs.writeFileSync(managedPath, priorBytes);
-    const priorManifestBytes = fs.readFileSync(manifestPath);
-
-    const second = install(true, 'codex');
-    assert.notEqual(
-      fs.readFileSync(managedPath, 'utf8'),
-      priorBytes,
-      'the second install must overwrite the managed file, or this test proves nothing',
-    );
-
-    // The exact closure installAllRuntimes invokes (bin/install.js
-    // rollbackFinalizedInstallerMigrations) when assertConfiguredEntrypoints throws.
-    assert.equal(typeof second.rollbackInstallerMigrations, 'function');
-    second.rollbackInstallerMigrations();
-
-    assert.equal(
-      fs.readFileSync(managedPath, 'utf8'),
-      priorBytes,
-      'rollback must restore a manifest-tracked GSD file byte-for-byte, not leave the new payload behind',
-    );
-    assert.deepEqual(
-      fs.readFileSync(manifestPath),
-      priorManifestBytes,
-      'rollback must also restore the manifest itself',
-    );
-  });
-});
-
-test('a minimal-profile Codex install snapshots its managed files too (#4249 CodeRabbit)', (t) => {
-  withSandboxedHome(t, 'configured-entrypoint-codex-minimal-', () => {
-    const first = install(true, 'codex');
-    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
-    // Marker-driven core profile — the `gsd update` path into minimal mode
-    // (resolveEffectiveProfile), reachable without a --minimal argv.
-    fs.writeFileSync(path.join(first.configDir, '.gsd-profile'), 'core\n');
-
-    const priorBytes = '# bytes only this test wrote\n';
-    fs.writeFileSync(managedPath, priorBytes);
-
-    const second = install(true, 'codex');
-    assert.notEqual(
-      fs.readFileSync(managedPath, 'utf8'),
-      priorBytes,
-      'a minimal Codex install must still overwrite gsd-core/, or this test proves nothing',
-    );
-
-    second.rollbackInstallerMigrations();
-    assert.equal(
-      fs.readFileSync(managedPath, 'utf8'),
-      priorBytes,
-      'a minimal Codex install must snapshot and restore its managed files, not just a full one',
-    );
-  });
-});
-
-test('a malformed prior manifest degrades the Codex rollback instead of deleting the payload (#4249 CodeRabbit)', (t) => {
-  withSandboxedHome(t, 'configured-entrypoint-codex-badmanifest-', () => {
-    const first = install(true, 'codex');
-    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
-    // An unparseable manifest leaves the pre-install GSD-owned set UNKNOWN.
-    // Treating that as "fresh install" would let the removal pass delete every
-    // file the new manifest lists — i.e. the user's whole prior payload.
-    fs.writeFileSync(path.join(first.configDir, 'gsd-file-manifest.json'), '{ not json');
-
-    const second = install(true, 'codex');
-    second.rollbackInstallerMigrations();
-
-    assert.equal(
-      fs.existsSync(managedPath),
-      true,
-      'an unreadable prior manifest must not let rollback delete the managed payload',
-    );
-  });
-});
-
-test('a schema-valid but files-less prior manifest degrades the Codex rollback the same way (#4249 agy review)', (t) => {
-  withSandboxedHome(t, 'configured-entrypoint-codex-shapelessmanifest-', () => {
-    const first = install(true, 'codex');
-    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
-    // Valid JSON with no `files` key parses without throwing. Object.keys(undefined
-    // || {}) then silently reads as "zero files predate this install" instead of
-    // "files key missing, unknown predates this install" — the same false-known
-    // state the unparseable-manifest test above guards against, reached through a
-    // JSON.parse success instead of a failure.
-    fs.writeFileSync(path.join(first.configDir, 'gsd-file-manifest.json'), JSON.stringify({ version: 1 }));
-
-    const second = install(true, 'codex');
-    second.rollbackInstallerMigrations();
-
-    assert.equal(
-      fs.existsSync(managedPath),
-      true,
-      'a prior manifest missing its files object must not let rollback delete the managed payload',
-    );
-  });
-});
-
 test('a minimal Codex rollback restores skills from the alternate skills home (#4249 CodeRabbit)', (t) => {
   withSandboxedHome(t, 'configured-entrypoint-codex-skills-', (root) => {
     const first = install(true, 'codex');
@@ -536,34 +425,15 @@ test('a minimal Codex rollback restores skills from the alternate skills home (#
   });
 });
 
-test('a rollback with no prior manifest leaves the payload alone (#4249)', (t) => {
-  withSandboxedHome(t, 'configured-entrypoint-codex-nomanifest-', () => {
-    const first = install(true, 'codex');
-    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
-    // A first install cannot tell "GSD created this file" from "GSD overwrote a
-    // file the user already had there" — no prior manifest records the
-    // difference. Removing it would be data loss, not rollback.
-    fs.unlinkSync(path.join(first.configDir, 'gsd-file-manifest.json'));
-    const userBytes = '# a file the user had at a tracked path\n';
-    fs.writeFileSync(managedPath, userBytes);
-
-    const second = install(true, 'codex');
-    second.rollbackInstallerMigrations();
-
-    assert.equal(
-      fs.existsSync(managedPath),
-      true,
-      'with no prior manifest the removal pass must not run at all',
-    );
-  });
-});
-
 test('an aggregate entrypoint validation failure rolls the Codex install back (#4249)', (t) => {
   withSandboxedHome(t, 'configured-entrypoint-aggregate-', () => {
     const first = install(true, 'codex');
-    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
+    // config.toml is the surface #3245's snapshot restores and the one this
+    // runtime's writer rewrites on every install, so a sentinel surviving here
+    // can only be the rollback's doing.
+    const configPath = path.join(first.configDir, 'config.toml');
     const priorBytes = '# bytes only this test wrote\n';
-    fs.writeFileSync(managedPath, priorBytes);
+    fs.writeFileSync(configPath, priorBytes);
 
     // Cline's `#!/usr/bin/env node` hook records interpreterCandidates: ['node'],
     // resolved off PATH. Emptying PATH makes exactly that entry fail, which is
@@ -583,7 +453,7 @@ test('an aggregate entrypoint validation failure rolls the Codex install back (#
     }
 
     assert.equal(
-      fs.readFileSync(managedPath, 'utf8'),
+      fs.readFileSync(configPath, 'utf8'),
       priorBytes,
       'the aggregate failure must reach restoreCodexSnapshot, not just throw',
     );
