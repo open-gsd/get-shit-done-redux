@@ -113,12 +113,31 @@ function discoverRegisteredSplits(workflowsDir = DEFAULT_WORKFLOWS_DIR) {
  * Ported verbatim from the pilot's `tests/plan-phase-compact-split.test.cjs`,
  * which this module supersedes as Phase 3's generalized version of the same
  * check.
+ *
+ * Bare shell block-closer/reopener keywords (#4405) are the same class of
+ * problem in a bash-heavy workflow like execute-phase.md: a lone `fi` or
+ * `done` line carries no content of its own — it is pure block-structure
+ * syntax that recurs once per `if`/`for`/`while` anywhere in the file. A
+ * split that extracts even one `if...fi` block will otherwise always collide
+ * with some unrelated `if...fi` block left in the spine, exactly the
+ * structure-not-content false positive this function exists to suppress.
+ *
+ * A bare XML-ish tag line (#4405) — `<step name="x">`, `</doc_assignment>`,
+ * `<verify_assignment>` — is the markup equivalent of the same problem: every
+ * workflow in this corpus repeats these tags once per step/template block, so
+ * any split that extracts even one such block collides with an unrelated one
+ * left in the spine. The tag NAME and attributes carry structure, never prose
+ * content, so treating the whole line as trivial is the same judgment call
+ * `isCanonicalLauncherPreamble` already makes for the shared launcher line —
+ * generalized here since it recurs for any tag, not one specific string.
  */
 function isTrivial(line) {
   if (/^`{3,}/.test(line)) return true;
   if (/^-{3,}$/.test(line)) return true;
   if (/^#+\s*$/.test(line)) return true;
   if (/^[A-Za-z][A-Za-z ]*:$/.test(line)) return true; // bare label lines like "Options:"
+  if (/^(fi|done|esac|else|then|do|\{|\})\s*;?\s*$/.test(line)) return true; // bare shell block syntax
+  if (/^<\/?[A-Za-z][\w-]*(\s+[^<>]*)?>$/.test(line)) return true; // bare open/close tag, alone on its own line
   return false;
 }
 
@@ -139,9 +158,24 @@ function normalizeNonTrivialLines(content) {
 }
 
 /**
+ * Known-boilerplate line prefixes (#4405), beyond the launcher preamble below:
+ * an exact, verbatim paragraph or call-opener this codebase repeats at every
+ * agent-spawn callsite across the ENTIRE corpus, not just within one file.
+ * `execute-phase.md`, `docs-update.md`, and `new-project.md` (at minimum) each
+ * spawn multiple agents and each carries its own copy of these — the same
+ * sanctioned-duplication shape as the launcher preamble, just keyed on a set
+ * of known strings instead of one.
+ */
+const KNOWN_BOILERPLATE_PREFIXES = [
+  '> **ORCHESTRATOR RULE — CODEX RUNTIME**:',
+  'Agent(prompt="',
+];
+
+/**
  * Is `line` the canonical `gsd_run` launcher bootstrap preamble (see
  * `gsd-core/workflows/_runtime-launcher.snippet.sh`,
- * `tests/runtime-launcher-parity.test.cjs`)?
+ * `tests/runtime-launcher-parity.test.cjs`), or one of the other known
+ * cross-corpus boilerplate lines above?
  *
  * That other guard's OWN contract mandates exactly one inlined copy in every
  * workflow/detail file that calls `gsd_run` — spine and detail both call it,
@@ -154,7 +188,8 @@ function normalizeNonTrivialLines(content) {
  * @returns {boolean}
  */
 function isCanonicalLauncherPreamble(line) {
-  return line.startsWith('_GSD_SHIM_NAME="gsd-tools.cjs";');
+  if (line.startsWith('_GSD_SHIM_NAME="gsd-tools.cjs";')) return true;
+  return KNOWN_BOILERPLATE_PREFIXES.some((prefix) => line.startsWith(prefix));
 }
 
 const PROTECTED_START = '<!-- gsd:protected:start -->';
