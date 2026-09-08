@@ -602,6 +602,16 @@ test('execute-phase.md: awk extracts resolves_phase from YAML frontmatter', () =
 // enough if GSD_WS was never re-derived and is always empty at runtime.
 // ────────────────────────────────────────────────────────────────────────
 describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
+  // #4456: executed fences below use the runtime-launcher preamble, which
+  // resolves gsd-tools.cjs via `${RUNTIME_DIR:-$(git rev-parse --show-toplevel
+  // || pwd)}`. Any fence run with an ISOLATED `cwd` (a tmpDir outside the
+  // repo, needed once Step 1's fence started performing a real
+  // `.gsd-ws-arg` write) has no git repo to discover, and CI benches have no
+  // global `gsd_run` on PATH to fall back to — so RUNTIME_DIR must be set
+  // explicitly wherever an isolated `cwd` is used, or the preamble fails
+  // with "gsd-tools.cjs not found" (a real bench failure this fix hit).
+  const REPO_ROOT = path.join(__dirname, '..');
+  const runtimeDirEnv = { ...process.env, RUNTIME_DIR: REPO_ROOT };
   const workflowPath = path.join(__dirname, '..', 'gsd-core', 'workflows', 'new-milestone.md');
   // readFileNormalized() strips \r\n -> \n before either extractor below slices
   // a fence out of `content` — both fences are handed to execFileSync('bash', ...)
@@ -681,7 +691,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
     function runStep1(argumentsValue) {
       const script = `ARGUMENTS=${JSON.stringify(argumentsValue)}\n${step1Fence}\n` +
         'printf \'GSD_WS=[%s]\\nMILESTONE_ARG=[%s]\\n\' "$GSD_WS" "$MILESTONE_ARG"';
-      const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+      const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
       throwIfFailed(r, 'bash <step1 fence>');
       const out = r.stdout;
       return {
@@ -758,7 +768,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       function runStep5(gsdWsArg) {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const gsdRunStub = 'gsd_run() { printf "gsd_run_call:%s\\n" "$*"; }\n';
-        const r = runHookSeam('-c', [gsdRunStub + step5Fence], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [gsdRunStub + step5Fence], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step5 fence>');
         return r.stdout;
       }
@@ -788,7 +798,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       function runPhasesClearFence(gsdWsArg) {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const gsdRunStub = 'gsd_run() { printf "gsd_run_call:%s\\n" "$*"; }\n';
-        const r = runHookSeam('-c', [gsdRunStub + phasesClearFence], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [gsdRunStub + phasesClearFence], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <phases.clear fence>');
         return r.stdout;
       }
@@ -822,7 +832,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const script = stubGsdRun(rootPaths, wsPaths) + gitAddFence +
           '\necho "GIT_ADD_CALL: git add \\"$ARCHIVE_DIR/\\" \\"$PHASES_DIR/\\""';
-        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <git add fence>');
         return r.stdout;
       }
@@ -853,7 +863,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), '--ws search');
         const gsdRunStub = 'gsd_run() { if [ "$1" = "query" ] && [ "$2" = "init.new-milestone" ]; then printf "gsd_run_call:%s\\n" "$*" >&2; echo "{}"; else echo "{}"; fi; }\n';
         const script = `ARGUMENTS="--reset-phase-numbers"\n${gsdRunStub}${step7Fence}`;
-        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step7 fence>');
         assert.match(r.stderr, /gsd_run_call:query init\.new-milestone --reset-phase-numbers --ws search\s*$/m,
           `expected --ws to be forwarded alongside --reset-phase-numbers, got: ${r.stderr}`);
@@ -868,7 +878,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       test('does NOT remove .planning/.gsd-ws-arg — steps 9/10 still need it', () => {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), '--ws search');
         const gsdRunStub = 'gsd_run() { echo "{}"; }\n';
-        const r = runHookSeam('-c', [gsdRunStub + step7Fence], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [gsdRunStub + step7Fence], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step7 fence>');
         assert.ok(fs.existsSync(path.join(tmpDir, '.planning', '.gsd-ws-arg')),
           '.gsd-ws-arg must survive step 7 — steps 9 and 10 run after it and still need to read the file');
@@ -886,7 +896,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       function runStep6Commit(gsdWsArg, rootPaths, wsPaths) {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const script = stubGsdRun(rootPaths, wsPaths) + step6CommitFence;
-        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step6 commit fence>');
         return r.stdout;
       }
@@ -939,7 +949,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       function runStep9(gsdWsArg, rootPaths, wsPaths) {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const script = stubGsdRun(rootPaths, wsPaths) + step9Fence;
-        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step9 fence>');
         return r.stdout;
       }
@@ -972,7 +982,7 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       function runStep10(gsdWsArg, rootPaths, wsPaths) {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
         const script = stubGsdRun(rootPaths, wsPaths) + step10Fence;
-        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir, env: runtimeDirEnv });
         throwIfFailed(r, 'bash <step10 fence>');
         return r.stdout;
       }
