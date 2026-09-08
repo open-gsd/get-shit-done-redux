@@ -38,6 +38,33 @@ const { runHook } = require('./helpers/process-seam.cjs');
 // #3145: class-norm timeout, not a per-suite value — see helpers/timeouts.cjs.
 const { GIT_TIMEOUT_MS, HOOK_FANOUT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
+/**
+ * The #3819 executor pre-commit protected-branch guard test harness below
+ * invokes a bash script with fake `git`/`gsd_run` shell functions defined
+ * INLINE — no real subprocess fan-out happens, so this is lighter than
+ * `HOOK_FANOUT_TIMEOUT_MS` (60000ms, sized for a hook that fans out to
+ * nested shell spawns). Pre-existing value, unchanged by this migration.
+ */
+const EXECUTOR_GUARD_TIMEOUT_MS = 10000;
+
+/**
+ * These four constants are NOT bounds on this suite's own subprocess calls —
+ * they are the EXACT timeout values production code (gitBaseBranch's
+ * trySymbolicRef / tryRemoteShow / tryLocalBranch / gitWorktreeInfoInternal,
+ * in src/, out of this batch's scope) hardcodes when calling its own git
+ * execution callback. Each test below asserts the captured call args to
+ * prove production didn't drift from its documented bound. Kept as FOUR
+ * separate constants rather than consolidated, even where values coincide
+ * today (TIER2 and TIER4 are both 5000ms) — collapsing them would let two
+ * independently-implemented production tiers drift from each other while
+ * the test kept passing, which defeats the point of a pinned-value
+ * assertion. All four are pre-existing values, unchanged by this migration.
+ */
+const TIER2_SYMBOLIC_REF_TIMEOUT_MS = 5000;
+const TIER3_REMOTE_SHOW_TIMEOUT_MS = 15000;
+const TIER4_LOCAL_BRANCH_TIMEOUT_MS = 5000;
+const WORKTREE_INFO_TIMEOUT_MS = 5000;
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -1267,7 +1294,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /protected\/default branch/);
@@ -1283,7 +1310,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /GUARD_PASSED/);
@@ -1298,7 +1325,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /protected\/default branch/);
@@ -1313,7 +1340,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /not in the agent-\* \/ worktree-agent-\* \/ worktree-wf_\* namespace/);
@@ -1328,7 +1355,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /GUARD_PASSED/);
@@ -1343,7 +1370,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /detached/);
@@ -1374,7 +1401,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /protected\/default branch/);
@@ -1391,7 +1418,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
     assert.match(result.stderr, /protected\/default branch/);
@@ -1412,7 +1439,7 @@ describe('#3819: gsd-executor.md pre-commit protected-branch guard', () => {
     });
     t.after(() => cleanup(scriptDir));
 
-    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: 10000 });
+    const result = runHook(scriptPath, [], { interpreter: 'bash', cwd: scriptDir, timeoutMs: EXECUTOR_GUARD_TIMEOUT_MS });
 
     assert.strictEqual(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /GUARD_PASSED/);
@@ -1896,7 +1923,7 @@ describe('#3057 W3: trySymbolicRef — tier-2 output that resolves to nothing', 
     });
     assert.deepStrictEqual(seen, [{
       args: ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'],
-      opts: { cwd: '/some/cwd', timeout: 5_000 },
+      opts: { cwd: '/some/cwd', timeout: TIER2_SYMBOLIC_REF_TIMEOUT_MS },
     }]);
   });
 });
@@ -1953,7 +1980,7 @@ describe('#3057 W3: tryRemoteShow — tier-3 output that is present but not auth
     });
     assert.deepStrictEqual(seen, [{
       args: ['remote', 'show', 'origin'],
-      opts: { cwd: '/some/cwd', timeout: 15_000 },
+      opts: { cwd: '/some/cwd', timeout: TIER3_REMOTE_SHOW_TIMEOUT_MS },
     }]);
   });
 });
@@ -2006,7 +2033,7 @@ describe('#3057 W3: tryLocalBranch — non-empty stdout that names neither main 
     });
     assert.deepStrictEqual(seen, [{
       args: ['branch', '--list', 'main', 'master'],
-      opts: { cwd: '/some/cwd', timeout: 5_000 },
+      opts: { cwd: '/some/cwd', timeout: TIER4_LOCAL_BRANCH_TIMEOUT_MS },
     }]);
   });
 });
@@ -2184,8 +2211,8 @@ describe('#3057 W3: gitWorktreeInfoInternal — no work tree, and git failing mi
     });
     gitBaseBranch.gitWorktreeInfoInternal('/some/cwd', { execGit: git });
     assert.deepStrictEqual(git.calls, [
-      { args: ['rev-parse', '--is-inside-work-tree'], opts: { cwd: '/some/cwd', timeout: 5000 } },
-      { args: ['rev-parse', '--show-toplevel'], opts: { cwd: '/some/cwd', timeout: 5000 } },
+      { args: ['rev-parse', '--is-inside-work-tree'], opts: { cwd: '/some/cwd', timeout: WORKTREE_INFO_TIMEOUT_MS } },
+      { args: ['rev-parse', '--show-toplevel'], opts: { cwd: '/some/cwd', timeout: WORKTREE_INFO_TIMEOUT_MS } },
     ]);
   });
 });

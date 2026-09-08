@@ -31,6 +31,15 @@ const runGitSpy = mock.method(processSeam, 'runGit');
 after(() => mock.restoreAll());
 
 const { gitOrThrow, throwIfFailed, toLegacyResult, DEFAULT_GIT_TIMEOUT_MS } = require('./helpers/git-fixture.cjs');
+
+/**
+ * Deliberately NOT DEFAULT_GIT_TIMEOUT_MS or any real class norm — chosen
+ * specifically to differ from it, to prove gitOrThrow's timeoutMs override
+ * plumbing actually threads a caller-supplied value through rather than
+ * silently keeping the default. See the E11 test's own
+ * assert.notEqual(..., DEFAULT_GIT_TIMEOUT_MS) a few lines below.
+ */
+const ARBITRARY_OVERRIDE_TIMEOUT_MS = 12345;
 const { createTempDir, cleanup } = require('./helpers.cjs');
 
 /**
@@ -161,10 +170,10 @@ describe('git-fixture: E — gitOrThrow', () => {
 
   test('E11: explicit timeoutMs overrides the default', () => {
     runGitSpy.mock.resetCalls();
-    gitOrThrow(['--version'], { cwd: dir, timeoutMs: 12345 });
+    gitOrThrow(['--version'], { cwd: dir, timeoutMs: ARBITRARY_OVERRIDE_TIMEOUT_MS });
     assert.equal(runGitSpy.mock.calls.length, 1);
-    assert.equal(runGitSpy.mock.calls[0].arguments[1].timeoutMs, 12345);
-    assert.notEqual(12345, DEFAULT_GIT_TIMEOUT_MS);
+    assert.equal(runGitSpy.mock.calls[0].arguments[1].timeoutMs, ARBITRARY_OVERRIDE_TIMEOUT_MS);
+    assert.notEqual(ARBITRARY_OVERRIDE_TIMEOUT_MS, DEFAULT_GIT_TIMEOUT_MS);
   });
 
   test('E12: shell-string args are rejected', () => {
