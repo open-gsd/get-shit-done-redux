@@ -12609,7 +12609,13 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     // succeeded) previously reverted only installer migrations here, leaving
     // the just-written config.toml/hooks.json broken on disk despite Codex
     // already owning a full pre-install snapshot/restore for exactly this.
-    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints, rollbackInstallerMigrations: restoreCodexSnapshot };
+    //
+    // `rollbackInstallerMigrationsOnly` keeps the narrow closure reachable so a
+    // finalize-stage failure that is NOT an entrypoint-validation failure gets
+    // the installer-migrations-only rollback Phase 4 actually specifies, rather
+    // than un-installing a Codex install that already succeeded. See the
+    // selection in installAllRuntimes' rollbackFinalizedInstallerMigrations.
+    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints, rollbackInstallerMigrations: restoreCodexSnapshot, rollbackInstallerMigrationsOnly: rollbackInstallerMigrations };
   }
 
   if (plan.installSurface === 'copilot-instructions') {
@@ -14111,10 +14117,25 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
 
   const rollbackFinalizedInstallerMigrations = (error) => {
     const rollbackFailures = [];
+    // #4249: a configured-entrypoint validation failure is the ONLY error
+    // docs/how-to/update-gsd.md documents as reverting a runtime install that
+    // otherwise succeeded (Codex's full pre-install snapshot: config.toml,
+    // hooks.json, skills/, agents/, VERSION). Every other finalize-stage
+    // exception — e.g. a sibling runtime's permission-config write failing with
+    // EACCES — only gets the installer-migrations-only rollback that Phase 4
+    // specifies (docs/installer-migrations.md#phase-4-installupdate-integration).
+    // Widening it would silently un-install (and, on update, downgrade) a Codex
+    // install whose own "Done!" summary the user has already seen, while the
+    // sibling surfaces that write config inside install() keep theirs.
+    const wide = !!(error && error.configuredEntrypointValidation);
     for (const result of [...results].reverse()) {
-      if (!result || typeof result.rollbackInstallerMigrations !== 'function') continue;
+      if (!result) continue;
+      const rollback = wide
+        ? result.rollbackInstallerMigrations
+        : (result.rollbackInstallerMigrationsOnly || result.rollbackInstallerMigrations);
+      if (typeof rollback !== 'function') continue;
       try {
-        result.rollbackInstallerMigrations();
+        rollback();
       } catch (rollbackError) {
         rollbackFailures.push({
           runtime: result.runtime,

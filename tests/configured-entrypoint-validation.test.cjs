@@ -459,3 +459,58 @@ test('an aggregate entrypoint validation failure rolls the Codex install back (#
     );
   });
 });
+
+test('a NON-entrypoint finalize failure leaves an already-successful Codex install in place (#4249)', (t) => {
+  withSandboxedHome(t, 'configured-entrypoint-nonentry-', () => {
+    const first = install(true, 'codex');
+    // config.toml sits inside surface #3245's pre-install snapshot, so these
+    // bytes come back if — and only if — the full restoreCodexSnapshot() runs.
+    const configPath = path.join(first.configDir, 'config.toml');
+    const priorBytes = '# bytes only this test wrote\n';
+    fs.writeFileSync(configPath, priorBytes);
+
+    // Kilo is the smallest real non-Codex runtime whose finishInstall still
+    // writes: plan.finishPermissionWriter === 'kilo' makes it call
+    // configureKiloPermissions unconditionally (that writer, unlike OpenCode's,
+    // is NOT GSD_TEST_MODE-gated), ending in an unguarded
+    // fs.writeFileSync(<configDir>/kilo.json). Cline can't stand in here — its
+    // plan is writesSharedSettings:false + finishPermissionWriter:null, so its
+    // finishInstall performs no write at all and has no non-entrypoint failure
+    // path to force. EACCES on the Kilo write is injected by monkeypatching
+    // node:fs and restoring it in a finally — never chmod 0o000, which root
+    // bypasses under Docker/CI and would give this test zero real coverage.
+    const realWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = function poisonedWriteFileSync(target, ...args) {
+      const targetStr = typeof target === 'string' ? target : String(target);
+      if (/[\\/]kilo\.jsonc?$/.test(targetStr)) {
+        const injected = new Error(`EACCES: permission denied, open '${targetStr}'`);
+        injected.code = 'EACCES';
+        throw injected;
+      }
+      return realWriteFileSync.apply(fs, [target, ...args]);
+    };
+    try {
+      assert.throws(
+        () => installAllRuntimes(['codex', 'kilo'], true, false),
+        /EACCES: permission denied/,
+        'a failed Kilo permission write must abort the aggregate install',
+      );
+    } finally {
+      fs.writeFileSync = realWriteFileSync;
+    }
+
+    // Codex installs first and finishInstall prints its "Done!" summary before
+    // Kilo's throws, so the reversed rollback loop does reach Codex's entry —
+    // but with a non-entrypoint error it must take the installer-migrations-only
+    // closure, not restoreCodexSnapshot. A configured-entrypoint validation
+    // failure is the only trigger docs/how-to/update-gsd.md documents for
+    // reverting a runtime install that otherwise succeeded; un-installing (on
+    // update, downgrading) Codex because an unrelated runtime hit EACCES would
+    // contradict the "Done!" the user has already been shown.
+    assert.notEqual(
+      fs.readFileSync(configPath, 'utf8'),
+      priorBytes,
+      'a non-entrypoint finalize failure must not restore the Codex pre-install snapshot',
+    );
+  });
+});
