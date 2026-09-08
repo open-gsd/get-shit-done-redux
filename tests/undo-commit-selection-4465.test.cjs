@@ -13,6 +13,11 @@
  *
  * The fix ports #3995's PHASE_START anchor (already live in code-review.md) to both
  * `--phase` and `--plan`, drops `--all`, and fails closed instead of widening.
+ *
+ * Two halves. The first pins the SHAPE of undo.md's fences (substring assertions over
+ * the deployed prose — the allow-test-rule above covers it). The second EXECUTES those
+ * fences against a real git fixture and the real `gsd-tools.cjs`, so a fence that
+ * matches the expected text but does not do the expected thing still fails.
  */
 
 const { test, describe } = require('node:test');
@@ -117,6 +122,12 @@ describe('#4465: undo commit selection is bounded', () => {
   test('L: both modes stop rather than silently capping a >50 selection', () => {
     const stops = (content.match(/Report truncation, never truncate silently/g) || []).length;
     assert.equal(stops, 2, 'both --phase and --plan must document the >50 stop (#4465)');
+    // The heading alone is not the rule: pin the refusal each mode instructs the runtime to
+    // render, so removing the paragraph under an intact heading still fails here.
+    const refusals = [...content.matchAll(/selects \$\{N\} commits \(>50\)\. Refusing to revert a partial (phase|plan)\./g)]
+      .map((m) => m[1]);
+    assert.deepEqual(refusals, ['phase', 'plan'],
+      'both modes must carry the >50 refusal message, phase then plan (#4465)');
     // Executable lines only: the fix's own comment explains what `| head -50` used to mask,
     // and a comment naming the removed cap is not the cap.
     const code = bash
@@ -175,5 +186,268 @@ describe('#4465: undo commit selection is bounded', () => {
       !/git reset --hard/.test(bash),
       'undo.md must never execute git reset --hard',
     );
+  });
+});
+
+// ─── Behavioral half (review round 1, #4472) ──────────────────────────────────
+//
+// The block above pins the SHAPE of undo.md's selection fences. This block
+// EXECUTES them: the exact ```bash fences the runtime runs are sliced out of
+// undo.md by content anchor, glued behind the inputs the workflow would have
+// set, and run with `bash -c` inside a real git fixture against the real
+// `gsd-tools.cjs` — the same createTempGitProject + fence-execution shape
+// new-milestone-clear-phases.test.cjs (#2308) and
+// code-review-pipeline-regression.test.cjs (#2352) use. A substring match cannot
+// tell a live invocation from a dead one; a run can.
+//
+// win32: skipped, as the #2352 fence-execution tests are. The fences are POSIX
+// bash and the fixture is driven through `bash -c`; Windows shards exercise the
+// shape tests above.
+
+const { runHook: runHookSeam } = require('./helpers/process-seam.cjs');
+const { gitOrThrow, throwIfFailed } = require('./helpers/git-fixture.cjs');
+const { createTempGitProject, cleanup, readFileNormalized } = require('./helpers.cjs');
+const { createFixture, seedPhase, seedWorkstream } = require('./fixtures/index.cjs');
+const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+const GSD_TOOLS_BIN = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
+const SKIP_WIN32 = process.platform === 'win32'
+  ? 'POSIX bash fence execution over a git fixture (see #2352 precedent)'
+  : false;
+
+/** Fence BODIES (no ``` lines), from a \r\n-normalized read so bash never sees a CR. */
+function fenceBodies(content) {
+  const lines = content.split('\n');
+  const bodies = [];
+  for (const block of scanFencedBlocks(lines)) {
+    if (block.closeLineIdx === -1) continue;
+    if ((block.infoString || '').trim().toLowerCase() !== 'bash') continue;
+    bodies.push(lines.slice(block.openLineIdx + 1, block.closeLineIdx).join('\n'));
+  }
+  return bodies;
+}
+
+/** The one fence whose body satisfies `pred` — located by content, never by position. */
+function fenceWhere(bodies, label, pred) {
+  const hits = bodies.filter(pred);
+  assert.equal(hits.length, 1, `expected exactly one ${label} fence in undo.md, found ${hits.length}`);
+  return hits[0];
+}
+
+describe('#4465: undo commit selection — executed against a git fixture', { skip: SKIP_WIN32 }, () => {
+  const content = readFileNormalized(UNDO_PATH);
+  const bodies = fenceBodies(content);
+
+  // gather_commits, MODE=phase: resolve → anchor → select
+  const phaseResolve = fenceWhere(bodies, 'phase resolve',
+    (b) => b.includes('PHASE_DIR=$(gsd_run query find-phase "${TARGET_PHASE}"'));
+  const phaseAnchor = fenceWhere(bodies, 'phase anchor',
+    (b) => b.includes('PHASE_START=$(git log') && !b.includes('PLAN_PHASE'));
+  const phaseSelect = fenceWhere(bodies, 'phase select',
+    (b) => b.includes('grep -E "\\(0*${TARGET_PHASE}'));
+  // gather_commits, MODE=plan: resolve+anchor → select
+  const planAnchor = fenceWhere(bodies, 'plan resolve+anchor',
+    (b) => b.includes('PLAN_PHASE="${TARGET_PLAN%%-*}"'));
+  const planSelect = fenceWhere(bodies, 'plan select',
+    (b) => b.includes('grep -E "\\(${TARGET_PLAN}\\):"'));
+  // dependency_check: planning-root resolution
+  const planningRoot = fenceWhere(bodies, 'planning root',
+    (b) => b.includes('PLANNING_DIR=$(gsd_run query planning inspect'));
+
+  // The composed script replays the fences in order in ONE shell, seeded with
+  // what the workflow sets (TARGET_*), plus the real gsd_run over the real
+  // binary. That is deliberately the workflow's own data flow — `PHASE_DIR`,
+  // `PHASE_START`, `UNDO_RANGE` are carried from fence to fence by the runtime
+  // that executes undo.md — and it is what these tests prove: the selection
+  // logic, not the runtime's variable transport between blocks.
+  const GSD_RUN = 'gsd_run() { node "$GSD_TOOLS_BIN" "$@"; }';
+
+  function runFences(cwd, seed, fences, tail = '') {
+    const script = [seed, GSD_RUN, ...fences, tail].join('\n');
+    const env = { ...process.env, GSD_TOOLS_BIN, HOME: cwd };
+    // A developer's active workstream must not leak into the fixture.
+    delete env.GSD_WORKSTREAM;
+    delete env.GSD_PROJECT;
+    const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd, env, timeoutMs: PROBE_TIMEOUT_MS });
+    throwIfFailed(r, 'bash <undo.md fences>');
+    return r.stdout;
+  }
+
+  /** `git log --oneline` output → the subject lines, in order. */
+  function subjects(oneline) {
+    return oneline.split('\n').filter(Boolean).map((l) => l.replace(/^[0-9a-f]+ /, ''));
+  }
+
+  function commitFile(cwd, rel, body, message) {
+    fs.mkdirSync(path.dirname(path.join(cwd, rel)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, rel), body);
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', message], { cwd });
+  }
+
+  // The reported repro (#4465): milestone 1 ships phase 03 and is archived;
+  // milestone 2 reuses the number. A dead branch carries a matching scope too.
+  function multiMilestoneFixture() {
+    const cwd = createTempGitProject('gsd-4465-mm-');
+    const mainBranch = gitOrThrow(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd }).trim();
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# auth\n' });
+    commitFile(cwd, 'src/auth.js', 'auth\n', 'feat(03-01): implement auth endpoint');
+    commitFile(cwd, 'src/ratelimit.js', 'rl\n', 'feat(03-02): add rate limiter');
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'v1.0-phases'), { recursive: true });
+    gitOrThrow(['mv', '.planning/phases/03-auth', '.planning/milestones/v1.0-phases/03-auth'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'chore: archive v1.0 milestone files'], { cwd });
+    gitOrThrow(['checkout', '-q', '-b', 'abandoned/x'], { cwd });
+    commitFile(cwd, 'src/experiment.js', 'x\n', 'feat(03-02): abandoned experiment');
+    gitOrThrow(['checkout', '-q', mainBranch], { cwd });
+    seedPhase(cwd, '03-beta', { '03-01-PLAN.md': '# beta\n' });
+    commitFile(cwd, 'src/beta.js', 'beta\n', 'feat(03-01): add beta feature flag');
+    return cwd;
+  }
+
+  test('fixture reproduces #4465: the retired --all grep selected the archived milestone and a dead branch', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    // Negative control for the fixture itself: the pre-fix selection line, verbatim
+    // from undo.md@b5b9814f0, over this fixture. If it did NOT over-select here, the
+    // passing tests below would be vacuous.
+    const old = runFences(cwd, 'TARGET_PHASE=03', [],
+      'git log --oneline --no-merges --all | grep -E "\\(0*${TARGET_PHASE}(-[0-9]+)?\\):" | head -50');
+    assert.deepEqual(subjects(old).sort(), [
+      'feat(03-01): add beta feature flag',
+      'feat(03-01): implement auth endpoint',
+      'feat(03-02): abandoned experiment',
+      'feat(03-02): add rate limiter',
+    ]);
+  });
+
+  test('--phase selects only the current milestone\'s HEAD-reachable commits', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect]);
+    assert.deepEqual(subjects(out), ['feat(03-01): add beta feature flag']);
+  });
+
+  test('--plan selects only the current milestone\'s instance of a reused plan id', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PLAN=03-01', [planAnchor, planSelect]);
+    assert.deepEqual(subjects(out), ['feat(03-01): add beta feature flag']);
+  });
+
+  test('single-milestone selection is unchanged: every phase commit, none from a later phase', (t) => {
+    const cwd = createTempGitProject('gsd-4465-single-');
+    t.after(() => cleanup(cwd));
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# auth\n' });
+    commitFile(cwd, 'src/a.js', 'a\n', 'feat(03-01): implement auth endpoint');
+    commitFile(cwd, 'src/b.js', 'b\n', 'feat(03-02): add rate limiter');
+    commitFile(cwd, 'src/c.js', 'c\n', 'fix(03-02): correct limiter window');
+    commitFile(cwd, 'src/d.js', 'd\n', 'docs(03): phase summary');
+    seedPhase(cwd, '04-search', { '04-01-PLAN.md': '# search\n' });
+    commitFile(cwd, 'src/e.js', 'e\n', 'feat(04-01): add search index');
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect]);
+    assert.deepEqual(subjects(out), [
+      'docs(03): phase summary',
+      'fix(03-02): correct limiter window',
+      'feat(03-02): add rate limiter',
+      'feat(03-01): implement auth endpoint',
+    ]);
+  });
+
+  test('limit-1: a matching commit one before PHASE_START is excluded; PHASE_START itself is included', (t) => {
+    const cwd = createTempGitProject('gsd-4465-limit-');
+    t.after(() => cleanup(cwd));
+    // Matching scope, committed BEFORE the phase directory exists: outside the window.
+    commitFile(cwd, 'src/pre.js', 'pre\n', 'feat(03-01): stray pre-phase commit');
+    // PHASE_START: the commit that adds the phase directory, and it matches the scope.
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# auth\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): add phase plan'], { cwd });
+    commitFile(cwd, 'src/a.js', 'a\n', 'feat(03-01): implement auth endpoint');
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect]);
+    assert.deepEqual(subjects(out), [
+      'feat(03-01): implement auth endpoint',
+      'docs(03-01): add phase plan',
+    ]);
+  });
+
+  test('root commit: a phase whose first commit is the repository root is fully selected', (t) => {
+    // createTempGitProject seeds an initial commit, so build the root by hand.
+    const cwd = createFixture({ prefix: 'gsd-4465-root-', planning: true, git: false });
+    t.after(() => cleanup(cwd));
+    const g = (args) => gitOrThrow(args, { cwd });
+    g(['init', '-q']);
+    g(['config', 'user.email', 'test@test.com']);
+    g(['config', 'user.name', 'Test']);
+    g(['config', 'commit.gpgsign', 'false']);
+    seedPhase(cwd, '01-seed', { '01-01-PLAN.md': '# seed\n' });
+    g(['add', '-A']);
+    g(['commit', '-q', '-m', 'docs(01-01): add root phase plan']);
+    commitFile(cwd, 'src/a.js', 'a\n', 'feat(01-01): first feature');
+    const out = runFences(cwd, 'TARGET_PHASE=01', [phaseResolve, phaseAnchor, phaseSelect],
+      'echo "UNDO_RANGE=${UNDO_RANGE}"');
+    assert.ok(out.includes('UNDO_RANGE=HEAD'), `root branch must select over HEAD; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/UNDO_RANGE=.*\n?/, '')), [
+      'feat(01-01): first feature',
+      'docs(01-01): add root phase plan',
+    ]);
+  });
+
+  test('fail-closed: an unknown phase resolves no anchor and no range — nothing widens', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=07', [phaseResolve, phaseAnchor],
+      'printf "PHASE_DIR=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR" "$UNDO_RANGE"');
+    assert.ok(out.includes('PHASE_DIR=[]'), `expected an empty PHASE_DIR for an absent phase; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `expected an empty UNDO_RANGE for an absent phase; got:\n${out}`);
+  });
+
+  test('fail-closed (--plan): an unknown plan\'s phase resolves no anchor and no range', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PLAN=07-01', [planAnchor],
+      'printf "PHASE_DIR=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR" "$UNDO_RANGE"');
+    assert.ok(out.includes('PHASE_DIR=[]'), `expected an empty PHASE_DIR for an absent plan phase; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `expected an empty UNDO_RANGE for an absent plan phase; got:\n${out}`);
+  });
+
+  test('workstream: --phase resolves the ACTIVE workstream\'s phase directory, not the root\'s', (t) => {
+    const cwd = createTempGitProject('gsd-4465-ws-');
+    t.after(() => cleanup(cwd));
+    // Root scope: phase 03 exists and has a matching commit.
+    seedPhase(cwd, '03-root', { '03-01-PLAN.md': '# root\n' });
+    commitFile(cwd, 'src/root.js', 'r\n', 'feat(03-01): root-scope work');
+    // Workstream scope: its own phase 03, activated by the pointer file.
+    seedWorkstream(cwd, { name: 'payments', active: true });
+    fs.mkdirSync(path.join(cwd, '.planning', 'workstreams', 'payments', 'phases', '03-pay'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.planning', 'workstreams', 'payments', 'phases', '03-pay', '03-01-PLAN.md'), '# pay\n');
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): payments phase plan'], { cwd });
+    commitFile(cwd, 'src/pay.js', 'p\n', 'feat(03-01): payments work');
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect],
+      'echo "PHASE_DIR=${PHASE_DIR}"');
+    assert.ok(out.includes('PHASE_DIR=.planning/workstreams/payments/phases/03-pay'),
+      `find-phase must resolve the active workstream's directory; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/PHASE_DIR=.*\n?/, '')), [
+      'feat(03-01): payments work',
+      'docs(03-01): payments phase plan',
+    ]);
+  });
+
+  test('dependency_check: PLANNING_DIR resolves the active workstream root, and falls back to .planning without one', (t) => {
+    const cwd = createTempGitProject('gsd-4465-pd-');
+    t.after(() => cleanup(cwd));
+    const tail = 'echo "PLANNING_DIR=${PLANNING_DIR}"';
+    const flat = runFences(cwd, '', [planningRoot], tail);
+    assert.ok(/PLANNING_DIR=.*[\\/]\.planning$/m.test(flat), `expected the project's .planning; got:\n${flat}`);
+    seedWorkstream(cwd, { name: 'payments', active: true });
+    const ws = runFences(cwd, '', [planningRoot], tail);
+    assert.ok(/PLANNING_DIR=.*[\\/]\.planning[\\/]workstreams[\\/]payments$/m.test(ws),
+      `expected the active workstream's root; got:\n${ws}`);
+    // And the fallback is real, not the only path: with no .planning at all the
+    // pick yields '' (planning_root is null) and the fence lands on the literal.
+    const bare = createFixture({ prefix: 'gsd-4465-noplan-', planning: false, git: true, projectDoc: false });
+    t.after(() => cleanup(bare));
+    const none = runFences(bare, '', [planningRoot], tail);
+    assert.ok(none.includes('PLANNING_DIR=.planning'), `expected the literal fallback; got:\n${none}`);
   });
 });
