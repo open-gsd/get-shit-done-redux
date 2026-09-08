@@ -292,9 +292,11 @@ condition is explicit and computable so no reading of it is ambiguous:
 - **Mixed planning commits (#4447)**: `NON_PLANNING == 0` and `STRUCTURAL > 0` and
   `STRUCTURAL < PLANNING_COUNT` (some but not all `.planning/` files touched are structural —
   the rest are transient and/or the "other" bucket, e.g. `config.json`/`intel/`) → INCLUDE in
-  **default** mode (same treatment as a mixed code+planning commit: the non-structural planning
-  paths are filtered out by `create_pr_branch`'s universal per-commit filter, not by this
-  classification); **EXCLUDE** in strict mode
+  **default** mode (the transient-dir subset of the non-structural paths is filtered out by
+  `create_pr_branch`'s universal per-commit filter exactly as for a mixed code+planning commit;
+  any "other" non-structural, non-transient path — `config.json`, `intel/`, etc. — is simply
+  preserved, same as default mode already does for such paths on any commit); **EXCLUDE** in
+  strict mode
 - **Transient-only planning commits**: `NON_PLANNING == 0` and `STRUCTURAL == 0` and
   `PLANNING_COUNT > 0` → EXCLUDE (both modes)
 
@@ -306,7 +308,7 @@ Commits to include: {N} (code changes{, + structural planning — default mode o
 Commits to exclude: {N} (planning-only)
 Mixed commits: {N} (code + planning — included, planning paths filtered)
 Structural planning commits: {N} ({included|excluded — strict mode})
-Mixed planning commits: {N} (included — structural + transient/other, planning paths filtered)
+Mixed planning commits: {N} ({included — structural + transient/other, planning paths filtered|excluded — strict mode})
 ```
 </step>
 

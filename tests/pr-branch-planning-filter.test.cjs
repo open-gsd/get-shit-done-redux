@@ -879,10 +879,10 @@ describe('#2971 — pr-branch.md planning.pr_strict filter (failing-first)', () 
       assert.ok(stepMatch, 'analyze_commits step not found in pr-branch.md');
       assert.match(
         stepMatch[1],
-        /PLANNING_COUNT=/,
-        'analyze_commits must compute an explicit total planning-file count (PLANNING_COUNT) so '
-          + 'the classification arms can distinguish "only structural" planning commits from '
-          + '"structural plus transient/other" ones',
+        /^PLANNING_COUNT=\$\(/m,
+        'analyze_commits must compute an explicit total planning-file count via a real shell '
+          + 'assignment (PLANNING_COUNT=$(...)) so the classification arms can distinguish '
+          + '"only structural" planning commits from "structural plus transient/other" ones',
       );
     });
   });
