@@ -131,8 +131,13 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
     try {
       const sentinel = path.join(dir, 'MUST-NOT-EXIST');
       const summary = path.join(dir, 'SUMMARY $(not-a-command) "quoted".md');
-      const dollarPath = `src/$(touch ${sentinel}).js`;
-      const backtickPath = `src/\`touch ${sentinel}\`.js`;
+      // Git Bash launches the native Windows Node binary in CI. Forward-slash
+      // absolute paths survive that argv boundary on both platforms, while a
+      // raw drive path's backslashes are MSYS quoting syntax rather than data.
+      const shellSentinel = sentinel.replace(/\\/g, '/');
+      const shellSummary = summary.replace(/\\/g, '/');
+      const dollarPath = `src/$(touch ${shellSentinel}).js`;
+      const backtickPath = `src/\`touch ${shellSentinel}\`.js`;
       fs.writeFileSync(summary, [
         '---',
         'key-files:',
@@ -147,7 +152,7 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
       const script = ['set -eu', helper, 'extract_summary_files "$SUMMARY_PATH"'].join('\n');
       const result = toLegacyResult(runHook('-c', [script, 'bash'], {
         interpreter: 'bash',
-        env: { ...process.env, SUMMARY_PATH: summary },
+        env: { ...process.env, SUMMARY_PATH: shellSummary },
         timeoutMs: PROBE_TIMEOUT_MS,
       }));
       assert.equal(result.status, 0, result.stderr);
