@@ -875,7 +875,7 @@ describe('#2971 — pr-branch.md planning.pr_strict filter (failing-first)', () 
     // (unedited) step text, which had no `PLANNING_COUNT=` assignment at all.
     test('51: #4447 analyze_commits computes an explicit total .planning/ file count (PLANNING_COUNT), closing the gap that let a structural+transient/other planning commit match none of the four classification arms', () => {
       const text = fs.readFileSync(WORKFLOW_PATH, 'utf-8');
-      const stepMatch = text.match(/<step name="analyze_commits">([\s\S]*?)<\/step>/);
+      const stepMatch = text.match(/<step name="analyze_commits">([\s\S]{0,20000}?)<\/step>/);
       assert.ok(stepMatch, 'analyze_commits step not found in pr-branch.md');
       assert.match(
         stepMatch[1],
