@@ -144,7 +144,8 @@ function resolveEnvWorkstream(): string | null {
 }
 
 function planningDir(cwd: string, ws?: string | null, project?: string | null): string {
-  if (project === undefined) project = process.env['GSD_PROJECT'] ?? null;
+  if (project === undefined) project = process.env['GSD_PROJECT']?.trim() || null;
+  else if (typeof project === 'string') project = project.trim() || null;
   if (ws === undefined) ws = resolveEnvWorkstream();
   else if (typeof ws === 'string') ws = ws.trim() || null;
 
@@ -212,7 +213,7 @@ function worktreesOptedOutUnguarded(cwd: string): boolean {
   };
   const scoped = ownKey(readCfg(path.join(planningDir(cwd), 'config.json')));
   if (scoped.present) return scoped.value === false;
-  if (process.env['GSD_WORKSTREAM']) {
+  if (resolveEnvWorkstream() !== null) {
     const root = ownKey(readCfg(path.join(planningRoot(cwd), 'config.json')));
     if (root.present) return root.value === false;
   }

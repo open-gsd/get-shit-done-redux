@@ -54,14 +54,26 @@ describe('planning-workspace: planningDir/planningPaths parity', () => {
     assert.throws(() => planningDir(cwd, 'foo\\bar', null), /invalid path characters/);
   });
 
-  test('treats a whitespace-only env workstream as unset and trims a padded name (#4462)', () => {
-    process.env.GSD_WORKSTREAM = '  ';
-    assert.strictEqual(planningDir(cwd), path.join(cwd, '.planning'));
+  test('normalizes whitespace-only and padded environment scope names (#4462)', () => {
+    for (const whitespace of ['  ', '\t', '\n', ' \t\n ']) {
+      process.env.GSD_WORKSTREAM = whitespace;
+      process.env.GSD_PROJECT = whitespace;
+      assert.strictEqual(planningDir(cwd), path.join(cwd, '.planning'));
+    }
 
     process.env.GSD_WORKSTREAM = '  feature-x  ';
+    process.env.GSD_PROJECT = '  my-app  ';
     assert.strictEqual(
       planningDir(cwd),
-      path.join(cwd, '.planning', 'workstreams', 'feature-x'),
+      path.join(cwd, '.planning', 'my-app', 'workstreams', 'feature-x'),
+    );
+  });
+
+  test('normalizes explicit project and workstream arguments before routing (#4462)', () => {
+    assert.strictEqual(planningDir(cwd, '\t', '\n'), path.join(cwd, '.planning'));
+    assert.strictEqual(
+      planningDir(cwd, '  feature-x  ', '  my-app  '),
+      path.join(cwd, '.planning', 'my-app', 'workstreams', 'feature-x'),
     );
   });
 });
