@@ -778,12 +778,19 @@ function mergeResyncProgressRatchet(
   // counters ARE the derived counters, so the derived percent is already
   // coherent with them and is kept verbatim.
   //
-  // RESIDUAL, disclosed rather than silently narrowed: when a curated counter
-  // DOES override a derived one, the recompute still runs against aggregates
-  // only, so a composed percent falls back to the aggregate composition on
-  // that path. That is the pre-existing #3634 boundary (`state-transition.cts`
-  // is not threaded with per-phase samples), unchanged by this commit, and it
-  // is the branch #4129's own tests pin (3/18 = 17).
+  // RESIDUAL, disclosed rather than silently narrowed: when a curated counter DOES
+  // override a derived one, the recompute still runs against aggregates only, so a
+  // composed percent is replaced by the aggregate composition on that path. That is
+  // the pre-existing #3634 boundary — `state-transition.cts` is not threaded with
+  // per-phase samples — and it is the branch #4129's own rows pin (3/18 = 17).
+  //
+  // An "only ratchet percent upward" rule was tried here and REVERTED: this layer
+  // cannot tell a composed derived percent from a stale one. `buildStateFrontmatter`
+  // also reaches a body-text fallback, and on that path an absent derived counter
+  // (compared as -Infinity) is FILLED by the curated side rather than raised — the
+  // recompute is then a correction, and an up-only rule pins the stale value over it.
+  // Driven: body `Progress: 90%` with no phases/ directory persisted 90 where the
+  // correct recompute is 50. Filling a missing counter is not raising completion.
   if (countersOverridden && toFiniteNumber(derivedRecord.percent) !== null) {
     const recomputed = computeProgressPercent(
       toFiniteNumber(merged.completed_plans),
