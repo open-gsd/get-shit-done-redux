@@ -1398,6 +1398,14 @@ function cmdInitNewProject(cwd: string, raw: boolean, options: Record<string, un
     has_existing_code: hasCode,
     has_package_file: hasPackageFile,
     is_brownfield: isBrownfield,
+    // #4458: new-project.md's Step 5.1 (Sub-Repo Detection) used to run its own
+    // narrower `find ... -exec test -d "{}/.git"` predicate, which requires
+    // .git to be a DIRECTORY and so silently excluded linked git worktree
+    // children (.git is a FILE there). detectSubRepos already handled this
+    // correctly (fs.existsSync, not isDirectory) but had zero callers anywhere
+    // in the codebase — reused here instead of leaving the workflow to
+    // maintain its own duplicate, narrower detection logic.
+    sub_repos_detected: coreUtils.detectSubRepos(cwd),
     needs_codebase_map: isBrownfield && !hasCodebaseMap,
 
     ...getInitGitState(cwd),
