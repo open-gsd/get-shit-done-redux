@@ -3082,9 +3082,10 @@ function cmdInitCompleteMilestone(
   // complete-milestone.md's reorganize_roadmap_and_delete_originals step —
   // same pattern cmdInitPlanPhase already uses, mirrored here since this is
   // that workflow's own dedicated init entry point.
-  const statePath = path.join(planningDir(cwd), 'STATE.md');
-  const roadmapPath = path.join(planningDir(cwd), 'ROADMAP.md');
-  const archiveDir = path.join(planningDir(cwd), 'milestones');
+  const planningBase = planningDir(cwd);
+  const statePath = path.join(planningBase, 'STATE.md');
+  const roadmapPath = path.join(planningBase, 'ROADMAP.md');
+  const archiveDir = path.join(planningBase, 'milestones');
 
   const result: Record<string, unknown> = {
     // #2994: hoisted from complete-milestone.md's git_tag step

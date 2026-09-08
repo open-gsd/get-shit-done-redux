@@ -105,10 +105,26 @@ const FLOOR_LINES = 40;
 // default to, a differently-cased path is the SAME real file — a Write to
 // '.planning/roadmap.md' clobbers ROADMAP.md while a case-sensitive match
 // waves it through.
+// #4455: workstream-scoped (and optionally project-scoped) variants —
+// planningDir(cwd) (src/planning-workspace.cts) resolves to
+// `.planning/[<project>/]workstreams/<ws>/...` whenever GSD_WORKSTREAM is
+// set. Before this, none of these three root-only patterns matched a
+// workstream-scoped target at all, so the ENTIRE guard (not just the
+// sentinel step — the shrink-ratio check too) silently never engaged for a
+// workstream-scoped ROADMAP.md/STATE.md/milestone-archive Write: exactly
+// the catastrophic-shrink scenario this file exists to stop, unguarded
+// under an active workstream. consumeSentinelFor's own `.planning`
+// derivation below is unaffected by this addition — it locates the single
+// outer `.planning` segment regardless of what's nested inside it, which is
+// also where the workflow's sentinel `printf` already writes, so no change
+// was needed there.
 const CURATED_PATTERNS = [
   /(?:^|\/)\.planning\/ROADMAP\.md$/i,
   /(?:^|\/)\.planning\/STATE\.md$/i,
   /(?:^|\/)\.planning\/milestones\/[^/]+-ROADMAP\.md$/i,
+  /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/ROADMAP\.md$/i,
+  /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/STATE\.md$/i,
+  /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/milestones\/[^/]+-ROADMAP\.md$/i,
 ];
 
 // Count logical lines, ignoring a single trailing newline so that

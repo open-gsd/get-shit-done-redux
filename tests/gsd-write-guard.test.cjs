@@ -540,6 +540,78 @@ describe('guard <-> complete-milestone workflow binding (the escape hatch is WIR
   });
 });
 
+describe('workstream-scoped curated paths (#4455)', () => {
+  // Security-review finding on #4455: planningDir(cwd) (src/planning-workspace.cts)
+  // resolves to `.planning/[<project>/]workstreams/<ws>/...` whenever GSD_WORKSTREAM
+  // is set — but CURATED_PATTERNS only matched the root form, so the guard's ENTIRE
+  // catastrophic-shrink protection (not just the sentinel step — the ratio check too)
+  // silently never engaged for a workstream-scoped ROADMAP.md/STATE.md/milestone
+  // archive Write. complete-milestone.md's reorganize step explicitly targets a
+  // resolved (potentially workstream-scoped) $ROADMAP_PATH via the Write tool and
+  // claims "the guard allows this one shrink" — that claim was FALSE under an active
+  // workstream, since the guard never recognized the target as curated at all.
+  let wsProjectDir;
+  let wsRoadmapPath;
+  let wsStatePath;
+  let wsMilestoneArchivePath;
+  let wsPlanningDir;
+
+  before(() => {
+    wsProjectDir = createTempDir('gsd-write-guard-ws-');
+    wsPlanningDir = path.join(wsProjectDir, '.planning');
+    const wsDir = path.join(wsPlanningDir, 'workstreams', 'alpha');
+    fs.mkdirSync(path.join(wsDir, 'milestones'), { recursive: true });
+    wsRoadmapPath = path.join(wsDir, 'ROADMAP.md');
+    wsStatePath = path.join(wsDir, 'STATE.md');
+    wsMilestoneArchivePath = path.join(wsDir, 'milestones', 'v1.0-ROADMAP.md');
+  });
+
+  after(() => {
+    cleanup(wsProjectDir);
+  });
+
+  test('a workstream-scoped ROADMAP.md catastrophic shrink is BLOCKED (was silently unguarded before #4455)', () => {
+    fs.writeFileSync(wsRoadmapPath, lines(292));
+    const r = runHook(writePayload(wsRoadmapPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a workstream-scoped STATE.md catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(wsStatePath, lines(292));
+    const r = runHook(writePayload(wsStatePath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a workstream-scoped milestone archive ROADMAP catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(wsMilestoneArchivePath, lines(292));
+    const r = runHook(writePayload(wsMilestoneArchivePath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('the sentinel hatch (armed at the ROOT .planning/.gsd-allow-shrink, naming the workstream path) unblocks a workstream ROADMAP.md write', () => {
+    // complete-milestone.md's sentinel fence always writes to the ROOT
+    // .planning/.gsd-allow-shrink (unchanged by #4455 — consumeSentinelFor
+    // derives that same root location from the write TARGET's path
+    // regardless of how deep a workstream target is nested), naming the
+    // resolved (workstream-scoped) $ROADMAP_PATH as its content.
+    fs.writeFileSync(wsRoadmapPath, lines(292));
+    fs.writeFileSync(path.join(wsPlanningDir, '.gsd-allow-shrink'), `${wsRoadmapPath}\n`);
+    const r = runHook(writePayload(wsRoadmapPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 0,
+      `expected the sentinel to unblock the workstream-scoped write, got status ${r.status}; stdout: ${r.stdout}`);
+  });
+
+  test('a non-curated file inside a workstream dir stays exempt (no widening beyond ROADMAP/STATE/milestone-archive)', () => {
+    const notesPath = path.join(wsPlanningDir, 'workstreams', 'alpha', 'NOTES.md');
+    fs.writeFileSync(notesPath, lines(292));
+    const r = runHook(writePayload(notesPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 0, `non-curated workstream file must pass; stdout: ${r.stdout}`);
+  });
+});
+
 describe('the shipped claim matches the shipped guarantee (round 10 Major 2)', () => {
   // The guard's reach is bounded: the sentinel is a plain file, so an agent
   // that would reason past an advisory can arm one with a single Bash call.
