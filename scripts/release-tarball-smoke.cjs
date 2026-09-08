@@ -287,9 +287,20 @@ function scanWorkflowColonLeak(filePath, cmdNames) {
 // ---------------------------------------------------------------------------
 
 /**
- * Runtime config files GSD writes at the top level of a config dir. Every
- * GSD-managed executable a runtime is told to launch is registered in one of
- * these three; nothing else in a config dir is runtime configuration.
+ * Top-level config files this scan reads. These are the surfaces that carry
+ * every GSD-managed launch path for the runtimes Cycle 4 actually installs
+ * (`entrypointRuntimes`, default claude + codex): claude registers into
+ * settings.json, codex into hooks.json and config.toml.
+ *
+ * This is NOT an exhaustive map of where GSD writes launch paths across all
+ * runtimes, and the scan is top-level only by design. Two known surfaces sit
+ * outside it: Cline registers its hook at `.clinerules/hooks/PreToolUse` (a
+ * subdirectory, and not one of these names — see writeClineArtifacts in
+ * src/runtime-hooks-surface.cts), and Kimi's native `[[hooks]]` config.toml
+ * lives under `resolveKimiHooksTomlDir()` (`~/.kimi`), a directory separate
+ * from Kimi's own GSD configDir. Adding either runtime to entrypointRuntimes
+ * requires teaching scanConfiguredEntrypoints about its surface first,
+ * otherwise the scan reports zero entrypoints and silently proves nothing.
  */
 const RUNTIME_CONFIG_FILES = Object.freeze(['settings.json', 'hooks.json', 'config.toml']);
 
@@ -386,9 +397,10 @@ function runSmoke({
   expectedVersion,
   fixtureDir,
   lifecycleCommands = ['init', 'discuss-phase', 'plan-phase', 'execute-phase'],
-  // claude and codex are the two distinct config surfaces GSD writes launch
-  // paths into (settings.json and hooks.json + config.toml); every other
-  // runtime reuses one of them.
+  // claude and codex cover the two top-level config surfaces this scan knows
+  // how to read (settings.json, and hooks.json + config.toml). Most other
+  // runtimes reuse one of those two shapes; Cline and Kimi do not (see
+  // RUNTIME_CONFIG_FILES), so they are out of scope here rather than covered.
   entrypointRuntimes = ['claude', 'codex'],
   dryRun = false,
   npmEnv = undefined,
