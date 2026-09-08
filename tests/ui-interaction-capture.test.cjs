@@ -1,8 +1,7 @@
 'use strict';
-// allow-test-rule: source-text-is-the-product see #4223
-// Reads agents/gsd-ui-auditor.md, gsd-core/workflows/ui-review.md and
-// capabilities/ui/capability.json — deployed text that IS what the runtime
-// loads — plus docs/CONFIGURATION.md (registered in the docs-guard lane).
+// Nothing here reads a source module of the kinds no-source-grep tracks
+// (.cjs/.cts/.js/.mjs/.mts/.ts), so there is no site to suppress and the file
+// carries no allow-test-rule marker.
 
 /**
  * workflow.ui_interaction_capture — #4223
