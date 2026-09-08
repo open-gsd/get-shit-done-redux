@@ -1859,6 +1859,53 @@ describe('#3926 — Tier-3 scope is the phase change set, not everything since t
   );
 
   test(
+    'property: the shipped pipeline reads exactly what the guard\'s JS model reads, over generated documents',
+    SKIP_WIN32,
+    () => {
+      // The round-4 finding was a parity claim ("only these two properties
+      // are what the parser reads") that no test held the bash to. This one
+      // does: the SHIPPED awk | grep | tr pipeline is sliced out of the
+      // Tier-3 fence by content anchor and run over fast-check documents —
+      // task rows, TDD multi-commit rows, asides, the metadata line, unclosed
+      // bolds, code spans in labels, a second section, CRLF — and its output
+      // must equal the model's, token for token, in order.
+      const { extractTaskCommitRefs } = require('../scripts/lint-summary-task-commits-drift.cjs');
+      const { documentArb } = require('./helpers/summary-task-commits-arb.cjs');
+      const fc = require('./helpers/fast-check-setup.cjs');
+      const fence = extractTier3FullFence();
+      const start = fence.indexOf("TASK_COMMIT_ROWS=$(awk '");
+      const forIdx = fence.indexOf('for ref in $(printf', start);
+      const end = fence.indexOf('; do', forIdx) + '; do'.length;
+      assert.ok(start !== -1 && forIdx !== -1 && end > forIdx, 'the task-commit pipeline must be locatable in the Tier-3 fence');
+      const pipeline = fence.slice(start, end);
+      const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'gsd-3926-parity-'));
+      const summary = path.join(dir, 'SUMMARY.md');
+      const script = [
+        `for summary in "${summary.replace(/\\/g, '/')}"; do`,
+        pipeline,
+        '  printf \'%s\\n\' "$ref"',
+        'done',
+        'done',
+      ].join('\n');
+      try {
+        fc.assert(
+          fc.property(documentArb, ({ text, expected }) => {
+            fs.writeFileSync(summary, text);
+            const result = toLegacyResult(runHook('-c', [script, 'bash'], { interpreter: 'bash', cwd: dir, timeoutMs: HOOK_FANOUT_TIMEOUT_MS }));
+            assert.equal(result.status, 0, `pipeline exited ${result.status}; stderr=${result.stderr}`);
+            const refs = result.stdout.split('\n').filter((l) => l.length > 0);
+            assert.deepStrictEqual(refs, extractTaskCommitRefs(text));
+            assert.deepStrictEqual(refs, expected);
+          }),
+          { numRuns: 120 },
+        );
+      } finally {
+        cleanup(dir);
+      }
+    }
+  );
+
+  test(
     'the final tier label names the source that actually produced the scope',
     SKIP_WIN32,
     () => {

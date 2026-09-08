@@ -29,6 +29,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const fc = require('./helpers/fast-check-setup.cjs');
+const { documentArb, cleanTemplateArb, hashArb, substitute } = require('./helpers/summary-task-commits-arb.cjs');
+
 const ROOT = path.join(__dirname, '..');
 const {
   extractTaskCommitRefs,
@@ -378,6 +381,35 @@ describe('#3926 — SUMMARY task-commits drift lint', () => {
       .replace('`abc123f`', '`aaaaaaa`').replace('`def456g`', '`bbbbbbb`')
       .replace('`hij789k`', '`ccccccc`').replace('`lmn012o`', '`ddddddd`');
     assert.deepEqual(extractTaskCommitRefs(hexed), ['aaaaaaa', 'bbbbbbb', 'ccccccc']);
+  });
+
+  test('property: the model reads every hash on a task row after its label, and nothing else in the document', () => {
+    // A construction oracle: each generated line knows which of its hashes
+    // are the parser's (task rows, all tokens after the closing bold, TDD
+    // multi-commit rows included) and which are decoys (asides, the metadata
+    // line, a label mentioned mid-sentence, an unclosed bold, a code span in
+    // the label, anything outside the section). CRLF documents are generated
+    // too. RULESET.TESTS.property-based-testing: this is the parser's
+    // invariant, and the round-4 miss class is one of the decoy kinds.
+    fc.assert(
+      fc.property(documentArb, ({ text, expected }) => {
+        assert.deepEqual(extractTaskCommitRefs(text), expected);
+      }),
+    );
+  });
+
+  test('property: a template the guard passes is one the parser reads exactly — lint-clean rows are the read set', () => {
+    // The guard pins what the parser reads and nothing more: for any
+    // lint-clean template, substituting hex for its placeholders yields a
+    // document from which the model reads precisely the canonical rows'
+    // hashes, in order — the `**Plan metadata:**` placeholder included in the
+    // substitution and excluded from the read.
+    fc.assert(
+      fc.property(cleanTemplateArb, fc.array(hashArb, { minLength: 6, maxLength: 6 }), ({ text, rows }, hashes) => {
+        assert.deepEqual(findSummaryTaskCommitsDrift(fixture({ 'summary.md': text })), []);
+        assert.deepEqual(extractTaskCommitRefs(substitute(text, hashes)), hashes.slice(0, rows));
+      }),
+    );
   });
 
   test('fail-first: a section with no backticked task line at all is a finding', () => {
