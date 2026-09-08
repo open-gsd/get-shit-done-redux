@@ -53,11 +53,16 @@ const DEFAULT_SEARCH_ROOTS = [
 const COMPACT_SUFFIX = '.compact.md';
 
 /**
- * Recursively list every `*.compact.md` file under `dir`.
+ * Recursively list every file under `dir` whose name ends with `suffix`.
+ * Shared by both file-discovery needs this module has — `.compact.md` files
+ * (`findCompactFiles`) and general `.md` files to search for reachability
+ * (`findMarkdownFiles`) — which otherwise duplicated the same walk with only
+ * the extension predicate differing.
  * @param {string} dir
+ * @param {string} suffix
  * @returns {string[]} absolute paths
  */
-function findCompactFiles(dir) {
+function findFilesWithSuffix(dir, suffix) {
   const results = [];
   let entries;
   try {
@@ -68,12 +73,21 @@ function findCompactFiles(dir) {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...findCompactFiles(full));
-    } else if (entry.isFile() && entry.name.endsWith(COMPACT_SUFFIX)) {
+      results.push(...findFilesWithSuffix(full, suffix));
+    } else if (entry.isFile() && entry.name.endsWith(suffix)) {
       results.push(full);
     }
   }
   return results;
+}
+
+/**
+ * Recursively list every `*.compact.md` file under `dir`.
+ * @param {string} dir
+ * @returns {string[]} absolute paths
+ */
+function findCompactFiles(dir) {
+  return findFilesWithSuffix(dir, COMPACT_SUFFIX);
 }
 
 /**
@@ -202,22 +216,7 @@ function isUnprefixedMatch(text, needle) {
 }
 
 function findMarkdownFiles(dir) {
-  const results = [];
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return results;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...findMarkdownFiles(full));
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      results.push(full);
-    }
-  }
-  return results;
+  return findFilesWithSuffix(dir, '.md');
 }
 
 /**

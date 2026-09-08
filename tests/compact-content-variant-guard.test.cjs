@@ -216,6 +216,26 @@ describe('failing-first fixture: check 3 (protected content preserved)', () => {
       cleanup(tmpRoot);
     }
   });
+
+  test('a canonical file with no protected blocks is a correct no-op (nothing to preserve)', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-variant-protected-none-'));
+    try {
+      const workflowsRoot = path.join(tmpRoot, 'gsd-core', 'workflows', 'foo', 'steps');
+      fs.mkdirSync(workflowsRoot, { recursive: true });
+      fs.writeFileSync(path.join(workflowsRoot, 'bar.md'), 'Plain canonical content with no protected sentinel at all.\n');
+      fs.writeFileSync(path.join(workflowsRoot, 'bar.compact.md'), 'Terser.\n');
+
+      const pairs = discoverRegisteredVariants([path.join(tmpRoot, 'gsd-core', 'workflows')]);
+      const violations = checkProtectedContentPreserved(pairs);
+      assert.deepStrictEqual(
+        violations,
+        [],
+        'a canonical file with zero <!-- gsd:protected --> blocks has nothing to check — never a violation',
+      );
+    } finally {
+      cleanup(tmpRoot);
+    }
+  });
 });
 
 describe('failing-first fixture: check 4 (size smaller)', () => {
