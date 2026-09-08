@@ -409,7 +409,7 @@ emit narrative output between the Write tool call and the commit tool call.
 Truncation at this boundary is a known failure mode (see #2070 rescue logic in
 execute-phase.md step 5.5).
 
-Create `{phase}-{plan}-SUMMARY.md` at `.planning/phases/XX-name/`. Use the template at `~/.claude/gsd-core/templates/summary.md` (or its `~/.claude/gsd-core/templates/summary.compact.md` variant — resolve per `~/.claude/gsd-core/references/compact-content-gate.md` §"Streams 1b and 4").
+Create `{phase}-{plan}-SUMMARY.md` at `.planning/phases/XX-name/`. Use the template at `~/.claude/gsd-core/templates/summary.md` (or its `.compact.md` variant — same `compact-content-gate.md` resolution as the USER-SETUP template above).
 
 **Frontmatter:** phase, plan, subsystem, tags | requires/provides/affects | tech-stack.added/patterns | key-files.created/modified | key-decisions | requirements-completed (**MUST** copy `requirements` array from PLAN.md frontmatter verbatim) | duration ($DURATION), completed ($PLAN_END_TIME date).
 
