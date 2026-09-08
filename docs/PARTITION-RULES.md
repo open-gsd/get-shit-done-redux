@@ -104,3 +104,29 @@ Checks 1 and 4–5 read `merge-base..HEAD`, never `base..HEAD` (two-dot) — the
 ADR-3942 made for its own trailer range, for the same reason: a two-dot range would let the
 set of commits being checked and the set of files being diffed disagree about what "this PR"
 means.
+
+## Deciding whether a file is worth splitting
+
+Not every eagerly-`@`-included workflow benefits from a spine/detail partition. Epic #4139
+Phase 5 ([#4405](https://github.com/open-gsd/gsd-core/issues/4405)) established the working
+criteria, applied to every file in the eager-window corpus:
+
+- **Split it** when the file has one or more clearly-delineated steps or sub-sections that are
+  genuinely optional or rare in normal execution — gated by an explicit flag, an off-by-default
+  config key, an uncommon runtime condition, or a fallback path most runs never take. The five
+  files split in Phase 5 (`execute-phase.md`, `docs-update.md`, `new-project.md`,
+  `verify-work.md`, `complete-milestone.md`) all had this shape.
+- **Record it as not worth splitting** when either: (a) the file's size comes predominantly
+  from safety-critical, always-relevant orchestration logic and documented bug-history
+  comments rather than deferrable narrative elaboration — extracting from it would butcher
+  core happy-path logic or bury a regression-preventing "why" comment (`review.md`'s
+  disposition in Phase 5, despite being named among the epic's heaviest files); or (b) the
+  file is small enough that the fixed structural cost of a split — a new `detail/` directory,
+  the five checks' ongoing enforcement surface, `docs/INVENTORY.md`/manifest bookkeeping, and
+  reviewer attention — is not justified by the achievable savings. The smallest file split in
+  Phase 5 (`complete-milestone.md`, 41,278 bytes) still only yielded roughly 10.4 KB of actual
+  reduction; a file well under that size buys proportionally less for the same fixed cost.
+
+A "not worth splitting" disposition is not permanent — re-evaluate a file if it grows
+substantially, or a later change gives it a genuinely optional or rare execution branch it
+didn't have before.
