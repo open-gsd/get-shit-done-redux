@@ -1836,11 +1836,22 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
       }
       // A HEAD-only path (the caller already `git rm`'d it) has no index entry
       // to record or restore; the `rm` below is then a no-op.
-      if (indexEntry !== undefined) removedEntries.push({ path: trackedPath, mode: indexEntry.mode, sha: indexEntry.sha });
+      // READ the entry before the mutation, RECORD it only after the mutation
+      // SUCCEEDS. The read must precede (the rm is what destroys the mode/blob
+      // the restore needs); the record must not, because `removedEntries` is
+      // the set this call claims to have staged. Recording ahead of the rm made
+      // a FAILED rm — a stale `index.lock` is the driven case — contribute an
+      // entry the rollback then reported as "still staged in the index" when
+      // nothing had been staged at all: a false disclosure, the mirror of the
+      // silent one the disclosure was added to fix.
+      const recordable = indexEntry !== undefined
+        ? { path: trackedPath, mode: indexEntry.mode, sha: indexEntry.sha }
+        : null;
       // `--ignore-unmatch` makes "no such index entry" a success, so a non-zero
       // exit is a real I/O failure — same reading as the default-mode branch.
       const rmResult = execGit(['rm', '--cached', '--ignore-unmatch', '--', trackedPath], { cwd });
       if (rmResult.exitCode === 0) {
+        if (recordable !== null) removedEntries.push(recordable);
         // Re-check AFTER the index mutation. The absence test and the `rm` are
         // not atomic, and the scoped `git commit -- <paths>` below reads the
         // WORKTREE, so a path recreated in between would be committed as its
@@ -1859,11 +1870,39 @@ function stageDeclaredRemovals(cwd: string, removedDeclared: string[]): {
         // never joins the pathspec; its rollback is the recorded entry above.
         if (headExists) removedPathspec.push(trackedPath);
       } else {
+        // A NON-ZERO rm is NOT proof the index is untouched. `execGit` collapses
+        // a spawn timeout to a non-zero exit, and a killed `git rm` can already
+        // have written the index — so keying the record on the exit code alone
+        // drops a real mutation on the timeout path (driven: a post-index-change
+        // hook that outlives the timeout leaves `D <path>` staged and reported
+        // nowhere). The exit code answers "did the command succeed", never "did
+        // the index change". ASK THE INDEX instead — three honest arms, and no
+        // arm asserts a state it did not observe.
+        // THE ORIGINAL FAILURE IS PUSHED FIRST. `failures[0]` sets the result's
+        // `reason`, `file`, `error` and timeout classification, so appending the
+        // probe's diagnostic ahead of it renamed the cause: a timed-out rm was
+        // reported as a permission error and lost its `timed_out: true`.
         failures.push({
           file: trackedPath,
           error: rmResult.stderr || rmResult.stdout,
           timed_out: isSpawnTimeout(rmResult),
         });
+        if (recordable !== null) {
+          const after = execGit(['ls-files', '-s', '-z', '--', trackedPath], { cwd });
+          if (after.exitCode !== 0) {
+            // Could not determine. Say so; never silently assume either way.
+            failures.push({
+              file: trackedPath,
+              error: `removal failed and the index state for this path could NOT be determined: ${after.stderr || after.stdout}`,
+              timed_out: isSpawnTimeout(after),
+            });
+          } else if (after.stdout.replace(/\0/g, '').trim() === '') {
+            // The entry is gone: the rm mutated the index before it failed, so
+            // this call owns the removal and must restore/disclose it.
+            removedEntries.push(recordable);
+          }
+          // else: the entry is still there — nothing was staged, nothing to undo.
+        }
       }
     }
   }
@@ -2096,21 +2135,60 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
   // `nothing_to_commit` over a removal we tried and FAILED to put back is the
   // same false "no state changed" this helper exists to prevent, surviving one
   // level down on the restore-failure path.
-  const restoreRemovedEntries = (): boolean => {
-    if (removedEntries.length === 0) return true;
-    const r = execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
-    return r.exitCode === 0;
+  // THREE outcomes, never two. `restored` and `not-restored` are observations;
+  // `unverified` is the absence of one, and collapsing it into `not-restored`
+  // asserts a failure that was never seen — the same conflation the removal
+  // side's own probe already refuses one screen up.
+  type RestoreVerdict = 'restored' | 'not-restored' | 'unverified';
+  const restoreRemovedEntries = (): RestoreVerdict => {
+    if (removedEntries.length === 0) return 'restored';
+    execGit(['update-index', '--add', ...removedEntries.flatMap(e => ['--cacheinfo', `${e.mode},${e.sha},${e.path}`])], { cwd });
+    // VERIFY BY READING THE INDEX BACK, never by the exit code. `execGit`
+    // collapses a spawn timeout to a non-zero exit, and a killed `update-index`
+    // can already have written the index — so an exit code answers "did the
+    // command succeed", never "is the entry back". Driven: a post-index-change
+    // hook outliving the timeout made the restore report failure over an index
+    // it had in fact restored, publishing a disclosure that was simply false.
+    //
+    // `-z` IS LOAD-BEARING, and its absence is the #2014-era defect this PR
+    // already fixed once for `preStaged`: without it `core.quotePath` renders a
+    // non-ASCII name as `"caf\303\251.md"`, which never equals the raw path, so
+    // an exactly-restored `café.md` (and any name carrying a tab or a newline)
+    // read as NOT restored. Driven on all three shapes.
+    const back = execGit(['ls-files', '-s', '-z', '--', ...removedEntries.map(e => e.path)], { cwd });
+    if (back.exitCode !== 0) return 'unverified';   // no observation — never an assertion of failure
+    // COMPARE THE WHOLE ENTRY, not just the path. `--cacheinfo` restores mode,
+    // blob and stage; a path present at a DIFFERENT mode or blob is not the
+    // entry this call removed. Driven: a hook that rewrote the restored entry
+    // 100644 -> 100755 was reported as restored by a path-only test.
+    const present = new Map<string, string>();
+    for (const rec of back.stdout.split('\0')) {
+      if (rec === '') continue;
+      const tab = rec.indexOf('\t');
+      if (tab === -1) continue;
+      present.set(rec.slice(tab + 1), rec.slice(0, tab));
+    }
+    const ok = removedEntries.every(e => present.get(e.path) === `${e.mode} ${e.sha} 0`);
+    return ok ? 'restored' : 'not-restored';
   };
   // The no-change exits' shared arm: restore, and if the restore failed, say so
   // instead of claiming nothing changed. `staging_failed` is the honest reason —
   // the index carries a mutation this call made and could not undo.
-  const removalsLeftStaged = () => ({
+  const removalsLeftStaged = (verdict: 'not-restored' | 'unverified') => ({
     committed: false,
     hash: null,
     reason: 'staging_failed',
     file: removedEntries[0]?.path ?? null,
-    error: `declared removal(s) staged but could not be restored after the commit recorded nothing: ${removedEntries.map(e => e.path).join(', ')}`,
-    failures: removedEntries.map(e => ({ file: e.path, error: 'update-index --cacheinfo restore failed', timed_out: false })),
+    error: verdict === 'not-restored'
+      ? `declared removal(s) staged but could not be restored after the commit recorded nothing: ${removedEntries.map(e => e.path).join(', ')}`
+      : `declared removal(s) staged and the restore could NOT be VERIFIED after the commit recorded nothing: ${removedEntries.map(e => e.path).join(', ')}`,
+    failures: removedEntries.map(e => ({
+      file: e.path,
+      error: verdict === 'not-restored'
+        ? 'update-index --cacheinfo restore failed'
+        : 'update-index --cacheinfo restore could not be verified — the index was not readable',
+      timed_out: false,
+    })),
   });
 
   // #2608: fail closed before `git commit` runs. Checked ahead of the
@@ -2143,12 +2221,14 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // reappeared path), so a caller reading `failures` sees only that cause
     // and learns nothing about the removal still sitting in its index. Append
     // rather than replace: the original failure is still the reason.
-    const restored = restoreRemovedEntries();
-    const failures = restored
+    const restoreVerdict = restoreRemovedEntries();
+    const failures = restoreVerdict === 'restored'
       ? stagingFailures
       : [...stagingFailures, ...removedEntries.map(e => ({
           file: e.path,
-          error: 'staged removal could NOT be restored during rollback — it is still staged in the index',
+          error: restoreVerdict === 'not-restored'
+            ? 'staged removal could NOT be restored during rollback — it is still staged in the index'
+            : 'staged removal was rolled back but the result could NOT be VERIFIED — the index was not readable',
           timed_out: false,
         }))];
     const first = stagingFailures[0];
@@ -2404,7 +2484,8 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
     // empty), and a HEAD that simply does not carry the removed path -- an
     // index-only entry the caller `git add`ed but never committed, where the
     // `diff HEAD` probe reads clean because the path is absent on both sides.
-    if (!restoreRemovedEntries()) { output(removalsLeftStaged(), raw, 'failed'); return; }
+    const rv = restoreRemovedEntries();
+    if (rv !== 'restored') { output(removalsLeftStaged(rv), raw, 'failed'); return; }
     // #4454: an explicit --files list where every named path was missing
     // reaches this branch via `stagedPaths.length === 0` above — surface
     // which path(s) were the reason, same as the success result below.
@@ -2487,7 +2568,8 @@ function cmdCommit(cwd: string, message: string | undefined, files: string[] | u
       // report. The failure exits below are deliberately NOT restored -- they
       // report a failure rather than "no state changed", and the addition side
       // leaves its own staged paths in place there too.
-      if (!restoreRemovedEntries()) { output(removalsLeftStaged(), raw, 'failed'); return; }
+      const rv = restoreRemovedEntries();
+      if (rv !== 'restored') { output(removalsLeftStaged(rv), raw, 'failed'); return; }
       // #4454: this is the residual window the surrounding comments already
       // document (a partial skip + partialCommitRefused bypassing the diff
       // probe + git's own empty-commit refusal) — skippedFiles can be

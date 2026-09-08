@@ -794,6 +794,141 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
+  test('a removal whose own rm failed is not disclosed as still staged', () => {
+    // The mirror of the disclosure above. `removedEntries` is the set this call
+    // claims to have STAGED, so an entry recorded before a `rm --cached` that
+    // then FAILED would be reported as "still staged in the index" when nothing
+    // was staged at all. Driven with a pre-existing index.lock, which fails the
+    // rm and the restore alike.
+    seedMove();
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'stays.md'), 'stays\n');
+    git(['add', path.join(PENDING, 'stays.md')]);
+    git(['commit', '-q', '-m', 'seed a present todo']);
+    const before = git(['ls-files', '-s', '--', PENDING]);
+    fs.writeFileSync(path.join(tmpDir, '.git', 'index.lock'), '');
+
+    const result = runGsdTools(
+      ['commit', 'docs: bad declaration',
+        '--files-removed', '.planning/todos/pending/mine.md', '.planning/todos/pending/stays.md'],
+      tmpDir,
+    );
+    fs.unlinkSync(path.join(tmpDir, '.git', 'index.lock'));
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.strictEqual(
+      parsed.failures.filter(f => /could NOT be restored/.test(f.error)).length, 0,
+      `nothing was staged, so nothing may be disclosed as left staged; failures were ${JSON.stringify(parsed.failures)}`,
+    );
+    assert.strictEqual(git(['ls-files', '-s', '--', PENDING]), before, 'the index is untouched');
+  });
+
+  test('a timed-out removal does not produce a false could-not-restore disclosure', () => {
+    // The exit code answers "did the command succeed", never "did the index
+    // change": execGit collapses a spawn timeout to a non-zero exit, and a
+    // killed git can already have written the index. This pins the RESTORE
+    // side of that -- a restore whose update-index was killed after its write
+    // landed must not report "could NOT be restored" over an index it did in
+    // fact restore. Forcing the restore verdict back onto the exit code fails
+    // this test.
+    //
+    // NAMED RESIDUAL: the RECORD side of the same rule -- a timed-out `rm`
+    // whose write DID land must still be recorded and undone -- is NOT pinned
+    // here. Whether that write survives the in-process kill is not
+    // deterministic (driven: it lands under a shell `timeout`, and did not
+    // under execGit's spawnSync bound), so an assertion on it would read as
+    // coverage and never run. It is driven by hand instead.
+    seedMove();
+    const before = git(['ls-files', '-s', '--', PENDING]);
+    const hooksDir = path.join(tmpDir, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'post-index-change'), '#!/bin/sh\nsleep 12\n', { mode: 0o755 });
+    const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
+    fs.writeFileSync(emptyConfig, '');
+
+    const result = runGsdTools(
+      ['commit', 'docs: close a todo', '--files-removed', '.planning/todos/pending/mine.md'],
+      tmpDir,
+      { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.committed, false, result.output);
+    // Consistency only, NOT the control: whichever way the killed write went,
+    // the call must leave the index coherent. See the residual note above.
+    assert.strictEqual(git(['ls-files', '-s', '--', PENDING]), before, 'the index must be coherent after a timed-out removal');
+    // THE CONTROL: the restore succeeded, so nothing may claim otherwise.
+    assert.strictEqual(
+      (parsed.failures || []).filter(f => /could NOT be restored/.test(f.error)).length, 0,
+      `the index was restored, so no disclosure may fire; failures were ${JSON.stringify(parsed.failures)}`,
+    );
+  });
+
+  test('a restored non-ASCII path is recognised as restored, not reported as a failure', () => {
+    // The restore verification reads the index back, so it must read it with
+    // `-z`: core.quotePath renders café.md as "caf\\303\\251.md", which never
+    // equals the raw path, and an EXACTLY restored entry then read as not
+    // restored -- the same quoting defect this PR already fixed for preStaged.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'seed.md'), 'seed\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed todo']);
+    // Index-only and absent from disk: the call stages the removal, records
+    // nothing, and must restore -- the path the verification runs on.
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'café.md'), 'cafe\n');
+    git(['add', path.join(PENDING, 'café.md')]);
+    const before = gitOrThrow(['ls-files', '-s', '-z', '--', PENDING], { cwd: tmpDir, timeoutMs: GIT_TIMEOUT_MS });
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'café.md'));
+
+    const result = runGsdTools(
+      ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/café.md'],
+      tmpDir,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'nothing_to_commit', result.output);
+    assert.strictEqual(
+      gitOrThrow(['ls-files', '-s', '-z', '--', PENDING], { cwd: tmpDir, timeoutMs: GIT_TIMEOUT_MS }), before,
+      'the entry is restored exactly',
+    );
+  });
+
+  test('a path restored at a different mode is not accepted as restored', () => {
+    // --cacheinfo restores mode, blob and stage, so a path-only membership test
+    // would accept an entry that came back as something else. Driven with a
+    // post-index-change hook that rewrites the restored entry's mode.
+    fs.mkdirSync(path.join(tmpDir, PENDING), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'seed.md'), 'seed\n');
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed todo']);
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'gone.md'), 'gone\n');
+    git(['add', path.join(PENDING, 'gone.md')]);
+    const blob = git(['rev-parse', ':' + path.join(PENDING, 'gone.md')]);
+    fs.unlinkSync(path.join(tmpDir, PENDING, 'gone.md'));
+    const hooksDir = path.join(tmpDir, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    // Fires after the restore's index write; flips the mode so the entry that
+    // comes back is not the entry that was removed.
+    fs.writeFileSync(path.join(hooksDir, 'post-index-change'),
+      '#!/bin/sh\n'
+      + 'git ls-files -s -- .planning/todos/pending/gone.md | grep -q "^100644" '
+      + '&& git update-index --add --cacheinfo 100755,' + blob + ',.planning/todos/pending/gone.md\n',
+      { mode: 0o755 });
+    const emptyConfig = path.join(tmpDir, 'empty.gitconfig');
+    fs.writeFileSync(emptyConfig, '');
+
+    const result = runGsdTools(
+      ['commit', 'docs: remove an uncommitted path', '--files-removed', '.planning/todos/pending/gone.md'],
+      tmpDir,
+      { GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' },
+    );
+    const parsed = JSON.parse(result.output);
+    assert.notStrictEqual(
+      parsed.reason, 'nothing_to_commit',
+      `the entry came back at a different mode, so the restore is not clean: ${result.output}`,
+    );
+  });
+
+
+
+
 
 
 
