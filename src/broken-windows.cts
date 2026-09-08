@@ -45,6 +45,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import workstreamInventory = require('./workstream-inventory.cjs');
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -115,11 +117,21 @@ export interface WindowEntry {
   reason: string;      // '' unless status === 'waived'
   recorded_at: string; // ISO-8601
   resolved_at: string | null;
+  // #4487: the workstream's resolved milestone version (e.g. "v2.0") at the
+  // moment the entry was recorded, or null when it could not be resolved.
+  // Phase numbers are unique only within one active phases/ directory --
+  // `milestone complete` archives phases and frees their numbers for reuse,
+  // so two milestones routinely produce entries under the same `phase`
+  // value with nothing to distinguish them. Absence (on an entry recorded
+  // before this field existed) reads as "recorded before this change" --
+  // validateEntryShape below does NOT require this key, so existing ledgers
+  // stay valid with no migration.
+  milestone: string | null;
 }
 
 /** Input shape for appendWindow — id/status/timestamps are assigned by the fn. */
 export type WindowInput = Pick<WindowEntry, 'kind' | 'phase' | 'description'> &
-  Partial<Pick<WindowEntry, 'file' | 'line'>>;
+  Partial<Pick<WindowEntry, 'file' | 'line' | 'milestone'>>;
 
 export interface Ledger {
   schema_version: number;
@@ -302,6 +314,7 @@ export function appendWindow(
     reason: '',
     recorded_at: opts.now,
     resolved_at: null,
+    milestone: input.milestone ?? null,
   };
 
   const entries = [...ledger.entries, entry];
@@ -614,6 +627,10 @@ function validateEntryShape(e: unknown, i: number): WindowEntry {
     reason: o.reason,
     recorded_at: recordedStr,
     resolved_at: resolvedStr,
+    // #4487: NOT in `required` above -- an entry recorded before this field
+    // existed has no `milestone` key at all, and that must parse cleanly as
+    // null rather than fail the ledger.
+    milestone: typeof o.milestone === 'string' ? o.milestone : null,
   };
 }
 
@@ -1107,6 +1124,15 @@ export function cmdWindowsAppend(
     throw new WindowsError(REASON.WINDOWS_LEDGER_MALFORMED, (e as Error).message);
   }
 
+  // #4487: stamp the workstream's resolved milestone at record time -- the
+  // same STATE.md-first, ROADMAP-fallback resolution workstream-inventory.cts
+  // already uses. Best-effort: an unreadable/missing STATE.md or ROADMAP.md
+  // resolves to null, same as an entry recorded before this field existed.
+  const milestone = workstreamInventory.readCurrentMilestoneVersion(
+    path.join(cwd, '.planning', 'STATE.md'),
+    path.join(cwd, '.planning', 'ROADMAP.md'),
+  );
+
   const result = appendWindow(
     ledger,
     {
@@ -1115,6 +1141,7 @@ export function cmdWindowsAppend(
       file: parsed.values['--file'] ?? '',
       line: parsed.values['--line'] == null ? null : Number(parsed.values['--line']),
       description: parsed.values['--description'] ?? '',
+      milestone,
     },
     { now: nowIso() },
   );
