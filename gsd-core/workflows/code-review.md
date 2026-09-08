@@ -298,7 +298,7 @@ elif [ -z "$FILES_OVERRIDE" ] && [ -n "$DIFF_BASE" ]; then
   # reached anyway and the #2666 cross-check below appended the whole phase
   # diff onto an explicit user-supplied file list, contradicting line 144's
   # "Skip SUMMARY/git scoping entirely when --files is provided" and Tier 2's
-  # own --files guard immediately above.
+  # own --files guard (line 150).
   # #2666 cross-check: SUMMARY yielded a non-empty (possibly partial) scope.
   # Warn about — and add — any changed files the SUMMARY extractor did not surface,
   # so a partial result can no longer silently ship an incomplete review scope.

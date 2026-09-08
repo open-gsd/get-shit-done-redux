@@ -14,9 +14,22 @@
  * whole phase diff onto an explicit user-supplied file list.
  *
  * Mirrors the issue's own verified reproduction methodology: extract the
- * Tier 1/2/3 fences VERBATIM from code-review.md (never reimplemented),
- * set only the prerequisite variables, run against a real constructed git
- * fixture.
+ * Tier 1 and Tier 3 fences VERBATIM from code-review.md (never
+ * reimplemented), set only the prerequisite variables, run against a real
+ * constructed git fixture.
+ *
+ * Tier 2's own fence is DELIBERATELY NOT extracted-and-executed here — a
+ * code-review pass on this fix found it is not currently parseable bash at
+ * all (two unescaped `"` characters inside its embedded `node -e "..."`
+ * regex literal terminate the outer double-quoted string early, breaking
+ * bash's parse of the WHOLE script even though Tier 2's body never
+ * executes under `--files`). That defect is real, already reported, and
+ * already queued as its own issue (#4461, filed separately by #4460's own
+ * reporter: "the Tier-2 SUMMARY-extraction fence is not parseable bash
+ * (same file, different defect)") — fixing it here would be exactly the
+ * scope creep the reporter took care to avoid. Until #4461 lands, the
+ * "without --files" case below seeds the REVIEW_FILES state Tier 2 would
+ * have produced directly, rather than sourcing Tier 2's broken fence.
  */
 
 const { describe, test } = require('node:test');
@@ -80,27 +93,38 @@ function buildFixture(tmpDir) {
   }
 }
 
-function runTiers(tmpDir, { filesOverride }) {
+/**
+ * Runs Tier 1 (verbatim) then Tier 3 (verbatim) in sequence. `seedReviewFiles`
+ * stands in for what Tier 2 would have produced when `filesOverride` is unset
+ * (Tier 2 itself is not sourced — see the module docblock for why) — an empty
+ * array when omitted, matching Tier 2's own real behavior when no SUMMARY
+ * yields anything.
+ */
+function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
   const content = fs.readFileSync(WORKFLOW_PATH, 'utf-8');
   const tier1 = extractFirstBashBlockAfter(content, '**Tier 1 — --files override', '**Tier 2 —');
-  const tier2 = extractFirstBashBlockAfter(content, '**Tier 2 — SUMMARY.md extraction', '**Tier 3 —');
   const tier3 = extractFirstBashBlockAfter(content, '**Tier 3 — Git diff fallback', '**Post-processing');
 
   const filesArrayInit = filesOverride
     ? `FILES_ARRAY=(${filesOverride})`
     : 'FILES_ARRAY=()';
+  const seedInit = seedReviewFiles.length
+    ? `REVIEW_FILES=(${seedReviewFiles.map((f) => `"${f}"`).join(' ')})`
+    : 'REVIEW_FILES=()';
 
   const script = [
     '#!/usr/bin/env bash',
     'set -uo pipefail',
     `FILES_OVERRIDE="${filesOverride || ''}"`,
     filesArrayInit,
-    'REVIEW_FILES=()',
+    tier1,
+    // Tier 1 unconditionally resets REVIEW_FILES=() when FILES_OVERRIDE is
+    // set; the seed only matters (and only applies) when it is not, exactly
+    // mirroring Tier 2 running in FILES_OVERRIDE's absence.
+    `if [ -z "$FILES_OVERRIDE" ]; then ${seedInit}; fi`,
     'PHASE_DIR=".planning/phases/03-demo"',
     'PADDED_PHASE="03"',
     'LAST_REVIEW_COMMIT=""',
-    tier1,
-    tier2,
     tier3,
     'printf \'%s\\n\' "${REVIEW_FILES[@]}"',
   ].join('\n');
@@ -145,15 +169,18 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
     }
   });
 
-  test('without --files, the #2666 cross-check still widens a partial SUMMARY scope (no regression to the cross-check itself)', () => {
+  test('without --files, the #2666 cross-check still widens a partial (Tier-2-equivalent) scope (no regression to the cross-check itself)', () => {
     const tmpDir = fs.realpathSync(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
-      const files = runTiers(tmpDir, { filesOverride: '' });
+      // seedReviewFiles stands in for Tier 2's real output (["src/alpha.js"],
+      // the file the fixture's SUMMARY lists) — see the module docblock for
+      // why Tier 2's own fence isn't sourced here.
+      const files = runTiers(tmpDir, { filesOverride: '', seedReviewFiles: ['src/alpha.js'] });
       assert.deepEqual(
         files,
         ['src/alpha.js', 'src/beta.js', 'src/delta.js', 'src/epsilon.js', 'src/gamma.js'],
-        `without --files, the cross-check must still widen the partial SUMMARY scope, got: ${JSON.stringify(files)}`,
+        `without --files, the cross-check must still widen a partial scope, got: ${JSON.stringify(files)}`,
       );
     } finally {
       cleanup(tmpDir);
