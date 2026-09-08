@@ -37,7 +37,7 @@ MILESTONE_ARG=$(echo "$ARGUMENTS" | sed -E 's/--ws[[:space:]]+[A-Za-z0-9._-]+//g
 # #4456: persist GSD_WS to a file so later steps' bash fences (each a
 # separate shell) can forward it — the same cross-fence problem Step 5/6
 # already solve for OUTGOING_MILESTONE via .gsd-outgoing-milestone.
-printf '%s' "$GSD_WS" > .planning/.gsd-ws-arg
+printf '%s' "$GSD_WS" > .planning/.gsd-ws-arg 2>/dev/null || true
 RESPONSE_LANGUAGE=$(gsd_run query config-get response_language --raw --default "" 2>/dev/null || echo "")
 # #2994: EARLY, section-manifest-only init.new-milestone call — needed here
 # (before Step 4) to gate the project-md-milestone-write section. This is
@@ -303,11 +303,11 @@ if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 AGENT_SKILLS_RESEARCHER=$(gsd_run query agent-skills gsd-project-researcher)
 AGENT_SKILLS_SYNTHESIZER=$(gsd_run query agent-skills gsd-research-synthesizer)
 AGENT_SKILLS_ROADMAPPER=$(gsd_run query agent-skills gsd-roadmapper)
-# #4456: last consumer of the persisted --ws in this workflow — clean up
-# the round-trip file, mirroring .gsd-outgoing-milestone's own cleanup in
-# Step 6.
-rm -f .planning/.gsd-ws-arg 2>/dev/null || true
 ```
+<!-- #4456: .planning/.gsd-ws-arg is NOT cleaned up here — Steps 9 and 10
+below still need to re-read it (each is its own shell) to resolve
+REQUIREMENTS.md/ROADMAP.md/STATE.md correctly under a workstream. It is
+removed in Step 10, its true last consumer. -->
 
 Extract from init JSON: `researcher_model`, `synthesizer_model`, `roadmapper_model`, `commit_docs`, `research_enabled`, `current_milestone`, `project_exists`, `roadmap_exists`, `latest_completed_milestone`, `phase_dir_count`, `phase_archive_path`, `agents_installed`, `missing_agents`, `project_path`, `roadmap_path`, `requirements_path`, `config_path`, `research_dir`, `milestones_path`, `phases_dir`, `archive_dir`.
 
@@ -522,7 +522,12 @@ If "adjust": Return to scoping.
 
 **Commit requirements:**
 ```bash
-gsd_run query commit "docs: define milestone v[X.Y] requirements" --files .planning/REQUIREMENTS.md
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+INIT_REQ=$(gsd_run query init.new-milestone $GSD_WS_ARG)
+if [[ "$INIT_REQ" == @file:* ]]; then INIT_REQ=$(cat "${INIT_REQ#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+REQUIREMENTS_PATH=$(_gsd_field "$INIT_REQ" requirements_path)
+gsd_run query commit "docs: define milestone v[X.Y] requirements" --files "$REQUIREMENTS_PATH"
 ```
 
 ## 10. Create Roadmap
@@ -606,7 +611,17 @@ Success criteria:
 
 **Commit roadmap** (after approval):
 ```bash
-gsd_run query commit "docs: create milestone v[X.Y] roadmap ([N] phases)" --files .planning/ROADMAP.md .planning/STATE.md .planning/REQUIREMENTS.md
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+INIT_ROADMAP=$(gsd_run query init.new-milestone $GSD_WS_ARG)
+if [[ "$INIT_ROADMAP" == @file:* ]]; then INIT_ROADMAP=$(cat "${INIT_ROADMAP#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+ROADMAP_PATH=$(_gsd_field "$INIT_ROADMAP" roadmap_path)
+STATE_PATH=$(_gsd_field "$INIT_ROADMAP" state_path)
+REQUIREMENTS_PATH=$(_gsd_field "$INIT_ROADMAP" requirements_path)
+gsd_run query commit "docs: create milestone v[X.Y] roadmap ([N] phases)" --files "$ROADMAP_PATH" "$STATE_PATH" "$REQUIREMENTS_PATH"
+# #4456: true last consumer of the persisted --ws in this workflow — the
+# round-trip file is no longer needed after this commit.
+rm -f .planning/.gsd-ws-arg 2>/dev/null || true
 ```
 
 ## 10.5. Link Pending Todos to Roadmap Phases

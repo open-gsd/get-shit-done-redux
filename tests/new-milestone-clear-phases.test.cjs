@@ -844,18 +844,10 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
       });
     });
 
-    describe('step 7: init.new-milestone forwards --ws and cleans up the round-trip file', () => {
+    describe('step 7: init.new-milestone forwards --ws (round-trip file survives — steps 9/10 still need it)', () => {
       const step7Fence = extractFenceContaining(
         content, '## 7. Load Context and Resolve Models', 'Extract from init JSON', 'init.new-milestone',
       );
-
-      function runStep7(gsdWsArg) {
-        fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
-        const gsdRunStub = 'gsd_run() { if [ "$1" = "query" ] && [ "$2" = "init.new-milestone" ]; then printf "gsd_run_call:%s\\n" "$*"; echo "{}"; else printf "gsd_run_call:%s\\n" "$*"; fi; }\n';
-        const r = runHookSeam('-c', [gsdRunStub + step7Fence], { interpreter: 'bash', cwd: tmpDir });
-        throwIfFailed(r, 'bash <step7 fence>');
-        return r.stdout;
-      }
 
       test('ws mode: forwards --ws alongside --reset-phase-numbers', () => {
         fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), '--ws search');
@@ -867,10 +859,19 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
           `expected --ws to be forwarded alongside --reset-phase-numbers, got: ${r.stderr}`);
       });
 
-      test('removes .planning/.gsd-ws-arg after its last use', () => {
-        runStep7('--ws search');
-        assert.ok(!fs.existsSync(path.join(tmpDir, '.planning', '.gsd-ws-arg')),
-          '.gsd-ws-arg should be cleaned up by the end of step 7');
+      // #4456 code-review finding: Steps 9 and 10 (requirements/roadmap
+      // commits) run AFTER step 7 and still need to re-read .gsd-ws-arg —
+      // deleting it here (the original implementation) left them with no
+      // way to resolve REQUIREMENTS.md/ROADMAP.md/STATE.md under a
+      // workstream. See the "step 7 no longer deletes .gsd-ws-arg" test
+      // below and the step 10 describe block for the corrected cleanup.
+      test('does NOT remove .planning/.gsd-ws-arg — steps 9/10 still need it', () => {
+        fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), '--ws search');
+        const gsdRunStub = 'gsd_run() { echo "{}"; }\n';
+        const r = runHookSeam('-c', [gsdRunStub + step7Fence], { interpreter: 'bash', cwd: tmpDir });
+        throwIfFailed(r, 'bash <step7 fence>');
+        assert.ok(fs.existsSync(path.join(tmpDir, '.planning', '.gsd-ws-arg')),
+          '.gsd-ws-arg must survive step 7 — steps 9 and 10 run after it and still need to read the file');
       });
     });
 
@@ -922,6 +923,92 @@ describe('new-milestone.md: workstream-aware PROJECT.md guard (#2308)', () => {
           `step 6 must not branch on a bare cross-step GSD_WS; got fence:\n${step6CommitFence}`
         );
       });
+    });
+
+    // #4456 code-review finding: Steps 9 and 10 ALSO commit workstream-scoped
+    // files (REQUIREMENTS.md, ROADMAP.md, STATE.md) via literal root paths —
+    // the same bug class as Step 6, missed in the first pass. Because these
+    // steps run AFTER Step 7 (where .gsd-ws-arg was previously being deleted),
+    // fixing them required moving the round-trip file's cleanup to Step 10 —
+    // its true last consumer — instead of Step 7.
+    describe('step 9: requirements commit resolves REQUIREMENTS.md through init.new-milestone', () => {
+      const step9Fence = extractFenceContaining(
+        content, '## 9. Define Requirements', '## 10. Create Roadmap', 'docs: define milestone',
+      );
+
+      function runStep9(gsdWsArg, rootPaths, wsPaths) {
+        fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
+        const script = stubGsdRun(rootPaths, wsPaths) + step9Fence;
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        throwIfFailed(r, 'bash <step9 fence>');
+        return r.stdout;
+      }
+
+      const rootPaths = { requirements_path: '/root/REQUIREMENTS.md' };
+      const wsPaths = { requirements_path: '/ws/REQUIREMENTS.md' };
+
+      test('ws mode: --files uses the resolved workstream REQUIREMENTS.md', () => {
+        const out = runStep9('--ws search', rootPaths, wsPaths);
+        assert.ok(
+          out.includes('gsd_run_call:query commit docs: define milestone v[X.Y] requirements --files /ws/REQUIREMENTS.md'),
+          `expected the resolved ws-mode path, got: ${out}`
+        );
+      });
+
+      test('flat mode: --files uses the resolved root REQUIREMENTS.md', () => {
+        const out = runStep9('', rootPaths, wsPaths);
+        assert.ok(
+          out.includes('gsd_run_call:query commit docs: define milestone v[X.Y] requirements --files /root/REQUIREMENTS.md'),
+          `expected the resolved flat-mode path, got: ${out}`
+        );
+      });
+    });
+
+    describe('step 10: roadmap commit resolves ROADMAP/STATE/REQUIREMENTS through init.new-milestone, then cleans up .gsd-ws-arg', () => {
+      const step10Fence = extractFenceContaining(
+        content, '## 10. Create Roadmap', '## 10.5.', 'docs: create milestone v[X.Y] roadmap',
+      );
+
+      function runStep10(gsdWsArg, rootPaths, wsPaths) {
+        fs.writeFileSync(path.join(tmpDir, '.planning', '.gsd-ws-arg'), gsdWsArg);
+        const script = stubGsdRun(rootPaths, wsPaths) + step10Fence;
+        const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+        throwIfFailed(r, 'bash <step10 fence>');
+        return r.stdout;
+      }
+
+      const rootPaths = { roadmap_path: '/root/ROADMAP.md', state_path: '/root/STATE.md', requirements_path: '/root/REQUIREMENTS.md' };
+      const wsPaths = { roadmap_path: '/ws/ROADMAP.md', state_path: '/ws/STATE.md', requirements_path: '/ws/REQUIREMENTS.md' };
+
+      test('ws mode: --files uses all three resolved workstream paths', () => {
+        const out = runStep10('--ws search', rootPaths, wsPaths);
+        assert.ok(
+          out.includes('gsd_run_call:query commit docs: create milestone v[X.Y] roadmap ([N] phases) --files /ws/ROADMAP.md /ws/STATE.md /ws/REQUIREMENTS.md'),
+          `expected the resolved ws-mode paths, got: ${out}`
+        );
+      });
+
+      test('flat mode: --files uses all three resolved root paths', () => {
+        const out = runStep10('', rootPaths, wsPaths);
+        assert.ok(
+          out.includes('gsd_run_call:query commit docs: create milestone v[X.Y] roadmap ([N] phases) --files /root/ROADMAP.md /root/STATE.md /root/REQUIREMENTS.md'),
+          `expected the resolved flat-mode paths, got: ${out}`
+        );
+      });
+
+      test('removes .planning/.gsd-ws-arg after this commit (the true last consumer, not step 7)', () => {
+        runStep10('--ws search', rootPaths, wsPaths);
+        assert.ok(!fs.existsSync(path.join(tmpDir, '.planning', '.gsd-ws-arg')),
+          '.gsd-ws-arg should be cleaned up here, since steps 9 and 10 still need it after step 7');
+      });
+    });
+
+    test('step 7 no longer deletes .gsd-ws-arg (steps 9/10 still need it)', () => {
+      const step7Fence = extractFenceContaining(
+        content, '## 7. Load Context and Resolve Models', 'Extract from init JSON', 'init.new-milestone',
+      );
+      assert.ok(!step7Fence.includes('rm -f .planning/.gsd-ws-arg'),
+        'step 7 must not delete .gsd-ws-arg — steps 9 and 10 run after it and still need to read the file');
     });
   });
 
