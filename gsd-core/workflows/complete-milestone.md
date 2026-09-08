@@ -452,8 +452,12 @@ After `milestone complete` has archived, reorganize ROADMAP.md with milestone gr
 Extract the Backlog section from the current ROADMAP.md before making any changes:
 
 ```bash
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
 # Extract lines under ## Backlog through end of file (or next ## section)
-BACKLOG_SECTION=$(awk '/^## Backlog/{found=1} found{print}' .planning/ROADMAP.md)
+BACKLOG_SECTION=$(awk '/^## Backlog/{found=1} found{print}' "$ROADMAP_PATH")
 ```
 
 If `$BACKLOG_SECTION` is empty, there is no Backlog section — skip silently.
@@ -465,10 +469,15 @@ This rewrite is an *intentional* catastrophic shrink: phase detail was just arch
 1. Arm the sentinel (single-use; the guard checks it is fresh — within 15 minutes — and names exactly this file, then consumes it):
 
 ```bash
-printf '.planning/ROADMAP.md\n' > .planning/.gsd-allow-shrink
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
+printf '%s\n' "$ROADMAP_PATH" > .planning/.gsd-allow-shrink
+echo "Write target: $ROADMAP_PATH"
 ```
 
-2. Compose the full new ROADMAP.md content (template below) and overwrite `.planning/ROADMAP.md` with the **Write tool** — the normal path. The guard allows this one shrink and deletes the sentinel. If the Write is blocked anyway, the sentinel was stale or consumed — re-run the `printf` and retry the Write.
+2. Compose the full new ROADMAP.md content (template below) and overwrite the file at **`$ROADMAP_PATH`** (the "Write target" path printed above — under an active workstream this is the workstream-scoped roadmap, NOT the literal `.planning/ROADMAP.md`) with the **Write tool** — the normal path. The guard allows this one shrink and deletes the sentinel. If the Write is blocked anyway, the sentinel was stale or consumed — re-run the `printf` and retry the Write.
 
 Template for the composed content:
 
@@ -498,15 +507,29 @@ Append the extracted Backlog content verbatim to the end of the newly written RO
 **Safety commit — commit archive files BEFORE deleting any originals:**
 
 ```bash
-gsd_run query commit "chore: archive v[X.Y] milestone files" --files .planning/milestones/v[X.Y]-ROADMAP.md .planning/milestones/v[X.Y]-REQUIREMENTS.md .planning/milestones/v[X.Y]-MILESTONE-AUDIT.md .planning/MILESTONES.md .planning/PROJECT.md .planning/STATE.md .planning/ROADMAP.md
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+STATE_PATH=$(_gsd_field "$INIT_REORG" state_path)
+ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
+ARCHIVE_DIR=$(_gsd_field "$INIT_REORG" archive_dir)
+MILESTONES_PATH=$(_gsd_field "$INIT_REORG" milestones_path)
+PROJECT_PATH=$(_gsd_field "$INIT_REORG" project_path)
+gsd_run query commit "chore: archive v[X.Y] milestone files" --files "${ARCHIVE_DIR}/v[X.Y]-ROADMAP.md" "${ARCHIVE_DIR}/v[X.Y]-REQUIREMENTS.md" "${ARCHIVE_DIR}/v[X.Y]-MILESTONE-AUDIT.md" "$MILESTONES_PATH" "$PROJECT_PATH" "$STATE_PATH" "$ROADMAP_PATH"
 ```
 
 This creates a durable checkpoint in git history. If anything fails after this point, the working tree can be reconstructed from git.
 
+MILESTONES.md and PROJECT.md are workstream-scoped the same way STATE.md/ROADMAP.md are (`planningPaths(cwd).planning`/`.project`) — under an active workstream this commits the actual files `milestone complete` wrote, not the root copies.
+
 **Remove REQUIREMENTS.md via git rm** (preserves history, stages deletion atomically):
 
 ```bash
-git rm .planning/REQUIREMENTS.md
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+REQUIREMENTS_PATH=$(_gsd_field "$INIT_REORG" requirements_path)
+git rm "$REQUIREMENTS_PATH"
 ```
 
 </step>
