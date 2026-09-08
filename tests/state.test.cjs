@@ -4213,9 +4213,13 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
   });
 
   function seedOnePhaseTwoPlans() {
-    // 1 of 2 plans summarized, no *-VERIFICATION.md → min-capped 0% (the
-    // existing update-progress rows' derivation; exact value is incidental —
-    // what matters is WHERE the rewrite lands).
+    // 1 of 2 plans summarized, no *-VERIFICATION.md. #4210: phase 01 stays
+    // open (no passing verification) and fills its single slot by its own
+    // summarized/plans fraction, so this composes to 50 where the pre-#4210
+    // min(plan_fraction, phase_fraction) cap reported 0. The exact value stays
+    // incidental to these rows — what they assert is WHERE the rewrite lands —
+    // so the machine segment below is re-derived to the new composition and
+    // still pinned, exactly as it was pinned to the old one.
     const phaseDir = path.join(tmpDir, '.planning', 'phases', '01');
     fs.mkdirSync(phaseDir, { recursive: true });
     fs.writeFileSync(path.join(phaseDir, '01-01-PLAN.md'), '# Plan\n');
@@ -4236,7 +4240,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
       'Status: Executing Phase 1',
       'Last activity: 2026-08-01 — did a thing',
       '',
-      'Progress: [█████░░░░░] 50% (1/2 plans done)',
+      'Progress: [██░░░░░░░░] 20% (1/2 plans done)',
       '',
       '## Accumulated Context',
       '',
@@ -4266,7 +4270,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
     assert.ok(pos, 'Current Position section should exist');
     assert.match(
       pos[1],
-      new RegExp(`^Progress: \\[${'░'.repeat(10)}\\] ${out.percent}% \\(1/2 plans done\\)$`, 'm'),
+      new RegExp(`^Progress: \\[█████░░░░░\\] ${out.percent}% \\(1/2 plans done\\)$`, 'm'),
       'the real plain line takes the machine-segment rewrite with its suffix intact',
     );
     const fm = frontmatterLib.extractFrontmatter(content);
@@ -4289,7 +4293,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
       '',
       '## Current Position',
       '',
-      '**Progress:** [█████░░░░░] 50% (2/4 plans done; blocked on API keys)',
+      '**Progress:** [██░░░░░░░░] 20% (2/4 plans done; blocked on API keys)',
       '',
     ].join('\n'));
     seedOnePhaseTwoPlans();
@@ -4310,7 +4314,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
     assert.ok(pos, 'Current Position section should exist');
     assert.match(
       pos[1],
-      new RegExp(`^\\*\\*Progress:\\*\\* \\[${'░'.repeat(10)}\\] ${out.percent}% \\(2/4 plans done; blocked on API keys\\)$`, 'm'),
+      new RegExp(`^\\*\\*Progress:\\*\\* \\[█████░░░░░\\] ${out.percent}% \\(2/4 plans done; blocked on API keys\\)$`, 'm'),
       'the real line-start bold line takes the machine-segment rewrite with its suffix intact',
     );
   });
@@ -4352,7 +4356,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
       '',
       freeText,
       '',
-      '**Progress:** [█████░░░░░] 50%',
+      '**Progress:** [██░░░░░░░░] 20%',
       '',
       '## Accumulated Context',
       '',
@@ -4379,7 +4383,7 @@ describe('#4243 follow-up: update-progress leaves prose **Progress:** lookalikes
     const beforeFirstSection = lines.slice(0, firstSectionIdx === -1 ? lines.length : firstSectionIdx).join('\n');
     assert.match(
       beforeFirstSection,
-      new RegExp(`^\\*\\*Progress:\\*\\* \\[${'░'.repeat(10)}\\] ${out.percent}%$`, 'm'),
+      new RegExp(`^\\*\\*Progress:\\*\\* \\[█████░░░░░\\] ${out.percent}%$`, 'm'),
       'the line-start bold status line is the one rewritten',
     );
   });
