@@ -10861,7 +10861,11 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
       try {
         fs.mkdirSync(path.dirname(resolved.fullPath), { recursive: true });
         fs.writeFileSync(resolved.fullPath, bytes);
-      } catch (_) { /* best-effort restore — surface the original error */ }
+      } catch (err) {
+        // Best-effort: a partial restore leaves a mixed pre/post-install tree
+        // with no other operator-facing signal, so surface it here.
+        console.warn(`  ${yellow}!${reset} Could not restore ${resolved.relPath} during rollback (${err.message})`);
+      }
     }
     const postManifestPath = path.join(targetDir, MANIFEST_NAME);
     let postManifest = null;
@@ -13256,7 +13260,7 @@ function assertConfiguredEntrypoints(entries) {
   // one so a broken entry is reported once, not once per duplicate.
   const seen = new Set();
   const deduped = (entries || []).filter((entry) => {
-    const key = `${entry.configPath} ${entry.scriptPath}`;
+    const key = JSON.stringify([entry.configPath, entry.scriptPath]);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
