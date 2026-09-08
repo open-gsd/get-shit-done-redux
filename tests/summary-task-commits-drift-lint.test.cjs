@@ -485,7 +485,10 @@ describe('#3926 — SUMMARY task-commits drift lint', () => {
     const seen = new Set();
     let chain = '';
     (function expand(name, depth) {
-      if (depth > 8 || !scripts[name] || seen.has(name)) return;
+      // Own-property lookup: a bare `scripts[name]` resolves prototype keys
+      // (`constructor`, `toString`) to truthy values, and an `npm run` token
+      // that happened to spell one would be walked as a script.
+      if (depth > 8 || !Object.prototype.hasOwnProperty.call(scripts, name) || seen.has(name)) return;
       seen.add(name);
       chain += ` ${scripts[name]}`;
       for (const m of scripts[name].matchAll(/npm run ([A-Za-z0-9:_-]+)/g)) {
