@@ -2012,9 +2012,20 @@ function frontmatterScalar(key: string, value: string): string {
     : `${key} ${value}`;
 }
 
+function stripCopilotRuntimeNotes(content: string): string {
+  return content.replace(/<runtime_note>([\s\S]*?)<\/runtime_note>/g, (whole, inner: string) => {
+    const remaining = inner.replace(
+      /(?:^|\n)[ \t]*\*\*Copilot \(VS Code\):\*\*[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*/g,
+      '',
+    );
+    const body = remaining.trim();
+    return body ? `<runtime_note>\n${body}\n</runtime_note>` : '';
+  });
+}
+
 function convertClaudeToOpencodeFrontmatter(content, { isAgent = false, modelOverride = null, variant = null } = {}) {
   // Replace tool name references in content (applies to all files)
-  let convertedContent = content;
+  let convertedContent = stripCopilotRuntimeNotes(content);
   convertedContent = convertedContent.replace(/\bAskUserQuestion\b/g, 'question');
   convertedContent = convertedContent.replace(/\bSlashCommand\b/g, 'skill');
   convertedContent = convertedContent.replace(/\bTodoWrite\b/g, 'todowrite');

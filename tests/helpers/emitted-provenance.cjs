@@ -182,6 +182,14 @@ const ZCODE_BODY_TRANSFORM_SRCS = [
   'bin/install.js',
 ];
 
+// #4482: OpenCode commands and their command-derived skills both pass through
+// converters owned by runtime-artifact-conversion.cts. A scoped converter edit
+// can therefore move these emitted bytes without changing commands/gsd/*.md.
+// Keep this runtime-specific: other flat runtimes do not share this transform.
+const OPENCODE_COMMAND_TRANSFORM_SRCS = [
+  'src/runtime-artifact-conversion.cts',
+];
+
 /**
  * A `sources` entry ending in `/` is a PREFIX, not a file: it means "any repo path
  * under this directory legitimately explains this emitted path". Used where an
@@ -525,6 +533,7 @@ const PROVENANCE_RULES = [
     // ZCODE_BODY_TRANSFORM_SRCS), so the converter change explains theirs too.
     transforms: (_m, ctx) => {
       if (ctx.runtime === 'antigravity') return ANTIGRAVITY_SKILL_TRANSFORM_SRCS;
+      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
       if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
       return [];
     },
@@ -540,7 +549,11 @@ const PROVENANCE_RULES = [
     sources: (m) => [`${COMMANDS_SRC}/${stripSkillPrefix(m[2])}.md`],
     // #4002: zcode's nested router children pass through the same rewrite pass
     // as its flat skills — see ZCODE_BODY_TRANSFORM_SRCS.
-    transforms: (_m, ctx) => (ctx.runtime === 'zcode' ? ZCODE_BODY_TRANSFORM_SRCS : []),
+    transforms: (_m, ctx) => {
+      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
+      if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
+      return [];
+    },
   },
   {
     id: 'flat-commands-from-commands',
@@ -548,9 +561,14 @@ const PROVENANCE_RULES = [
     roots: ['commands', 'command'],
     pattern: /^gsd-([^/]+)\.md$/,
     sources: (m) => [`${COMMANDS_SRC}/${m[1]}.md`],
+    // #4482: OpenCode command bodies pass through its command converter.
     // #4002: zcode command bodies pass through _applyRuntimeRewrites with
     // converter: null — see ZCODE_BODY_TRANSFORM_SRCS above.
-    transforms: (_m, ctx) => (ctx.runtime === 'zcode' ? ZCODE_BODY_TRANSFORM_SRCS : []),
+    transforms: (_m, ctx) => {
+      if (ctx.runtime === 'opencode') return OPENCODE_COMMAND_TRANSFORM_SRCS;
+      if (ctx.runtime === 'zcode') return ZCODE_BODY_TRANSFORM_SRCS;
+      return [];
+    },
   },
 
   // ── Descriptor-declared native plugin / extension ─────────────────────────
@@ -920,6 +938,7 @@ module.exports = {
   SKILLS_ROOTS,
   KIMI_ROOT_AGENT_SRC,
   AGENT_TRANSFORM_SRCS,
+  OPENCODE_COMMAND_TRANSFORM_SRCS,
   SOURCE_PREFIX_SUFFIX,
   HOOKS_ROOTS,
   COMMANDS_SRC,

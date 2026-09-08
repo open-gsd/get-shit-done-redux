@@ -42,6 +42,7 @@ const {
   HOOKS_WINDOWS_SHIM_SRC,
   KIMI_ROOT_AGENT_SRC,
   AGENT_TRANSFORM_SRCS,
+  OPENCODE_COMMAND_TRANSFORM_SRCS,
   stripSkillPrefix,
   matchRules,
   attributeEmittedPath,
@@ -357,6 +358,19 @@ test('agents-verbatim is reclassified to derived with the same transforms, sourc
   assert.equal(got.kind, 'derived', 'no runtime emits a byte-identical copy — see #2757 design doc');
   assert.deepEqual(got.sources, ['agents/gsd-planner.md'], 'sources must be unchanged by the reclassification');
   assert.deepEqual(got.transforms, AGENT_TRANSFORM_SRCS);
+});
+
+test('#4482 OpenCode command and skill surfaces declare their converter transform', () => {
+  const command = attributeEmittedPath('commands/gsd-plan-phase.md', 'opencode');
+  const skill = attributeEmittedPath('skills/gsd-plan-phase/SKILL.md', 'opencode');
+  assert.deepEqual(command.transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
+  assert.deepEqual(skill.transforms, OPENCODE_COMMAND_TRANSFORM_SRCS);
+
+  assert.deepEqual(
+    attributeEmittedPath('commands/gsd-plan-phase.md', 'kilo').transforms,
+    [],
+    'the transform attribution must remain scoped to OpenCode',
+  );
 });
 
 test('a rule with no transforms field still returns an empty array, never undefined', () => {

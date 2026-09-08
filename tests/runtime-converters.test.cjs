@@ -73,6 +73,45 @@ const flatRuntimeSuites = [
   },
 ];
 
+describe('#4482: OpenCode conversion strips Copilot-only runtime notes', () => {
+  const convert = (body) => liveConversion.convertClaudeToOpencodeFrontmatter(
+    ['---', 'name: gsd-test', 'description: test', '---', body].join('\n'),
+  );
+
+  test('removes a Copilot-only note without leaving an empty wrapper', () => {
+    const out = convert([
+      '<runtime_note>',
+      '**Copilot (VS Code):** Use `vscode_askquestions` wherever this workflow calls `AskUserQuestion`.',
+      '</runtime_note>',
+      '',
+      '<objective>Keep me.</objective>',
+    ].join('\n'));
+
+    assert.ok(!out.includes('vscode_askquestions'));
+    assert.ok(!out.includes('<runtime_note>'));
+    assert.ok(out.includes('<objective>Keep me.</objective>'));
+  });
+
+  test('preserves runtime-neutral fallback text in a mixed note', () => {
+    const out = convert([
+      '<runtime_note>',
+      '**Copilot (VS Code):** Use `vscode_askquestions` instead of `AskUserQuestion`.',
+      '',
+      '**TEXT_MODE fallback:** Present a numbered list when interactive tools are unavailable.',
+      '</runtime_note>',
+    ].join('\n'));
+
+    assert.ok(!out.includes('vscode_askquestions'));
+    assert.match(out, /<runtime_note>\n\*\*TEXT_MODE fallback:\*\*/);
+    assert.ok(out.includes('</runtime_note>'));
+  });
+
+  test('leaves unrelated runtime notes intact', () => {
+    const note = '<runtime_note>\n**OpenCode:** Keep this runtime-specific guidance.\n</runtime_note>';
+    assert.ok(convert(note).includes(note));
+  });
+});
+
 for (const { label, convert, configDir } of flatRuntimeSuites) {
   describe(`${label} agent conversion (isAgent: true)`, () => {
     test('keeps name: field for agents', () => {
