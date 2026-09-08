@@ -34,6 +34,10 @@ _GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-pars
 GSD_WS=""
 echo "$ARGUMENTS" | grep -qE -- '--ws[[:space:]]+[A-Za-z0-9._-]+' && GSD_WS=$(echo "$ARGUMENTS" | grep -oE -- '--ws[[:space:]]+[A-Za-z0-9._-]+')
 MILESTONE_ARG=$(echo "$ARGUMENTS" | sed -E 's/--ws[[:space:]]+[A-Za-z0-9._-]+//g' | xargs)
+# #4456: persist GSD_WS to a file so later steps' bash fences (each a
+# separate shell) can forward it — the same cross-fence problem Step 5/6
+# already solve for OUTGOING_MILESTONE via .gsd-outgoing-milestone.
+printf '%s' "$GSD_WS" > .planning/.gsd-ws-arg
 RESPONSE_LANGUAGE=$(gsd_run query config-get response_language --raw --default "" 2>/dev/null || echo "")
 # #2994: EARLY, section-manifest-only init.new-milestone call — needed here
 # (before Step 4) to gate the project-md-milestone-write section. This is
@@ -44,7 +48,11 @@ RESPONSE_LANGUAGE=$(gsd_run query config-get response_language --raw --default "
 # fields too early and corrupt the roadmapper's phase-numbering context.
 # init.new-milestone is a pure read (no mutation), so calling it twice is
 # safe; only `section_manifest` is consumed from this early call.
-INIT_EARLY=$(gsd_run query init.new-milestone)
+# #4456: $GSD_WS forwarded (same fence as the parse above, no round-trip
+# needed here) so the section manifest — and the shared PROJECT.md write
+# guard it gates — reflects the EXPLICITLY requested workstream, not
+# whatever ambient GSD_WORKSTREAM/session pointer happens to be active.
+INIT_EARLY=$(gsd_run query init.new-milestone $GSD_WS)
 if [[ "$INIT_EARLY" == @file:* ]]; then INIT_EARLY=$(cat "${INIT_EARLY#@file:}"); fi
 ```
 
@@ -195,10 +203,11 @@ blockers, todos) is preserved across the switch — symmetric with
 `milestone.complete`.
 
 ```bash
-OUTGOING_MILESTONE=$(gsd_run query state.get milestone --raw 2>/dev/null || true)
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+OUTGOING_MILESTONE=$(gsd_run query state.get milestone --raw $GSD_WS_ARG 2>/dev/null || true)
 printf '%s' "$OUTGOING_MILESTONE" > .planning/.gsd-outgoing-milestone 2>/dev/null || true
 echo "Outgoing milestone (phase history archives under THIS version in step 6): ${OUTGOING_MILESTONE:-<unknown>}"
-gsd_run query state.milestone-switch --milestone "v[X.Y]" --name "[Name]"
+gsd_run query state.milestone-switch --milestone "v[X.Y]" --name "[Name]" $GSD_WS_ARG
 ```
 
 **Capture the outgoing version now.** The lines above read the *current* (previous) milestone
@@ -239,11 +248,12 @@ the captured value into the command, so untrusted STATE.md content cannot be re-
 shell:
 
 ```bash
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
 OUTGOING_MILESTONE=$(cat .planning/.gsd-outgoing-milestone 2>/dev/null || true)
 if [ -n "$OUTGOING_MILESTONE" ]; then
-  gsd_run query phases.clear --confirm --archive-version "$OUTGOING_MILESTONE"
+  gsd_run query phases.clear --confirm --archive-version "$OUTGOING_MILESTONE" $GSD_WS_ARG
 else
-  gsd_run query phases.clear --confirm
+  gsd_run query phases.clear --confirm $GSD_WS_ARG
 fi
 rm -f .planning/.gsd-outgoing-milestone 2>/dev/null || true
 ```
@@ -258,31 +268,48 @@ Stage the phase archive move + source removal so they land in the same commit as
 
 ```bash
 COMMIT_DOCS=$(gsd_run query config-get commit_docs --raw 2>/dev/null || echo "true")
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+INIT_STAGE=$(gsd_run query init.new-milestone $GSD_WS_ARG)
+if [[ "$INIT_STAGE" == @file:* ]]; then INIT_STAGE=$(cat "${INIT_STAGE#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+ARCHIVE_DIR=$(_gsd_field "$INIT_STAGE" archive_dir)
+PHASES_DIR=$(_gsd_field "$INIT_STAGE" phases_dir)
 if [ "$COMMIT_DOCS" != "false" ]; then
-  git add .planning/milestones/ .planning/phases/ 2>/dev/null || true
+  git add "$ARCHIVE_DIR/" "$PHASES_DIR/" 2>/dev/null || true
 fi
 ```
 
 When `commit_docs` is false, the archive move and phase removals are deliberately left unstaged here — not a bug — since Step 6's commit is skipped too.
 
-Stage PROJECT.md in both modes. Step 4's Part A guard — not this commit — is what protects the shared `## Current Milestone` heading (#2308): when a workstream is active Part A never writes it, so the only change PROJECT.md can carry here is Part B's idempotent `## Evolution` backfill, which must be committed rather than stranded as a dangling edit. Do NOT reintroduce a `[ -n "$GSD_WS" ]` branch around this commit: `GSD_WS` is set in Step 1's shell and each step's bash block runs in its own shell (the same reason Step 5 round-trips `OUTGOING_MILESTONE` through a file), so such a guard reads an unset variable, always takes the flat-mode branch, and only appears to work.
+Stage PROJECT.md in both modes. Step 4's Part A guard — not this commit — is what protects the shared `## Current Milestone` heading (#2308): when a workstream is active Part A never writes it, so the only change PROJECT.md can carry here is Part B's idempotent `## Evolution` backfill, which must be committed rather than stranded as a dangling edit. Do NOT reintroduce a `[ -n "$GSD_WS" ]` branch around this commit: `GSD_WS` is set in Step 1's shell and each step's bash block runs in its own shell (the same reason Step 5 round-trips `OUTGOING_MILESTONE` through a file), so such a guard reads an unset variable, always takes the flat-mode branch, and only appears to work. STATE.md, unlike PROJECT.md, IS workstream-scoped (Step 5's switch just wrote the workstream's own copy) — resolved below via `init.new-milestone` rather than a literal `.planning/STATE.md`, which would commit the wrong (or a stale, unrelated) file under an active workstream.
 
 ```bash
-gsd_run query commit "docs: start milestone v[X.Y] [Name]" --files .planning/PROJECT.md .planning/STATE.md
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+INIT_COMMIT=$(gsd_run query init.new-milestone $GSD_WS_ARG)
+if [[ "$INIT_COMMIT" == @file:* ]]; then INIT_COMMIT=$(cat "${INIT_COMMIT#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+STATE_PATH=$(_gsd_field "$INIT_COMMIT" state_path)
+PROJECT_PATH=$(_gsd_field "$INIT_COMMIT" project_path)
+gsd_run query commit "docs: start milestone v[X.Y] [Name]" --files "$PROJECT_PATH" "$STATE_PATH"
 ```
 
 ## 7. Load Context and Resolve Models
 
 ```bash
 RESET_PHASE_NUMBERS_PARAM=""; if [[ "$ARGUMENTS" =~ (^|[[:space:]])--reset-phase-numbers([[:space:]]|$) ]]; then RESET_PHASE_NUMBERS_PARAM="--reset-phase-numbers"; fi
-INIT=$(gsd_run query init.new-milestone $RESET_PHASE_NUMBERS_PARAM)
+GSD_WS_ARG=$(cat .planning/.gsd-ws-arg 2>/dev/null || true)
+INIT=$(gsd_run query init.new-milestone $RESET_PHASE_NUMBERS_PARAM $GSD_WS_ARG)
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 AGENT_SKILLS_RESEARCHER=$(gsd_run query agent-skills gsd-project-researcher)
 AGENT_SKILLS_SYNTHESIZER=$(gsd_run query agent-skills gsd-research-synthesizer)
 AGENT_SKILLS_ROADMAPPER=$(gsd_run query agent-skills gsd-roadmapper)
+# #4456: last consumer of the persisted --ws in this workflow — clean up
+# the round-trip file, mirroring .gsd-outgoing-milestone's own cleanup in
+# Step 6.
+rm -f .planning/.gsd-ws-arg 2>/dev/null || true
 ```
 
-Extract from init JSON: `researcher_model`, `synthesizer_model`, `roadmapper_model`, `commit_docs`, `research_enabled`, `current_milestone`, `project_exists`, `roadmap_exists`, `latest_completed_milestone`, `phase_dir_count`, `phase_archive_path`, `agents_installed`, `missing_agents`, `project_path`, `roadmap_path`, `requirements_path`, `config_path`, `research_dir`, `milestones_path`.
+Extract from init JSON: `researcher_model`, `synthesizer_model`, `roadmapper_model`, `commit_docs`, `research_enabled`, `current_milestone`, `project_exists`, `roadmap_exists`, `latest_completed_milestone`, `phase_dir_count`, `phase_archive_path`, `agents_installed`, `missing_agents`, `project_path`, `roadmap_path`, `requirements_path`, `config_path`, `research_dir`, `milestones_path`, `phases_dir`, `archive_dir`.
 
 **If `agents_installed` is false:** Display a warning before proceeding:
 ```
