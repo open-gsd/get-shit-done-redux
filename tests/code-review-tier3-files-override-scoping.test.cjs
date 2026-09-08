@@ -139,7 +139,12 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
     '{',
     tier1,
     // Diagnostic-only: what Tier 1 actually decided, before Tier 3 runs.
-    'echo "[diag] REPO_ROOT=$REPO_ROOT"',
+    // REPO_ROOT is only ever set inside Tier 1's own `if [ -n
+    // "$FILES_OVERRIDE" ]` body, so it is legitimately unset here whenever
+    // FILES_OVERRIDE is empty (the "without --files" case) -- default-expand
+    // it rather than referencing it bare, or `set -u` above kills the whole
+    // script with an unbound-variable exit before Tier 3 ever runs.
+    'echo "[diag] REPO_ROOT=${REPO_ROOT:-<unset, FILES_OVERRIDE empty>}"',
     'for f in "${REVIEW_FILES[@]:-}"; do echo "[diag] REVIEW_FILES(post-tier1)+=$f"; done',
     // Tier 1 unconditionally resets REVIEW_FILES=() when FILES_OVERRIDE is
     // set; the seed only matters (and only applies) when it is not, exactly
@@ -169,9 +174,14 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
       `bash exited ${result.status} (signal ${result.signal})\ndiagnostics:\n${result.stderr || '(none)'}`,
     );
   }
+  // Returned as a plain object, not a decorated array: assert.deepEqual on an
+  // array compares its own properties too, so an extra property attached
+  // directly to the array (tried in an earlier revision of this fix) makes
+  // `["src/alpha.js"]` fail deepEqual against a same-valued plain array
+  // literal purely because of the decoration -- a self-inflicted false
+  // failure, not a Tier 1/3 behavior change.
   const files = result.stdout.split('\n').map((l) => l.trim()).filter(Boolean).sort();
-  files.__diagnostics = result.stderr;
-  return files;
+  return { files, diagnostics: result.stderr };
 }
 
 describe('#4460: code-review.md Tier 3 does not widen an explicit --files override', () => {
@@ -204,11 +214,11 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
     const tmpDir = fs.realpathSync.native(createTempDir('gsd-4460-'));
     try {
       buildFixture(tmpDir);
-      const files = runTiers(tmpDir, { filesOverride: 'src/alpha.js' });
+      const { files, diagnostics } = runTiers(tmpDir, { filesOverride: 'src/alpha.js' });
       assert.deepEqual(
         files,
         ['src/alpha.js'],
-        `--files override must not be widened by Tier 3's cross-check, got: ${JSON.stringify(files)}\ndiagnostics:\n${files.__diagnostics || '(none)'}`,
+        `--files override must not be widened by Tier 3's cross-check, got: ${JSON.stringify(files)}\ndiagnostics:\n${diagnostics || '(none)'}`,
       );
     } finally {
       cleanup(tmpDir);
@@ -222,11 +232,11 @@ describe('#4460: code-review.md Tier 3 does not widen an explicit --files overri
       // seedReviewFiles stands in for Tier 2's real output (["src/alpha.js"],
       // the file the fixture's SUMMARY lists) — see the module docblock for
       // why Tier 2's own fence isn't sourced here.
-      const files = runTiers(tmpDir, { filesOverride: '', seedReviewFiles: ['src/alpha.js'] });
+      const { files, diagnostics } = runTiers(tmpDir, { filesOverride: '', seedReviewFiles: ['src/alpha.js'] });
       assert.deepEqual(
         files,
         ['src/alpha.js', 'src/beta.js', 'src/delta.js', 'src/epsilon.js', 'src/gamma.js'],
-        `without --files, the cross-check must still widen a partial scope, got: ${JSON.stringify(files)}\ndiagnostics:\n${files.__diagnostics || '(none)'}`,
+        `without --files, the cross-check must still widen a partial scope, got: ${JSON.stringify(files)}\ndiagnostics:\n${diagnostics || '(none)'}`,
       );
     } finally {
       cleanup(tmpDir);
