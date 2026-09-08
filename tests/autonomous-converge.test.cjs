@@ -270,7 +270,19 @@ describe('autonomous verification deferral contract', () => {
     );
     assert.match(discoverStep, /phase_complete !== true/);
     assert.match(discoverStep, /verification_status !== "passed"/);
-    assert.match(discoverStep, /STATE_CONTENT=\$\(cat \.planning\/STATE\.md 2>\/dev\/null \|\| true\)/);
+    // #4455: STATE.md is read through the workstream-resolved path from
+    // init.manager (state_path), not a hardcoded .planning/STATE.md literal —
+    // a GSD_WORKSTREAM run must read its own workstream's STATE.md.
+    assert.ok(
+      discoverStep.includes('STATE_PATH=$(_gsd_field "$INIT_MANAGER" state_path)'),
+      'autonomous discovery must resolve STATE.md through init.manager, not a hardcoded path',
+    );
+    assert.match(discoverStep, /STATE_CONTENT=\$\(cat "\$STATE_PATH" 2>\/dev\/null \|\| true\)/);
+    assert.doesNotMatch(
+      discoverStep,
+      /STATE_CONTENT=\$\(cat \.planning\/STATE\.md 2>\/dev\/null \|\| true\)/,
+      'autonomous discovery must not regress to a hardcoded root .planning/STATE.md read (#4455)',
+    );
     assert.match(discoverStep, /drop any phase whose number appears in the deferred-phase map/);
     assert.doesNotMatch(discoverStep, /ROADMAP=\$\(gsd_run query roadmap\.analyze\)/);
     assert.doesNotMatch(discoverStep, /disk_status !== "complete"/);
@@ -282,7 +294,16 @@ describe('autonomous verification deferral contract', () => {
     );
     assert.match(iterateStep, /phase_complete !== true/);
     assert.match(iterateStep, /verification_status !== "passed"/);
-    assert.match(iterateStep, /STATE_CONTENT=\$\(cat \.planning\/STATE\.md 2>\/dev\/null \|\| true\)/);
+    assert.ok(
+      iterateStep.includes('STATE_PATH=$(_gsd_field "$INIT_MANAGER" state_path)'),
+      'autonomous iteration must resolve STATE.md through init.manager, not a hardcoded path',
+    );
+    assert.match(iterateStep, /STATE_CONTENT=\$\(cat "\$STATE_PATH" 2>\/dev\/null \|\| true\)/);
+    assert.doesNotMatch(
+      iterateStep,
+      /STATE_CONTENT=\$\(cat \.planning\/STATE\.md 2>\/dev\/null \|\| true\)/,
+      'autonomous iteration must not regress to a hardcoded root .planning/STATE.md read (#4455)',
+    );
     assert.match(iterateStep, /drop deferred phases from the autonomous queue/);
   });
 });

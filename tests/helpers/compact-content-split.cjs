@@ -113,12 +113,31 @@ function discoverRegisteredSplits(workflowsDir = DEFAULT_WORKFLOWS_DIR) {
  * Ported verbatim from the pilot's `tests/plan-phase-compact-split.test.cjs`,
  * which this module supersedes as Phase 3's generalized version of the same
  * check.
+ *
+ * Bare shell block-closer/reopener keywords (#4405) are the same class of
+ * problem in a bash-heavy workflow like execute-phase.md: a lone `fi` or
+ * `done` line carries no content of its own — it is pure block-structure
+ * syntax that recurs once per `if`/`for`/`while` anywhere in the file. A
+ * split that extracts even one `if...fi` block will otherwise always collide
+ * with some unrelated `if...fi` block left in the spine, exactly the
+ * structure-not-content false positive this function exists to suppress.
+ *
+ * A bare XML-ish tag line (#4405) — `<step name="x">`, `</doc_assignment>`,
+ * `<verify_assignment>` — is the markup equivalent of the same problem: every
+ * workflow in this corpus repeats these tags once per step/template block, so
+ * any split that extracts even one such block collides with an unrelated one
+ * left in the spine. The tag NAME and attributes carry structure, never prose
+ * content, so treating the whole line as trivial is the same judgment call
+ * `isKnownSanctionedBoilerplate` already makes for the shared launcher line —
+ * generalized here since it recurs for any tag, not one specific string.
  */
 function isTrivial(line) {
   if (/^`{3,}/.test(line)) return true;
   if (/^-{3,}$/.test(line)) return true;
   if (/^#+\s*$/.test(line)) return true;
   if (/^[A-Za-z][A-Za-z ]*:$/.test(line)) return true; // bare label lines like "Options:"
+  if (/^(fi|done|esac|else|then|do|\{|\})\s*;?\s*$/.test(line)) return true; // bare shell block syntax
+  if (/^<\/?[A-Za-z][\w-]*(\s+[^<>]*)?>$/.test(line)) return true; // bare open/close tag, alone on its own line
   return false;
 }
 
@@ -139,11 +158,27 @@ function normalizeNonTrivialLines(content) {
 }
 
 /**
- * Is `line` the canonical `gsd_run` launcher bootstrap preamble (see
+ * Known-boilerplate line prefixes (#4405), beyond the launcher preamble below:
+ * an exact, verbatim paragraph or call-opener this codebase repeats at every
+ * agent-spawn callsite across the ENTIRE corpus, not just within one file.
+ * `execute-phase.md`, `docs-update.md`, and `new-project.md` (at minimum) each
+ * spawn multiple agents and each carries its own copy of these — the same
+ * sanctioned-duplication shape as the launcher preamble, just keyed on a set
+ * of known strings instead of one.
+ */
+const KNOWN_BOILERPLATE_PREFIXES = [
+  '> **ORCHESTRATOR RULE — CODEX RUNTIME**:',
+  'Agent(prompt="',
+];
+
+/**
+ * Is `line` one of the corpus's known sanctioned cross-file duplicates: the
+ * canonical `gsd_run` launcher bootstrap preamble (see
  * `gsd-core/workflows/_runtime-launcher.snippet.sh`,
- * `tests/runtime-launcher-parity.test.cjs`)?
+ * `tests/runtime-launcher-parity.test.cjs`), or one of the `KNOWN_BOILERPLATE_PREFIXES`
+ * above?
  *
- * That other guard's OWN contract mandates exactly one inlined copy in every
+ * The launcher preamble's own guard mandates exactly one inlined copy in every
  * workflow/detail file that calls `gsd_run` — spine and detail both call it,
  * so both legitimately carry their own copy. That is sanctioned
  * cross-file duplication, not something the disjointness check should ever
@@ -153,8 +188,9 @@ function normalizeNonTrivialLines(content) {
  * @param {string} line
  * @returns {boolean}
  */
-function isCanonicalLauncherPreamble(line) {
-  return line.startsWith('_GSD_SHIM_NAME="gsd-tools.cjs";');
+function isKnownSanctionedBoilerplate(line) {
+  if (line.startsWith('_GSD_SHIM_NAME="gsd-tools.cjs";')) return true;
+  return KNOWN_BOILERPLATE_PREFIXES.some((prefix) => line.startsWith(prefix));
 }
 
 const PROTECTED_START = '<!-- gsd:protected:start -->';
@@ -411,7 +447,7 @@ function readBoundaryMoveTrailers({ baseRef, headRef = 'HEAD', cwd = REPO_ROOT, 
  * back in after a split is made.
  *
  * The canonical `gsd_run` launcher preamble is excluded from both sides
- * before comparing (`isCanonicalLauncherPreamble`) — it is sanctioned
+ * before comparing (`isKnownSanctionedBoilerplate`) — it is sanctioned
  * cross-file duplication under a different guard's contract, not a
  * violation of this one.
  *
@@ -430,14 +466,14 @@ function checkDisjointness(splits) {
 
   for (const split of splits) {
     const spineLines = normalizeNonTrivialLines(fs.readFileSync(split.spinePath, 'utf8'))
-      .filter((l) => !isCanonicalLauncherPreamble(l));
+      .filter((l) => !isKnownSanctionedBoilerplate(l));
     const spineSet = new Set(spineLines);
 
     let reported = 0;
     for (const detailPath of split.detailPaths) {
       if (reported >= PER_SPLIT_CAP) break;
       const detailLines = normalizeNonTrivialLines(fs.readFileSync(detailPath, 'utf8'))
-        .filter((l) => !isCanonicalLauncherPreamble(l));
+        .filter((l) => !isKnownSanctionedBoilerplate(l));
       for (const line of detailLines) {
         if (reported >= PER_SPLIT_CAP) break;
         if (spineSet.has(line)) {
@@ -544,7 +580,7 @@ module.exports = {
   DEFAULT_WORKFLOWS_DIR,
   discoverRegisteredSplits,
   normalizeNonTrivialLines,
-  isCanonicalLauncherPreamble,
+  isKnownSanctionedBoilerplate,
   extractProtectedBlocks,
   ACK_TRAILER_BOUNDARY_MOVE,
   readBoundaryMoveTrailers,
