@@ -15,6 +15,7 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const { cleanup, createTempDir, runNpm, isolatedNpmEnv } = require('./helpers.cjs');
+const { ensureHooksDist } = require('./helpers/hooks-dist.cjs');
 const { SMOKE, runSmoke, entrypointFixtureHome, CHILD_TIMEOUT_MS } = require('../scripts/release-tarball-smoke.cjs');
 
 const smokeMsg = (label, result) =>
@@ -85,6 +86,11 @@ describe('release-tarball-smoke', () => {
   let fixtureDir;
 
   before(async () => {
+    // hooks/dist is gitignored and only produced by `npm run build:hooks`; the
+    // pack below must ship it or Cycle 4's entrypoint scan runs against a
+    // tarball with no hook scripts at all (SMOKE.INIT_FAILED on a clean tree).
+    ensureHooksDist();
+
     // Pack once into a temp dir.
     packDir = createTempDir('gsd-smoke-pack-');
     installPrefix = createTempDir('gsd-smoke-prefix-');
