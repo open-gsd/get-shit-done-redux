@@ -1445,6 +1445,43 @@ describe('#4142: opts.convention threads through findStaleVerificationSummary', 
   });
 });
 
+// ─── #4142: phase complete must use the convention-aware verdict ───────────
+//
+// cmdPhaseComplete has an advisory VERIFICATION pre-scan and a separate
+// readVerificationStatus completion gate. Exercise the real CLI verdict so a
+// cross-phase report cannot satisfy the gate merely by sitting in the bracket
+// phase's directory.
+describe('#4142: phase complete verdict scopes bracket verification reports', () => {
+  const { runGsdTools } = require('./helpers.cjs');
+
+  test('a passed cross-phase stray cannot complete a bracket phase', (t) => {
+    const projectDir = createTempGitProject('gsd-4142-phase-complete-');
+    t.after(() => cleanup(projectDir));
+
+    fs.writeFileSync(
+      path.join(projectDir, '.planning', 'config.json'),
+      JSON.stringify({ phase_id_convention: 'bracket' }, null, 2),
+    );
+    const phaseDirName = 'GSD.02-03-three';
+    const phaseDir = path.join(projectDir, '.planning', 'phases', phaseDirName);
+    fs.mkdirSync(phaseDir, { recursive: true });
+    writeVerificationMd(phaseDir, '01-VERIFICATION.md', 'passed');
+
+    const result = runGsdTools(
+      ['--json-errors', 'phase', 'complete', phaseDirName],
+      projectDir,
+    );
+
+    assert.equal(
+      result.success,
+      false,
+      'phase complete must reject another phase\'s passed verification report',
+    );
+    const errorPayload = JSON.parse(result.error);
+    assert.equal(errorPayload.reason, 'phase_verification_incomplete');
+  });
+});
+
 // ─── #4187 CLI parity: the two query verbs must agree on the same directory ───
 //
 // The issue's repro shape: run `query verification.resolve-file` and
