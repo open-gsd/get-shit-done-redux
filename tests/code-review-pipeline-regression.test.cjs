@@ -130,7 +130,11 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
     const dir = createTempDir('gsd-4461-adversarial-');
     try {
       const sentinel = path.join(dir, 'MUST-NOT-EXIST');
-      const summary = path.join(dir, 'SUMMARY $(not-a-command) "quoted".md');
+      // Double quotes are not legal in Windows filenames. Keep the path
+      // adversarial with shell syntax, whitespace, and a quote that is valid
+      // on every supported filesystem; the SUMMARY payload below exercises
+      // a literal double quote independently.
+      const summary = path.join(dir, "SUMMARY $(not-a-command) 'quoted'.md");
       // Git Bash launches the native Windows Node binary in CI. Forward-slash
       // absolute paths survive that argv boundary on both platforms, while a
       // raw drive path's backslashes are MSYS quoting syntax rather than data.
@@ -138,6 +142,7 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
       const shellSummary = summary.replace(/\\/g, '/');
       const dollarPath = `src/$(touch ${shellSentinel}).js`;
       const backtickPath = `src/\`touch ${shellSentinel}\`.js`;
+      const quotePath = 'src/"quoted".js';
       fs.writeFileSync(summary, [
         '---',
         'key-files:',
@@ -145,6 +150,7 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
         `    - ${dollarPath}`,
         '  modified:',
         `    - ${backtickPath}`,
+        `    - ${quotePath}`,
         '---',
         '',
       ].join('\n'));
@@ -156,7 +162,7 @@ describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
         timeoutMs: PROBE_TIMEOUT_MS,
       }));
       assert.equal(result.status, 0, result.stderr);
-      assert.deepStrictEqual(result.stdout.trim().split('\n'), [dollarPath, backtickPath]);
+      assert.deepStrictEqual(result.stdout.trim().split('\n'), [dollarPath, backtickPath, quotePath]);
       assert.ok(!fs.existsSync(sentinel), 'SUMMARY payload must never execute command substitutions');
     } finally {
       cleanup(dir);
