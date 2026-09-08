@@ -1236,6 +1236,77 @@ describe('init subcommands sharing the project_exists/project_path PROJECT.md pa
   });
 });
 
+// #4458: init new-project's sub_repos_detected field reuses core-utils.cts's
+// detectSubRepos instead of new-project.md's own (now-removed) narrower `find
+// -exec test -d "{}/.git"` predicate, which required .git to be a DIRECTORY and
+// so silently excluded linked git worktree children (.git is a FILE there).
+describe('init new-project: sub_repos_detected (#4458)', () => {
+  const { execFileSync } = require('child_process');
+  const { createTempGitProject } = require('./helpers.cjs');
+  const { GIT_FIXTURE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+  let tmpDir;
+
+  afterEach(() => {
+    if (tmpDir) { cleanup(tmpDir); tmpDir = null; }
+  });
+
+  test('detects a REAL linked git worktree child, matching the issue #4458 repro exactly', () => {
+    // `git worktree add` genuinely needs a real git repo -- this is the only
+    // one of these three tests that does (createTempGitProject spawns
+    // `git init` + a commit, real subprocess overhead on Windows CI's
+    // Defender-scanned spawns; the other two tests below use the plain,
+    // no-git createTempProject fixture instead, matching the pattern
+    // already proven safe by the SUBCOMMANDS loop above running `init
+    // new-project` against a non-git tmpDir).
+    tmpDir = fs.realpathSync(createTempGitProject());
+    const worktreeDir = path.join(tmpDir, 'child-wt');
+    // `git worktree add` checks out files into a new working tree — the same
+    // "construction" weight class as init/config/add/commit, not plain
+    // plumbing (rev-parse/branch/log), so GIT_FIXTURE_TIMEOUT_MS is the
+    // correct shared norm here (tests/helpers/timeouts.cjs).
+    execFileSync('git', ['worktree', 'add', '-b', 'wt-branch', worktreeDir], { cwd: tmpDir, stdio: 'pipe', timeout: GIT_FIXTURE_TIMEOUT_MS });
+
+    // Confirm the fixture actually reproduces the reported shape before
+    // trusting the assertion below: a linked worktree's .git is a FILE.
+    assert.ok(fs.statSync(path.join(worktreeDir, '.git')).isFile(),
+      'fixture setup: linked worktree .git must be a file, not a directory');
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(Array.isArray(output.sub_repos_detected), 'sub_repos_detected must be an array');
+    assert.ok(output.sub_repos_detected.includes('child-wt'),
+      `sub_repos_detected must include the linked worktree child, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('detects an ordinary child clone (.git as a directory) — no regression', () => {
+    // detectSubRepos only inspects the CHILD directory's .git, not the
+    // root's own git state -- a real outer repo isn't needed here, matching
+    // the SUBCOMMANDS loop above.
+    tmpDir = fs.realpathSync(createTempProject());
+    const cloneDir = path.join(tmpDir, 'child-clone');
+    fs.mkdirSync(path.join(cloneDir, '.git'), { recursive: true });
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(output.sub_repos_detected.includes('child-clone'),
+      `sub_repos_detected must include the ordinary child clone, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+
+  test('does not report an ordinary non-repository directory as a sub-repo', () => {
+    tmpDir = fs.realpathSync(createTempProject());
+    fs.mkdirSync(path.join(tmpDir, 'not-a-repo'));
+
+    const result = runGsdTools('init new-project', tmpDir);
+    assert.ok(result.success, `init new-project failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.ok(!output.sub_repos_detected.includes('not-a-repo'),
+      `sub_repos_detected must not include a plain non-repo directory, got: ${JSON.stringify(output.sub_repos_detected)}`);
+  });
+});
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Folded from tests/bug-3584-runtime-slash-emitters.test.cjs — consolidation epic #1969 (B2 #1971)
