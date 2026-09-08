@@ -67,7 +67,7 @@ Always use the exact name from this list — do not fall back to 'general-purpos
 
 <process>
 
-**Compact Content Gate.** Read and follow `gsd-core/references/compact-content-gate.md` now — it states the `workflow.compact_content` check and the resolution rule this spine defers to. When it directs a Read, read `gsd-core/workflows/execute-phase/detail/elaboration.md` in full before continuing past this point; its content elaborates on five steps below (safe_resume_gate, check_interactive_mode, cross_ai_delegation, checkpoint_handling, auto_copy_learnings).
+**Compact Content Gate.** Read and follow `gsd-core/references/compact-content-gate.md` now — it states the `workflow.compact_content` check and the resolution rule this spine defers to. When it directs a Read, read `gsd-core/workflows/execute-phase/detail/elaboration.md` in full before continuing past this point; its content elaborates on two steps below (check_interactive_mode, cross_ai_delegation).
 
 <step name="parse_args" priority="first">
 Parse `$ARGUMENTS` before loading any context:
@@ -184,7 +184,24 @@ TDD_MODE=$(gsd_run loop render-hooks execute:post --active-cap tdd)
 ```
 
 <step name="safe_resume_gate">
-Before trusting `STATE.md` or dispatching any executor, derive `CURRENT_PLAN_ID` from the active incomplete plan in `INIT` and check recent commit history against the phase/plan commit-scope pattern (anchored, zero-stripped, bound to the latest milestone tag — #4003). If production commits exist for the plan but its `SUMMARY.md` is missing (and no `.planning/async-jobs/*.json` manifest legally accounts for it as `external_job_waiting`), stop before spawning a new executor and offer: `close out manually`, `re-execute from scratch`, or `mark-and-skip`. Exact commands and the anchored regex: `gsd-core/workflows/execute-phase/detail/elaboration.md` § 1.
+Before trusting `STATE.md` or dispatching any executor, derive `CURRENT_PLAN_ID`
+from the active incomplete plan in `INIT`, then search recent history:
+```bash
+SUMMARY_PATH="{phase_dir}/{plan_padded}-SUMMARY.md"
+# #4003: no padding rule in the commit protocol, so zero-strip both components and
+# match ANCHORED at the commit scope; bound to the latest reachable tag (milestone marker).
+PHASE_N=$((10#{phase_number}))
+PLAN_N=$((10#{plan_padded}))
+PLAN_SCOPE_RE="^[a-z]+\((0*${PHASE_N})-(0*${PLAN_N})\):"
+MILESTONE_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+PLAN_COMMITS=$(git log --oneline -E ${MILESTONE_BASE:+"$MILESTONE_BASE..HEAD"} --grep="${PLAN_SCOPE_RE}" -30)
+```
+If production commits exist and `SUMMARY.md is missing` (no `.planning/async-jobs/*.json` manifest matches it: a match is a legal `external_job_waiting` deferral - reconcile per `docs/reference/planning-artifacts.md`, never re-dispatch), stop before spawning a
+new executor; continuing risks duplicate work and stale `STATE.md`/ROADMAP progress.
+Offer these recovery options:
+- `close out manually` — inspect commits, write SUMMARY.md, then update STATE/ROADMAP.
+- `re-execute from scratch` — revert or supersede partial commits before dispatch.
+- `mark-and-skip` — record the anomaly and move on only with explicit confirmation.
 </step>
 
 **TDD gate.** Task-scoped enforcement runs inside plan execution (immediately before each implementation step), where `TASK_FILE`, `PLAN_ID`, and `TASK_ID` are defined. #4011: the gate keys on `TDD_MODE` ALONE — a discipline gate coupled to the product-scope `MVP_MODE` flag was silently inert on every non-MVP phase, contradicting `gsd-core/references/tdd.md`'s contract that `workflow.tdd_mode` binds for all `type: tdd` plans. MVP mode remains free to imply TDD; it is no longer required by it. Keep the same predicate and RED-commit contract:
@@ -235,7 +252,7 @@ Write these answers inline before continuing. If a blocking anti-pattern cannot 
 </step>
 
 <step name="check_interactive_mode">
-**Parse `--interactive` flag from $ARGUMENTS.** If present, switch to interactive execution mode: plans run sequentially **inline** (no subagent spawning, ignoring wave grouping), reading `execute-plan.md` directly rather than dispatching `gsd-executor`. **Once per plan** (not per task), present a 4-option menu (execute / review-first / skip / stop) before starting that plan's tasks. Once executing, tasks run one at a time with only a brief pause after each — the agent stops mid-plan only if the user actually types something, it does not re-show the menu. After all plans, proceed to verification as normal. Full flow (the exact presentation format, the review-first sub-branch): `gsd-core/workflows/execute-phase/detail/elaboration.md` § 2.
+**Parse `--interactive` flag from $ARGUMENTS.** If present, switch to interactive execution mode: plans run sequentially **inline** (no subagent spawning, ignoring wave grouping), reading `execute-plan.md` directly rather than dispatching `gsd-executor`. **Once per plan** (not per task), present a 4-option menu (execute / review-first / skip / stop) before starting that plan's tasks. Once executing, tasks run one at a time with only a brief pause after each — the agent stops mid-plan only if the user actually types something, it does not re-show the menu. After all plans, proceed to verification as normal. Full flow (the exact presentation format, the review-first sub-branch): `gsd-core/workflows/execute-phase/detail/elaboration.md` § 1.
 
 **Skip to handle_branching step** (interactive plans execute inline after grouping).
 </step>
@@ -373,9 +390,9 @@ Report:
 <step name="cross_ai_delegation">
 **Optional step 2.5 — Delegate plans to an external AI runtime.** Runs after plan discovery, before wave execution. Activates when `--cross-ai` forces all incomplete plans, `--no-cross-ai` disables it entirely, or (default) a plan's `cross_ai: true` frontmatter agrees with the `workflow.cross_ai_execution` config. If no plan is marked, skip to execute_waves; if marked but `workflow.cross_ai_command` is unset, error and tell the user to set it.
 
-For each marked plan: build a self-contained prompt from the plan's `<objective>`/`<tasks>` plus PROJECT.md context, warn on a dirty working tree, then run the configured command **wrapped in `gsd_run run-with-timeout "${CROSS_AI_TIMEOUT}"` (config `workflow.cross_ai_timeout`, default 300s) — never run it unbounded** — with the prompt piped to **stdin, never shell-interpolated, to prevent injection**. On success (exit 0, non-empty SUMMARY-shaped output): write it as the plan's SUMMARY.md, update STATE/ROADMAP, mark handled. On failure: show the error, warn about possible partial edits, and offer **retry** / **skip** (falls back to the normal executor) / **abort**. Successfully handled plans are removed from execute_waves' list; skipped-to-fallback plans remain in it.
+For each marked plan: build a self-contained prompt from the plan's `<objective>`/`<tasks>` plus PROJECT.md context, warn on a dirty working tree, then run the configured command **wrapped in `gsd_run run-with-timeout "${CROSS_AI_TIMEOUT}"` (config `workflow.cross_ai_timeout`, default 300s) — never run it unbounded** — with the prompt piped to **stdin, never shell-interpolated, to prevent injection**. On success (exit 0): validate the captured SUMMARY output is non-empty and structurally valid before writing it as the plan's SUMMARY.md, update STATE/ROADMAP, mark handled. On failure (non-zero exit, or the summary fails that validation): show the error, warn about possible partial edits, and offer **retry** / **skip** (falls back to the normal executor) / **abort**. Successfully handled plans are removed from execute_waves' list; skipped-to-fallback plans remain in it.
 
-Exact bash and per-branch wording: `gsd-core/workflows/execute-phase/detail/elaboration.md` § 3.
+Exact bash and per-branch wording: `gsd-core/workflows/execute-phase/detail/elaboration.md` § 2.
 </step>
 
 <step name="execute_waves">
@@ -1006,11 +1023,48 @@ increases monotonically across waves. `{status}` is `complete` (success),
 9. **Proceed to next wave.**
 </step>
 <step name="checkpoint_handling">
-Plans with `autonomous: false` require user interaction. In auto-mode (chain flag or user preference, same boolean as `check.auto-mode`), a returned `human-verify` or `decision` checkpoint auto-resolves (approved / first offered option) UNLESS the gate is `blocking-human` (precondition-unmet, #3210) or its `<what-built>` names a package-verification/install gate — those always present to the user, auto-mode or not. `human-action` (auth gates) always presents too.
+Plans with `autonomous: false` require user interaction.
+**Auto-mode checkpoint handling:**
+Read auto-advance config (chain flag OR user preference — same boolean as `check.auto-mode`):
+```bash
+AUTO_MODE=$(gsd_run query check auto-mode --pick active 2>/dev/null)
+```
 
-Standard flow: spawn the checkpoint plan's agent, it returns structured state (completed tasks, current blocker, checkpoint type/details) at the checkpoint or an auth gate, present it to the user, then spawn a FRESH continuation agent (never resume — internal serialization breaks under parallel tool calls) carrying the completed-tasks table, resume point, and the user's response. Repeat until the plan completes or the user stops. In parallel waves, other agents may complete while one is paused at a checkpoint; wait for all before the next wave.
+When executor returns a checkpoint AND `AUTO_MODE` is `true`:
+- **human-verify** → Auto-spawn continuation agent with `{user_response}` = `"approved"`. Log `⚡ Auto-approved checkpoint`. **Except `blocking-human`.**
+- **decision** → Auto-spawn continuation agent with `{user_response}` = first option from checkpoint details. Log `⚡ Auto-selected: [option]`. **Except `blocking-human`.**
+- **human-action** → Present to user (existing behavior below). Auth gates cannot be automated.
 
-Exact presentation format and continuation-prompt template fields: `gsd-core/workflows/execute-phase/detail/elaboration.md` § 4.
+<!-- gsd:protected -->
+**Carve-out — overrides all branches above.** If the returned `Gate:` is `blocking-human` (precondition-unmet, #3210), or its `<what-built>` mentions `Package verification required before install` or `Package install failed — human verification required`, never auto-approve or auto-select. Present to user (standard flow). Log `⛔ blocking-human gate — auto-mode suspended`.
+
+**Standard flow (not auto-mode, human-action, or blocking-human):**
+
+1. Spawn agent for checkpoint plan
+2. Agent runs until checkpoint task or auth gate → returns structured state
+3. Agent return includes: completed tasks table, current task + blocker, checkpoint type/details, what's awaited
+4. **Present to user:**
+   ```
+   ## Checkpoint: [Type]
+
+   **Plan:** 03-03 Dashboard Layout
+   **Progress:** 2/3 tasks complete
+
+   [Checkpoint Details from agent return]
+   [Awaiting section from agent return]
+   ```
+5. User responds: "approved"/"done" | issue description | decision selection
+6. **Spawn continuation agent (NOT resume)** using continuation-prompt.md template:
+   - `{completed_tasks_table}`: From checkpoint return
+   - `{resume_task_number}` + `{resume_task_name}`: Current task
+   - `{user_response}`: What user provided
+   - `{resume_instructions}`: Based on checkpoint type
+7. Continuation agent verifies previous commits, continues from resume point
+8. Repeat until plan completes or user stops
+
+**Why fresh agent, not resume:** Resume relies on internal serialization that breaks with parallel tool calls. Fresh agents with explicit state are more reliable.
+
+**Checkpoints in parallel waves:** Agent pauses and returns while other parallel agents may complete. Present checkpoint, spawn continuation, wait for all before next wave.
 </step>
 
 <step name="aggregate_results">
@@ -1300,9 +1354,30 @@ gsd_run query commit "docs(phase-{X}): complete phase execution" --files .planni
 </step>
 
 <step name="auto_copy_learnings">
-**Auto-extract and copy phase learnings to the global store — off by default** (`features.global_learnings` config gate). When enabled, runs after phase completion: produce the phase's learnings artifact (normally only the user-invoked `/gsd:extract-learnings` does this) and copy it to `~/.gsd/knowledge/`. Neither extraction failure nor copy failure blocks phase completion — report and continue.
+**Auto-extract and copy phase learnings to global store (when enabled).**
 
-Exact commands: `gsd-core/workflows/execute-phase/detail/elaboration.md` § 5.
+This step runs AFTER phase completion and SUMMARY.md is written. It produces the phase's
+learnings artifact (the sole producer is otherwise the user-invoked
+`/gsd:extract-learnings`) and copies it to the global learnings store at
+`~/.gsd/knowledge/`.
+
+**Check config gate:**
+```bash
+GL_ENABLED=$(gsd_run query config-get features.global_learnings --raw 2>/dev/null || echo "false")
+```
+
+**If `GL_ENABLED` is not `true`:** Skip this step entirely (feature disabled by default).
+
+**If enabled:**
+
+1. Run the `extract-learnings` workflow for the JUST-COMPLETED phase (its
+   `write_learnings` step writes `{phase_dir}/{PADDED_PHASE}-LEARNINGS.md`). Extraction
+   failure must NOT block phase completion — report the failure and continue.
+2. Copy the phase artifact to the global store:
+```bash
+gsd_run query learnings.copy 2>/dev/null || echo "⚠ Learnings copy failed — continuing"
+```
+Copy failure must NOT block phase completion.
 </step>
 
 <step name="close_phase_todos">

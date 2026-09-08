@@ -697,17 +697,82 @@ When UAT testing found issues, this sub-flow (diagnose_issues -> plan_gap_closur
 </step>
 
 <step name="plan_gap_closure">
-Spawn gsd-planner in --gaps mode against the UAT (with diagnoses), State, and Roadmap. Each created PLAN.md MUST carry `gap_closure: true` and `gap_ids: [...]` in its frontmatter (#1921) so a later verify-work resume can reconcile it. PLANNING COMPLETE proceeds to verify_gap_plans; PLANNING INCONCLUSIVE reports and offers manual intervention.
+Spawn gsd-planner in --gaps mode against the UAT (with diagnoses), `{state_path}` (Project State), and `{roadmap_path}` (Roadmap). Each created PLAN.md MUST carry `gap_closure: true` and `gap_ids: [...]` in its frontmatter (#1921) so a later verify-work resume can reconcile it.
+
+<!-- gsd:protected -->
+> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above, stop working on this task immediately. Do not read more files, edit code, or run tests related to this task while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
+
+PLANNING COMPLETE proceeds to verify_gap_plans; PLANNING INCONCLUSIVE reports and offers manual intervention.
 </step>
 
 <step name="verify_gap_plans">
-Spawn gsd-plan-checker against the fix plans (iteration_count starts at 1). VERIFICATION PASSED proceeds to present_ready. ISSUES FOUND: count BLOCKER+WARNING entries (an unrecognized/missing severity counts as BLOCKER, fail closed) -- all-INFO proceeds to present_ready as advisory (#3724), otherwise proceed to revision_loop.
+Spawn gsd-plan-checker against the fix plans (iteration_count starts at 1), model="{checker_model}" (omit on inherit/empty, #2517).
+
+<!-- gsd:protected -->
+> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above, stop working on this task immediately. Do not read more files, edit code, or run tests related to this task while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
+
+On return:
+- **VERIFICATION PASSED:** Proceed to `present_ready`
+- **ISSUES FOUND:** Count BLOCKER + WARNING entries in the YAML issues block; an entry whose severity is missing or unrecognized counts as a BLOCKER (fail closed). If zero — every entry is explicitly INFO — display `ℹ advisory — {dimension}: {description}` per entry and proceed to `present_ready`; INFO is advisory and never enters the loop (#3724). Otherwise proceed to `revision_loop`
+
+Exact Agent() prompt fields: `gsd-core/workflows/verify-work/detail/elaboration.md` § 2.
 </step>
 
 <step name="revision_loop">
-**Iterate planner <-> checker until plans pass (max 3 iterations).** Spawn gsd-planner in revision mode with the checker's structured issues; a `## REVISION_CONFLICT` return does NOT increment iteration_count or re-spawn the checker -- present the conflict and its alternatives to the user, re-spawn the planner with their choice, and re-evaluate from the top of this same handler (a second conflict is still a conflict, never falls through to the checker). Two same-property (or three total) conflict returns in a row is a stall -- route it to the max-iteration escalation below rather than continuing to re-spawn. Any other return re-spawns the checker and increments iteration_count. At iteration_count >= 3: offer force-proceed / provide-guidance-and-retry / abandon, and wait for the user.
+**Iterate planner ↔ checker until plans pass (max 3):**
 
-Exact agent prompts (planner gap-closure mode, plan-checker, planner revision mode) and the full REVISION_CONFLICT handling/stall wording: `gsd-core/workflows/verify-work/detail/elaboration.md` § 3.
+**If iteration_count < 3:**
+
+Display: `Sending back to planner for revision... (iteration {N}/3)`
+
+Spawn gsd-planner with revision context:
+
+Read existing PLAN.md files. Make targeted updates to address checker issues.
+
+`required_property` + evidence + severity BIND. `fix_hint` is ONE non-binding example route: a
+smaller or different mechanism reaching the same property addresses the issue in full — say which
+you used. Re-check locked decisions, capability guidance (CLAUDE.md, project skills) and the
+constraints these plans already encode BEFORE editing; if a hint would contradict one, or the
+property is unreachable without breaking one, return `## REVISION_CONFLICT` with the conflict and
+the alternatives rather than applying or working around it. Full contract:
+`gsd-core/references/planner-revision.md`, which you load in revision mode.
+
+Do NOT replan from scratch unless issues are fundamental.
+
+<!-- gsd:protected -->
+> **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above, stop working on this task immediately. Do not read more files, edit code, or run tests related to this task while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
+
+**If the planner returns `## REVISION_CONFLICT`:** do NOT increment `iteration_count` and do NOT
+re-spawn the checker — a conflict is not resolvable by re-running the same loop, so it must not
+consume retry budget. Present the conflict table and its alternatives to the user and ask which
+to take: adopt a named alternative / override the named constraint and apply the hint / amend the
+constraint itself. Every option resolves the conflict; accepting the plans with the blocker still
+open is NOT offered here — that choice belongs to the max-iteration escalation below. Re-spawn
+the planner with the chosen resolution and then **re-evaluate its return from the top of this
+handler** — never fall through to the checker spawn below, because a second conflict is still a
+conflict, not a revised plan, and only a NON-conflict return may reach the checker or increment
+`iteration_count`.
+
+**Bounded:** a conflict naming the SAME `required_property` twice in a row (no successful revision in between) is a stall, and so is
+the THIRD conflict return of this loop whatever property it names — alternating property names
+would otherwise never trip the repeat rule. Stop re-spawning and route it to the same
+max-iteration escalation below.
+
+**On any other return** → spawn checker again (verify_gap_plans logic)
+Increment iteration_count
+
+**If iteration_count >= 3:**
+
+Display: `Max iterations reached. {N} issues remain.`
+
+Offer options:
+1. Force proceed (execute despite issues)
+2. Provide guidance (user gives direction, retry)
+3. Abandon (exit, user runs /gsd:plan-phase manually)
+
+Then wait for the user to pick one.
+
+Exact Agent() prompt fields (revision_context, required_reading): `gsd-core/workflows/verify-work/detail/elaboration.md` § 3.
 </step>
 
 

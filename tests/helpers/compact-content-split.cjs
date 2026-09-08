@@ -128,7 +128,7 @@ function discoverRegisteredSplits(workflowsDir = DEFAULT_WORKFLOWS_DIR) {
  * any split that extracts even one such block collides with an unrelated one
  * left in the spine. The tag NAME and attributes carry structure, never prose
  * content, so treating the whole line as trivial is the same judgment call
- * `isCanonicalLauncherPreamble` already makes for the shared launcher line —
+ * `isKnownSanctionedBoilerplate` already makes for the shared launcher line —
  * generalized here since it recurs for any tag, not one specific string.
  */
 function isTrivial(line) {
@@ -172,12 +172,13 @@ const KNOWN_BOILERPLATE_PREFIXES = [
 ];
 
 /**
- * Is `line` the canonical `gsd_run` launcher bootstrap preamble (see
+ * Is `line` one of the corpus's known sanctioned cross-file duplicates: the
+ * canonical `gsd_run` launcher bootstrap preamble (see
  * `gsd-core/workflows/_runtime-launcher.snippet.sh`,
- * `tests/runtime-launcher-parity.test.cjs`), or one of the other known
- * cross-corpus boilerplate lines above?
+ * `tests/runtime-launcher-parity.test.cjs`), or one of the `KNOWN_BOILERPLATE_PREFIXES`
+ * above?
  *
- * That other guard's OWN contract mandates exactly one inlined copy in every
+ * The launcher preamble's own guard mandates exactly one inlined copy in every
  * workflow/detail file that calls `gsd_run` — spine and detail both call it,
  * so both legitimately carry their own copy. That is sanctioned
  * cross-file duplication, not something the disjointness check should ever
@@ -187,7 +188,7 @@ const KNOWN_BOILERPLATE_PREFIXES = [
  * @param {string} line
  * @returns {boolean}
  */
-function isCanonicalLauncherPreamble(line) {
+function isKnownSanctionedBoilerplate(line) {
   if (line.startsWith('_GSD_SHIM_NAME="gsd-tools.cjs";')) return true;
   return KNOWN_BOILERPLATE_PREFIXES.some((prefix) => line.startsWith(prefix));
 }
@@ -446,7 +447,7 @@ function readBoundaryMoveTrailers({ baseRef, headRef = 'HEAD', cwd = REPO_ROOT, 
  * back in after a split is made.
  *
  * The canonical `gsd_run` launcher preamble is excluded from both sides
- * before comparing (`isCanonicalLauncherPreamble`) — it is sanctioned
+ * before comparing (`isKnownSanctionedBoilerplate`) — it is sanctioned
  * cross-file duplication under a different guard's contract, not a
  * violation of this one.
  *
@@ -465,14 +466,14 @@ function checkDisjointness(splits) {
 
   for (const split of splits) {
     const spineLines = normalizeNonTrivialLines(fs.readFileSync(split.spinePath, 'utf8'))
-      .filter((l) => !isCanonicalLauncherPreamble(l));
+      .filter((l) => !isKnownSanctionedBoilerplate(l));
     const spineSet = new Set(spineLines);
 
     let reported = 0;
     for (const detailPath of split.detailPaths) {
       if (reported >= PER_SPLIT_CAP) break;
       const detailLines = normalizeNonTrivialLines(fs.readFileSync(detailPath, 'utf8'))
-        .filter((l) => !isCanonicalLauncherPreamble(l));
+        .filter((l) => !isKnownSanctionedBoilerplate(l));
       for (const line of detailLines) {
         if (reported >= PER_SPLIT_CAP) break;
         if (spineSet.has(line)) {
@@ -579,7 +580,7 @@ module.exports = {
   DEFAULT_WORKFLOWS_DIR,
   discoverRegisteredSplits,
   normalizeNonTrivialLines,
-  isCanonicalLauncherPreamble,
+  isKnownSanctionedBoilerplate,
   extractProtectedBlocks,
   ACK_TRAILER_BOUNDARY_MOVE,
   readBoundaryMoveTrailers,

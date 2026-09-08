@@ -5,28 +5,11 @@ Read in full when `workflow.compact_content` is `false` (the default) — see
 spine defers to. Each `§` below is the full text the spine condenses at the point it
 names.
 
-## § 1 — safe_resume_gate
+(safe_resume_gate, checkpoint_handling, and auto_copy_learnings are stated verbatim in the
+spine itself — pre-existing structural drift guards in this repo's test suite pin their exact
+wording and bash there, so nothing about them is deferred to this file.)
 
-Before trusting `STATE.md` or dispatching any executor, derive `CURRENT_PLAN_ID`
-from the active incomplete plan in `INIT`, then search recent history:
-```bash
-SUMMARY_PATH="{phase_dir}/{plan_padded}-SUMMARY.md"
-# #4003: no padding rule in the commit protocol, so zero-strip both components and
-# match ANCHORED at the commit scope; bound to the latest reachable tag (milestone marker).
-PHASE_N=$((10#{phase_number}))
-PLAN_N=$((10#{plan_padded}))
-PLAN_SCOPE_RE="^[a-z]+\((0*${PHASE_N})-(0*${PLAN_N})\):"
-MILESTONE_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-PLAN_COMMITS=$(git log --oneline -E ${MILESTONE_BASE:+"$MILESTONE_BASE..HEAD"} --grep="${PLAN_SCOPE_RE}" -30)
-```
-If production commits exist and `SUMMARY.md is missing` (no `.planning/async-jobs/*.json` manifest matches it: a match is a legal `external_job_waiting` deferral - reconcile per `docs/reference/planning-artifacts.md`, never re-dispatch), stop before spawning a
-new executor; continuing risks duplicate work and stale `STATE.md`/ROADMAP progress.
-Offer these recovery options:
-- `close out manually` — inspect commits, write SUMMARY.md, then update STATE/ROADMAP.
-- `re-execute from scratch` — revert or supersede partial commits before dispatch.
-- `mark-and-skip` — record the anomaly and move on only with explicit confirmation.
-
-## § 2 — check_interactive_mode
+## § 1 — check_interactive_mode
 
 **Parse `--interactive` flag from $ARGUMENTS.**
 
@@ -64,10 +47,11 @@ checkpoints between tasks. The user can review, modify, or redirect work at any 
 
    e. **After plan complete:** Show results, commit, create SUMMARY.md, then present next plan.
 
-3. After all plans: proceed to verification (same as normal mode). (The spine's own condensed
-   text already states the handle_branching hand-off; not repeated here.)
+3. After all plans: proceed to verification (same as normal mode).
 
-## § 3 — cross_ai_delegation
+(The spine's own condensed text already states the handle_branching hand-off; not repeated here.)
+
+## § 2 — cross_ai_delegation
 
 **Optional step 2.5 — Delegate plans to an external AI runtime.**
 
@@ -84,6 +68,7 @@ executor skips them.
    `workflow.cross_ai_execution` is `true`. Plans matching both conditions are marked for cross-AI.
 
 ```bash
+_GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; _gsd_at() { for _p; do if [ -f "$_p" ]; then GSD_TOOLS="$_p"; return 0; fi; done; return 1; }; if _gsd_at "${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif unset -f gsd_run; _G="$(command -v gsd_run)"; then GSD_TOOLS="$_G"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif _gsd_at "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/gsd-core/bin/${_GSD_SHIM_NAME}" "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; then gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd_run is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; GSD_IDENTITY_STATUS=unverified; case "$(gsd_run runtime-identity --raw 2>/dev/null || true)" in '{"packageName":"@opengsd/gsd-core"'*'}') GSD_IDENTITY_STATUS=ok;; esac; export GSD_IDENTITY_STATUS; [ "$GSD_IDENTITY_STATUS" = ok ] || echo "WARNING: \"$GSD_TOOLS\" did not prove it is @opengsd/gsd-core - it is either a different package or an @opengsd/gsd-core older than the runtime-identity verb. See docs/how-to/diagnose-a-foreign-gsd-tools.md" >&2; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 CROSS_AI_ENABLED=$(gsd_run query config-get workflow.cross_ai_execution --raw 2>/dev/null || echo "false")
 CROSS_AI_CMD=$(gsd_run query config-get workflow.cross_ai_command --raw 2>/dev/null || echo "")
 CROSS_AI_TIMEOUT=$(gsd_run query config-get workflow.cross_ai_timeout --raw 2>/dev/null || echo "300")
@@ -137,74 +122,3 @@ CROSS_AI_TIMEOUT=$(gsd_run query config-get workflow.cross_ai_timeout --raw 2>/d
 5. **After all cross-AI plans processed:** Remove successfully handled plans from the
    incomplete plan list so execute_waves skips them. Any skipped-to-fallback plans remain
    in the list for normal executor processing.
-
-## § 4 — checkpoint_handling
-
-Plans with `autonomous: false` require user interaction.
-**Auto-mode checkpoint handling:**
-Read auto-advance config (chain flag OR user preference — same boolean as `check.auto-mode`):
-```bash
-AUTO_MODE=$(gsd_run query check auto-mode --pick active 2>/dev/null)
-```
-
-When executor returns a checkpoint AND `AUTO_MODE` is `true`:
-- **human-verify** → Auto-spawn continuation agent with `{user_response}` = `"approved"`. Log `⚡ Auto-approved checkpoint`. **Except `blocking-human`.**
-- **decision** → Auto-spawn continuation agent with `{user_response}` = first option from checkpoint details. Log `⚡ Auto-selected: [option]`. **Except `blocking-human`.**
-- **human-action** → Present to user (existing behavior below). Auth gates cannot be automated.
-
-**Carve-out — overrides all branches above.** If the returned `Gate:` is `blocking-human` (precondition-unmet, #3210), or its `<what-built>` mentions `Package verification required before install` or `Package install failed — human verification required`, never auto-approve or auto-select. Present to user (standard flow). Log `⛔ blocking-human gate — auto-mode suspended`.
-
-**Standard flow (not auto-mode, human-action, or blocking-human):**
-
-1. Spawn agent for checkpoint plan
-2. Agent runs until checkpoint task or auth gate → returns structured state
-3. Agent return includes: completed tasks table, current task + blocker, checkpoint type/details, what's awaited
-4. **Present to user:**
-   ```
-   ## Checkpoint: [Type]
-
-   **Plan:** 03-03 Dashboard Layout
-   **Progress:** 2/3 tasks complete
-
-   [Checkpoint Details from agent return]
-   [Awaiting section from agent return]
-   ```
-5. User responds: "approved"/"done" | issue description | decision selection
-6. **Spawn continuation agent (NOT resume)** using continuation-prompt.md template:
-   - `{completed_tasks_table}`: From checkpoint return
-   - `{resume_task_number}` + `{resume_task_name}`: Current task
-   - `{user_response}`: What user provided
-   - `{resume_instructions}`: Based on checkpoint type
-7. Continuation agent verifies previous commits, continues from resume point
-8. Repeat until plan completes or user stops
-
-**Why fresh agent, not resume:** Resume relies on internal serialization that breaks with parallel tool calls. Fresh agents with explicit state are more reliable.
-
-**Checkpoints in parallel waves:** Agent pauses and returns while other parallel agents may complete. Present checkpoint, spawn continuation, wait for all before next wave.
-
-## § 5 — auto_copy_learnings
-
-**Auto-extract and copy phase learnings to global store (when enabled).**
-
-This step runs AFTER phase completion and SUMMARY.md is written. It produces the phase's
-learnings artifact (the sole producer is otherwise the user-invoked
-`/gsd:extract-learnings`) and copies it to the global learnings store at
-`~/.gsd/knowledge/`.
-
-**Check config gate:**
-```bash
-GL_ENABLED=$(gsd_run query config-get features.global_learnings --raw 2>/dev/null || echo "false")
-```
-
-**If `GL_ENABLED` is not `true`:** Skip this step entirely (feature disabled by default).
-
-**If enabled:**
-
-1. Run the `extract-learnings` workflow for the JUST-COMPLETED phase (its
-   `write_learnings` step writes `{phase_dir}/{PADDED_PHASE}-LEARNINGS.md`). Extraction
-   failure must NOT block phase completion — report the failure and continue.
-2. Copy the phase artifact to the global store:
-```bash
-gsd_run query learnings.copy 2>/dev/null || echo "⚠ Learnings copy failed — continuing"
-```
-Copy failure must NOT block phase completion.
