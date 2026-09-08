@@ -117,6 +117,12 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
     'set -uo pipefail',
     `FILES_OVERRIDE="${filesOverride || ''}"`,
     filesArrayInit,
+    // Both tiers print diagnostic "File scope: ..." / "Warning: ..." lines to
+    // stdout as documentation for a human running code-review.md interactively
+    // — a brace group (not a subshell: variables set inside still persist to
+    // the enclosing shell) discards that chatter so only the final REVIEW_FILES
+    // printf below reaches this script's captured stdout.
+    '{',
     tier1,
     // Tier 1 unconditionally resets REVIEW_FILES=() when FILES_OVERRIDE is
     // set; the seed only matters (and only applies) when it is not, exactly
@@ -126,6 +132,7 @@ function runTiers(tmpDir, { filesOverride, seedReviewFiles = [] }) {
     'PADDED_PHASE="03"',
     'LAST_REVIEW_COMMIT=""',
     tier3,
+    '} > /dev/null',
     'printf \'%s\\n\' "${REVIEW_FILES[@]}"',
   ].join('\n');
 
