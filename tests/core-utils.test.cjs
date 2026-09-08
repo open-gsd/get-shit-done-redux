@@ -162,6 +162,19 @@ describe('detectSubRepos', () => {
     assert.deepEqual(coreUtils.detectSubRepos(tmpDir), ['myrepo']);
   });
 
+  // #4458: a linked git worktree's .git is a FILE (a `gitdir: <path>` pointer),
+  // not a directory. detectSubRepos uses fs.existsSync (type-agnostic), so this
+  // was already correct before #4458 — this test proves it explicitly, since
+  // the actual #4458 defect was new-project.md's own `find -exec test -d
+  // "{}/.git"` predicate never calling this helper at all.
+  test('detects directory with .git as a FILE (linked worktree) as sub-repo', () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-cu-test-'));
+    const subDir = path.join(tmpDir, 'myworktree');
+    fs.mkdirSync(subDir);
+    fs.writeFileSync(path.join(subDir, '.git'), 'gitdir: /some/main/repo/.git/worktrees/myworktree\n');
+    assert.deepEqual(coreUtils.detectSubRepos(tmpDir), ['myworktree']);
+  });
+
   test('excludes hidden directories', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-cu-test-'));
     const hiddenDir = path.join(tmpDir, '.hidden');

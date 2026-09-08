@@ -629,15 +629,18 @@ gsd_run query commit "chore: add project config" --files .planning/config.json
 
 **Detect multi-repo workspace:**
 
-Check for directories with their own `.git` folders (separate repos within the workspace):
+Check for directories with their own `.git` (separate repos within the workspace —
+this also finds linked git worktree children, whose `.git` is a file rather than a
+directory, unlike a plain `find -type d` predicate would):
 
 ```bash
-find . -maxdepth 1 -type d -not -name ".*" -not -name "node_modules" -exec test -d "{}/.git" \; -print
+gsd_run query init.new-project
 ```
 
-**If sub-repos found:**
+Read the `sub_repos_detected` array from the JSON output — each entry is a bare
+directory name already relative to the workspace root (e.g. `"backend"`).
 
-Strip the `./` prefix to get directory names (e.g., `./backend` → `backend`).
+**If sub-repos found:**
 
 Use AskUserQuestion:
 
