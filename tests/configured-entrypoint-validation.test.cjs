@@ -410,7 +410,7 @@ test('a minimal Codex rollback restores skills from the alternate skills home (#
     // Marker-driven core profile — the `gsd update` path into minimal mode.
     fs.writeFileSync(path.join(first.configDir, '.gsd-profile'), 'core\n');
     const second = install(true, 'codex');
-    second.rollbackInstallerMigrations();
+    second.rollbackPreInstallSnapshot();
 
     assert.equal(
       fs.existsSync(skillFile),

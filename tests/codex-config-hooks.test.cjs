@@ -2390,7 +2390,7 @@ describe('#3245 — idempotent rollback reverts skills/, agents/, and VERSION', 
 
     afterEach(() => cleanup(tmpDir));
 
-    test('result.rollbackInstallerMigrations() reverts skills/, agents/, and VERSION', () => {
+    test('result.rollbackPreInstallSnapshot() reverts skills/, agents/, and VERSION', () => {
       // Skills resolve $HOME-relative independent of CODEX_HOME (#2088), so the
       // rollback closure must run before this sandboxing is torn down — inline
       // runCodexInstall's env dance instead of using the auto-restoring helper,
@@ -2409,11 +2409,11 @@ describe('#3245 — idempotent rollback reverts skills/, agents/, and VERSION', 
 
         // A configured-entrypoint validation failure discovered outside install()
         // (installAllRuntimes' aggregate assertConfiguredEntrypoints, run after
-        // this function already returned) has only this field to call. Before
-        // #4249 it was bound to the narrower rollbackInstallerMigrations, which
+        // this function already returned) reaches for this field. Before #4249
+        // the only rollback Codex exposed was rollbackInstallerMigrations, which
         // reverts installer-migration state only and leaves the skills/agents/
         // VERSION this successful install just wrote untouched.
-        result.rollbackInstallerMigrations();
+        result.rollbackPreInstallSnapshot();
 
         const skillsDir = codexSkillsRoot(codexHome);
         const gsdSkills = fs.existsSync(skillsDir)

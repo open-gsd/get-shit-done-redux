@@ -12602,20 +12602,21 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     }
 
     persistActiveProfileMarker();
-    // #4249: expose restoreCodexSnapshot (#3245), not the narrower
-    // rollbackInstallerMigrations it wraps, as this result's rollback. A
+    // #4249: expose restoreCodexSnapshot (#3245) as a SECOND, separately named
+    // rollback rather than rebinding `rollbackInstallerMigrations` to it. A
     // configured-entrypoint validation failure discovered later (outside this
     // function, after Codex's own hooks.json/config.toml write already
-    // succeeded) previously reverted only installer migrations here, leaving
-    // the just-written config.toml/hooks.json broken on disk despite Codex
-    // already owning a full pre-install snapshot/restore for exactly this.
+    // succeeded) previously had only the installer-migrations closure to call,
+    // leaving the just-written config.toml/hooks.json broken on disk despite
+    // Codex already owning a full pre-install snapshot/restore for exactly this.
     //
-    // `rollbackInstallerMigrationsOnly` keeps the narrow closure reachable so a
+    // Every runtime's `rollbackInstallerMigrations` therefore still means what
+    // it says — the installer-migrations-only closure, which is what a
     // finalize-stage failure that is NOT an entrypoint-validation failure gets
-    // the installer-migrations-only rollback Phase 4 actually specifies, rather
-    // than un-installing a Codex install that already succeeded. See the
-    // selection in installAllRuntimes' rollbackFinalizedInstallerMigrations.
-    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints, rollbackInstallerMigrations: restoreCodexSnapshot, rollbackInstallerMigrationsOnly: rollbackInstallerMigrations };
+    // (the Phase 4 contract). `rollbackPreInstallSnapshot` is Codex-only and is
+    // chosen only for entrypoint-validation failures. See the selection in
+    // installAllRuntimes' rollbackFinalizedInstallerMigrations.
+    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints, rollbackInstallerMigrations, rollbackPreInstallSnapshot: restoreCodexSnapshot };
   }
 
   if (plan.installSurface === 'copilot-instructions') {
@@ -12645,7 +12646,12 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     writeCopilotHookConfig(targetDir);
     console.log(`  ${green}✓${reset} Configured Copilot lifecycle hook (sessionStart)`);
     persistActiveProfileMarker();
-    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir };
+    // #4249: `[]`, not omitted — every Copilot hook is an inline `printf`
+    // one-liner (GSD_COPILOT_*_HOOK_BASH/PWSH in src/runtime-hooks-surface.cts),
+    // so this runtime genuinely launches no GSD-managed script and has no
+    // interpreter to resolve. Stated explicitly like every other branch rather
+    // than leaning on installAllRuntimes' `|| []` defence.
+    return { settingsPath: null, settings: null, statuslineCommand: null, updateBannerCommand: null, runtime, configDir: targetDir, configuredEntrypoints: [] };
   }
 
   if (plan.installSurface === 'cursor-hooks-json') {
@@ -13183,7 +13189,12 @@ function assertConfiguredEntrypoints(entries) {
   if (validation.ok) return;
 
   const error = new Error(
-    `Configured entrypoint validation failed: ${validation.invalid.map(({ role, path: invalidPath, reason }) => `${role} ${invalidPath} (${reason})`).join(', ')}`,
+    // #4249: lead each entry with its runtime. The aggregate gate is
+    // all-or-nothing across every runtime being installed, and a failure here
+    // can revert a runtime whose own entrypoints were fine (see
+    // rollbackFinalizedInstallerMigrations), so an operator reading this must
+    // be able to tell WHOSE entrypoint actually broke.
+    `Configured entrypoint validation failed: ${validation.invalid.map(({ runtime: invalidRuntime, role, path: invalidPath, reason }) => `${invalidRuntime} ${role} ${invalidPath} (${reason})`).join(', ')}`,
   );
   error.configuredEntrypointValidation = validation;
   throw error;
@@ -14117,22 +14128,29 @@ function installAllRuntimes(runtimes, isGlobal, isInteractive) {
 
   const rollbackFinalizedInstallerMigrations = (error) => {
     const rollbackFailures = [];
-    // #4249: a configured-entrypoint validation failure is the ONLY error
-    // docs/how-to/update-gsd.md documents as reverting a runtime install that
-    // otherwise succeeded (Codex's full pre-install snapshot: config.toml,
-    // hooks.json, skills/, agents/, VERSION). Every other finalize-stage
-    // exception — e.g. a sibling runtime's permission-config write failing with
-    // EACCES — only gets the installer-migrations-only rollback that Phase 4
-    // specifies (docs/installer-migrations.md#phase-4-installupdate-integration).
-    // Widening it would silently un-install (and, on update, downgrade) a Codex
-    // install whose own "Done!" summary the user has already seen, while the
-    // sibling surfaces that write config inside install() keep theirs.
+    // #4249: this discriminates on the error's KIND, never on which runtime
+    // owns the failing entrypoint. `wide` is true for ANY entrypoint-validation
+    // failure from ANY runtime, by design: the aggregate gate exists so a
+    // multi-runtime install cannot report success while one of its entrypoints
+    // is broken, so an invalid Cline entrypoint reverts Codex's pre-install
+    // snapshot too — even though Codex itself was fine and its own "Done!"
+    // summary already printed. tests/configured-entrypoint-validation.test.cjs
+    // ('an aggregate entrypoint validation failure rolls the Codex install
+    // back') exercises exactly that, and it is the all-or-nothing behaviour
+    // docs/how-to/update-gsd.md documents.
+    //
+    // What this narrows is the OTHER axis: a finalize-stage exception that is
+    // not an entrypoint-validation failure at all — e.g. a sibling runtime's
+    // permission-config write dying with EACCES — gets only the
+    // installer-migrations-only rollback that Phase 4 specifies
+    // (docs/installer-migrations.md#phase-4-installupdate-integration).
+    // Un-installing (and, on update, downgrading) an already-"Done!" Codex over
+    // an unrelated error is not an outcome any doc promises, while the sibling
+    // surfaces that write config inside install() would keep theirs regardless.
     const wide = !!(error && error.configuredEntrypointValidation);
     for (const result of [...results].reverse()) {
       if (!result) continue;
-      const rollback = wide
-        ? result.rollbackInstallerMigrations
-        : (result.rollbackInstallerMigrationsOnly || result.rollbackInstallerMigrations);
+      const rollback = (wide && result.rollbackPreInstallSnapshot) || result.rollbackInstallerMigrations;
       if (typeof rollback !== 'function') continue;
       try {
         rollback();
