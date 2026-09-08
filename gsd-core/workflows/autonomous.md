@@ -135,7 +135,9 @@ Run phase discovery:
 ```bash
 INIT_MANAGER=$(gsd_run query init.manager)
 if [[ "$INIT_MANAGER" == @file:* ]]; then INIT_MANAGER=$(cat "${INIT_MANAGER#@file:}"); fi
-STATE_CONTENT=$(cat .planning/STATE.md 2>/dev/null || true)
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+STATE_PATH=$(_gsd_field "$INIT_MANAGER" state_path)
+STATE_CONTENT=$(cat "$STATE_PATH" 2>/dev/null || true)
 ```
 
 Parse the JSON `phases` array.
@@ -600,21 +602,18 @@ Read and execute: `$HOME/.claude/gsd-core/references/autonomous-smart-discuss.md
 
 Proceed to lifecycle step (partial completion skips audit/complete/cleanup). Exit cleanly.
 
-**Otherwise:** After each phase, re-read manager projection:
+**Otherwise:** After each phase, re-read manager projection, then read STATE.md fresh (same fence — a single `gsd_run query init.manager` fetch backs both the JSON re-filter below and the raw re-read, no double-fetch):
 
 ```bash
 INIT_MANAGER=$(gsd_run query init.manager)
 if [[ "$INIT_MANAGER" == @file:* ]]; then INIT_MANAGER=$(cat "${INIT_MANAGER#@file:}"); fi
-STATE_CONTENT=$(cat .planning/STATE.md 2>/dev/null || true)
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+STATE_PATH=$(_gsd_field "$INIT_MANAGER" state_path)
+STATE_CONTENT=$(cat "$STATE_PATH" 2>/dev/null || true)
+cat "$STATE_PATH"
 ```
 
 Re-filter incomplete phases using discover_phases logic: keep phases where `phase_complete !== true` or `verification_status !== "passed"`, drop deferred phases from the autonomous queue, re-apply `--from` / `--to`, then sort by number ascending.
-
-Read STATE.md fresh:
-
-```bash
-cat .planning/STATE.md
-```
 
 Check for blockers in the Blockers/Concerns section. If blockers are found, go to handle_blocker with the blocker description.
 
@@ -727,7 +726,11 @@ Skill(skill="gsd-complete-milestone", args="${milestone_version}")
 After complete-milestone returns, verify it produced output:
 
 ```bash
-ls .planning/milestones/v${milestone_version}-ROADMAP.md 2>/dev/null || true
+INIT_MANAGER=$(gsd_run query init.manager)
+if [[ "$INIT_MANAGER" == @file:* ]]; then INIT_MANAGER=$(cat "${INIT_MANAGER#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+ARCHIVE_DIR=$(_gsd_field "$INIT_MANAGER" archive_dir)
+ls "${ARCHIVE_DIR}/v${milestone_version}-ROADMAP.md" 2>/dev/null || true
 ```
 
 If the archive file does not exist, go to handle_blocker: "Complete milestone did not produce expected archive files."
