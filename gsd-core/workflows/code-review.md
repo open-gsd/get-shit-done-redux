@@ -166,9 +166,10 @@ if [ -z "$FILES_OVERRIDE" ]; then
 
       # Extract key_files.created and key_files.modified using node for reliable YAML parsing
       # This avoids fragile awk parsing that breaks on indentation differences
-      EXTRACTED=$(node -e "
+      EXTRACTED=$(
+        node - "$summary" 2>/dev/null <<'NODE'
         const fs = require('fs');
-        const content = fs.readFileSync('$summary', 'utf-8');
+        const content = fs.readFileSync(process.argv[2], 'utf-8');
         const match = content.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---/);
         if (!match) { process.exit(0); }
         const yaml = match[1];
@@ -203,7 +204,8 @@ if [ -z "$FILES_OVERRIDE" ]; then
           }
         }
         if (files.length) console.log(files.join('\n'));
-      " 2>/dev/null)
+NODE
+      )
       
       # Add extracted files to REVIEW_FILES array
       if [ -n "$EXTRACTED" ]; then

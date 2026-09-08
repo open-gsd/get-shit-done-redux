@@ -101,6 +101,25 @@ function parseFrontmatterCritical(frontmatter) {
 // file list, and must strip em-dash descriptions and parentheticals.
 // ---------------------------------------------------------------------------
 describe('Bug 1 — compute_file_scope SUMMARY parser', () => {
+  test('#4461: the shipped compute_file_scope bash fence parses verbatim', () => {
+    const src = readFileNormalized(WORKFLOW_PATH);
+    const stepStart = src.indexOf('<step name="compute_file_scope">');
+    assert.notStrictEqual(stepStart, -1, 'compute_file_scope step must exist');
+    const marker = src.indexOf('EXTRACTED=$(', stepStart);
+    assert.notStrictEqual(marker, -1, 'Tier-2 SUMMARY extractor must exist');
+    const fenceStart = src.lastIndexOf('```bash\n', marker);
+    const fenceEnd = src.indexOf('\n```', marker);
+    assert.ok(fenceStart !== -1 && fenceEnd !== -1, 'Tier-2 SUMMARY bash fence must be complete');
+    const script = src.slice(fenceStart + '```bash\n'.length, fenceEnd);
+
+    const result = runHook('-n', ['-c', script], {
+      interpreter: 'bash',
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+
+    assert.equal(result.exitCode, 0, `bash rejected the shipped fence:\n${result.stderr}`);
+  });
+
   test('extracts only key-files.created and key-files.modified entries', () => {
     const yaml = [
       'key-files:',
