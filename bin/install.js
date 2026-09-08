@@ -13260,9 +13260,6 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
   };
 }
 
-/**
- * Apply statusline config, then print completion message
- */
 function assertConfiguredEntrypoints(entries) {
   // #4249: some writers push the same (configPath, scriptPath) pair more than
   // once (e.g. Kimi's context-monitor hook registered under several events,
@@ -13310,7 +13307,10 @@ function finishInstall(settingsPath, settings, statuslineCommand, shouldInstallS
   // but its rollback binds to a full pre-install snapshot restore, so it IS
   // covered (see docs/how-to/update-gsd.md). For the settings-json surface
   // this ordering means a failing validation never reaches this function's
-  // own write at all.
+  // own write at all. On the production path this is a redundant backstop —
+  // installAllRuntimes's own aggregate assertConfiguredEntrypoints call
+  // already validates the superset before finishInstall runs for any
+  // runtime — kept for a caller that invokes finishInstall directly.
   assertConfiguredEntrypoints(bannerOpts.configuredEntrypoints);
 
   if (shouldInstallStatusline && plan.writesSharedSettings && !_hostBehaviors(runtime).skipSettingsUi) {

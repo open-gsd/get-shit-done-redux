@@ -3380,8 +3380,8 @@ interface ConfiguredEntrypointInvalid {
 }
 
 type ConfiguredEntrypointValidationResult =
-  | { ok: true; checked: number }
-  | { ok: false; checked: number; invalid: ConfiguredEntrypointInvalid[] };
+  | { ok: true }
+  | { ok: false; invalid: ConfiguredEntrypointInvalid[] };
 
 function validateConfiguredEntrypoints(
   entries: ConfiguredEntrypoint[],
@@ -3444,7 +3444,7 @@ function validateConfiguredEntrypoints(
       invalid.push({ runtime: entry.runtime, configPath: entry.configPath, role: 'interpreter', path: entry.interpreterCandidates.join(' | '), reason: 'unresolved-interpreter' });
     }
   }
-  return invalid.length === 0 ? { ok: true, checked: entries.length } : { ok: false, checked: entries.length, invalid };
+  return invalid.length === 0 ? { ok: true } : { ok: false, invalid };
 }
 
 // ---------------------------------------------------------------------------
