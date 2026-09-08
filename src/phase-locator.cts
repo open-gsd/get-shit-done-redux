@@ -78,6 +78,11 @@ interface PhaseSearchResult {
   runnable_plans: string[];
 }
 
+/** True when a phase argument names a path rather than a bare phase token. */
+function isQualifiedPhaseArg(phaseArg: string): boolean {
+  return path.isAbsolute(phaseArg) || path.win32.isAbsolute(phaseArg) || /[/\\]/.test(phaseArg);
+}
+
 /**
  * #2830: parse a plan file's `depends_on` frontmatter. Returns [] — never
  * throws — on a missing/unreadable/malformed plan or absent field, matching
@@ -558,6 +563,7 @@ function getAllArchivedPhaseDirs(cwd: string): ArchivedPhaseDir[] {
 }
 
 export = {
+  isQualifiedPhaseArg,
   searchPhaseInDir,
   findPhaseInternal,
   getArchivedPhaseDirs,

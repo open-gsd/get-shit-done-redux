@@ -17,7 +17,7 @@ import planningWorkspaceMod = require('./planning-workspace.cjs');
 const { planningDir } = planningWorkspaceMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseLocatorMod = require('./phase-locator.cjs');
-const { findPhaseInternal, searchPhaseInDir, getArchivedPhaseDirs } = phaseLocatorMod;
+const { findPhaseInternal, searchPhaseInDir, getArchivedPhaseDirs, isQualifiedPhaseArg } = phaseLocatorMod;
 import { extractDecisions } from './decisions.cjs';
 import type { Decision } from './decisions.cjs';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1432,7 +1432,7 @@ function cmdApiCoverageVerifyPre(projectDir: string, args: string[], raw: boolea
   // A token like ".." or "." carries no phase identity → unresolvable.
   if (token === '.' || token === '..') token = '';
 
-  const qualified = path.isAbsolute(phaseArg) || path.win32.isAbsolute(phaseArg) || /[/\\]/.test(phaseArg);
+  const qualified = isQualifiedPhaseArg(phaseArg);
   const planningRoot = path.join(projectDir, '.planning');
 
   // Not a GSD project/scope → fail-open: nothing to gate. A qualified path is

@@ -229,7 +229,7 @@ describe('bug #3381: verify-work forwards workstream context', () => {
     );
     assert.match(
       workflow,
-      /gsd_run check "\$\{hook_check_query\}" "\$\{PHASE_DIR\}" --ws "\$\{GSD_WS#--ws \}" --raw/,
+      /gsd_run check "\$\{hook_check_query\}" "\$\{PHASE_DIR\}" \$\{GSD_WS\} --raw/,
       'verify:pre checks must receive the explicit workstream scope',
     );
     assert.match(

@@ -33,7 +33,7 @@ import worktreeSafetyMod = require('./worktree-safety.cjs');
 // Single owner of git C-quoted-path decoding (see #4081 note at the
 // codebase-drift --name-status parse loop).
 const { decodeGitQuotedPath } = worktreeSafetyMod;
-import { execGit, platformReadSync as safeReadFile } from './shell-command-projection.cjs';
+import { execGit, platformReadSync as safeReadFile, posixNormalize } from './shell-command-projection.cjs';
 import { validatePath } from './security.cjs';
 import { formatGsdSlash, resolveRuntime } from './runtime-slash.cjs';
 import { detectSchemaFiles, checkSchemaDrift } from './schema-detect.cjs';
@@ -50,7 +50,7 @@ import phaseIdMod = require('./phase-id.cjs');
 const { normalizePhaseName, matchPhaseDirs } = phaseIdMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import phaseLocatorMod = require('./phase-locator.cjs');
-const { findPhaseInternal } = phaseLocatorMod;
+const { findPhaseInternal, isQualifiedPhaseArg } = phaseLocatorMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import roadmapParserMod = require('./roadmap-parser.cjs');
 const { stripShippedMilestones } = roadmapParserMod;
@@ -2148,18 +2148,27 @@ function cmdVerifyContextDrift(cwd: string, phaseArg: string | undefined, raw: b
 
 function cmdVerifySchemaDrift(
   cwd: string,
-  phaseArg: string,
+  phaseArg: string | undefined,
   skipFlag: boolean | undefined,
   raw: boolean,
+  workstream?: string,
 ): void {
   if (!phaseArg) {
     error('Usage: verify schema-drift <phase> [--skip]');
     return;
   }
 
-  const pDir = planningDir(cwd);
+  let pDir: string;
+  try {
+    pDir = planningDir(cwd, workstream);
+  } catch (e) {
+    error(`verify schema-drift: invalid --ws value: ${(e as Error).message}`);
+    return;
+  }
   const phasesDir = path.join(pDir, 'phases');
-  if (!fs.existsSync(phasesDir)) {
+  const qualified = isQualifiedPhaseArg(phaseArg);
+  const projectPlanningRoot = path.join(cwd, '.planning');
+  if (!fs.existsSync(projectPlanningRoot) || (!qualified && !fs.existsSync(phasesDir))) {
     output({ block: false, drift_detected: false, blocking: false, message: 'No phases directory' }, raw);
     return;
   }
@@ -2171,7 +2180,18 @@ function cmdVerifySchemaDrift(
   // matching "11-expansion"), making the drift gate inspect the wrong phase.
   // This shares the one selection rule with find-phase / verify
   // phase-completeness rather than restating it. (#1571, #2528)
-  const phaseDir = resolvePhaseDirByToken(phasesDir, phaseArg);
+  let phaseDir: string | null = null;
+  if (qualified) {
+    const checked = validatePath(phaseArg, cwd, { allowAbsolute: true });
+    if (checked.safe && fs.existsSync(checked.resolved) && fs.statSync(checked.resolved).isDirectory()) {
+      const rel = posixNormalize(path.relative(projectPlanningRoot, checked.resolved));
+      const isLivePhase = /^(?:workstreams\/[^/]+\/)?phases\/[^/]+$/.test(rel);
+      const isArchivedPhase = /^(?:workstreams\/[^/]+\/)?milestones\/(?:v[\d.]+-phases\/[^/]+|ws-[^/]+\/phases\/[^/]+)$/.test(rel);
+      if (isLivePhase || isArchivedPhase) phaseDir = checked.resolved;
+    }
+  } else {
+    phaseDir = resolvePhaseDirByToken(phasesDir, phaseArg);
+  }
 
   if (!phaseDir) {
     output(

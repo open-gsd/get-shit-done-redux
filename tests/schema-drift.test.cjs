@@ -420,4 +420,23 @@ describe('#1571 regression: verify schema-drift resolves the phase by token, not
     const output = JSON.parse(result.output);
     assert.notStrictEqual(output.message, 'Phase directory not found: 11-expansion');
   });
+
+  test('#4498 an explicit --ws selects that workstream instead of the ambient one', () => {
+    const activeDir = path.join(tmpDir, '.planning', 'workstreams', 'active', 'phases', '14-api');
+    const requestedDir = path.join(tmpDir, '.planning', 'workstreams', 'requested', 'phases', '14-api');
+    fs.mkdirSync(activeDir, { recursive: true });
+    fs.mkdirSync(requestedDir, { recursive: true });
+    fs.writeFileSync(path.join(activeDir, '14-01-PLAN.md'), '---\nfiles_modified: [prisma/schema.prisma]\n---\n');
+    fs.writeFileSync(path.join(requestedDir, '14-01-PLAN.md'), '---\nfiles_modified: [src/parser.ts]\n---\n');
+
+    const result = runGsdTools(
+      ['verify', 'schema-drift', '14', '--ws', 'requested'],
+      tmpDir,
+      { GSD_WORKSTREAM: 'active' },
+    );
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.drift_detected, false);
+    assert.strictEqual(output.blocking, false);
+  });
 });

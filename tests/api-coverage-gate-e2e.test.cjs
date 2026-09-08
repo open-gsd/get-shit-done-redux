@@ -28,6 +28,7 @@ const { runNode, OUTCOME } = require('./helpers/process-seam.cjs');
 // gate. Those tests monkeypatch fs rather than drive a subprocess.
 const { readPhaseScope } = require('../gsd-core/bin/lib/check-command-router.cjs');
 const { escapeRegex } = require('../gsd-core/bin/lib/pattern.cjs');
+const { isQualifiedPhaseArg } = require('../gsd-core/bin/lib/phase-locator.cjs');
 
 const TOOLS_PATH = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
 
@@ -176,6 +177,37 @@ describe('api-coverage.verify-pre — seal contract (#1562 acceptance #1,#2,#4,#
     );
     assert.ok(r.success, r.error);
     assert.strictEqual(JSON.parse(r.output).block, false);
+  });
+
+  test('#4498 a qualified archived phase directory is accepted', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const archived = path.join(tmpDir, '.planning', 'milestones', 'v1.0-phases', '14-api');
+    fs.mkdirSync(archived, { recursive: true });
+    writePlan(archived, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runGate(tmpDir, archived);
+    assert.ok(r.success, r.error);
+    assert.strictEqual(JSON.parse(r.output).block, false);
+  });
+
+  test('#4498 a qualified directory with a non-phase shape fails closed', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const invalid = path.join(tmpDir, '.planning', 'scratch', '14-api');
+    fs.mkdirSync(invalid, { recursive: true });
+    writePlan(invalid, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runGate(tmpDir, invalid);
+    assert.ok(r.success, r.error);
+    const result = JSON.parse(r.output);
+    assert.strictEqual(result.block, true);
+    assert.strictEqual(result.phase_lookup_failed, true);
+  });
+
+  test('#4498 qualification recognizes POSIX, relative, and Windows path forms', () => {
+    assert.strictEqual(isQualifiedPhaseArg('14-api'), false);
+    assert.strictEqual(isQualifiedPhaseArg('workstreams/requested/phases/14-api'), true);
+    assert.strictEqual(isQualifiedPhaseArg('/repo/.planning/phases/14-api'), true);
+    assert.strictEqual(isQualifiedPhaseArg('C:\\repo\\.planning\\phases\\14-api'), true);
   });
 
   test('#1 API phase without a matrix → BLOCKS the seal', () => {

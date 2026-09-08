@@ -91,11 +91,7 @@ For each active gate hook, run its declared check (a `check.query` gate runs
 runs `gsd_run check predicate --predicate '<hook.check.predicate as JSON>' --phase-dir "${PHASE_DIR}" --raw`):
 
 ```bash
-if [ -n "$GSD_WS" ]; then
-  GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" --ws "${GSD_WS#--ws }" --raw)
-else
-  GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" --raw)
-fi
+GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" ${GSD_WS} --raw)
 GATE_BLOCK=$(printf '%s' "$GATE_RESULT" | jq -r '.block // false' 2>/dev/null || echo "false")
 ```
 
