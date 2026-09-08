@@ -29,7 +29,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { cleanup } = require('./helpers.cjs');
+const { cleanup, createTempDir, installSpawnEnv } = require('./helpers.cjs');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 
 const GSD_TOOLS = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
@@ -60,14 +60,13 @@ function gitAddCommit(dir, message) {
  * When raw=true the tool emits JSON; parsed is set on success.
  */
 function runTool(args, { cwd, env = {} } = {}) {
-  const childEnv = {
-    ...process.env,
+  const childEnv = installSpawnEnv({
     GSD_SESSION_KEY: '',
     CODEX_THREAD_ID: '',
     CLAUDE_SESSION_ID: '',
     CLAUDE_CODE_SSE_PORT: '',
     ...env,
-  };
+  });
   const r = spawnSync(process.execPath, [GSD_TOOLS, ...args], {
     cwd: cwd || os.tmpdir(),
     encoding: 'utf8',
@@ -79,6 +78,28 @@ function runTool(args, { cwd, env = {} } = {}) {
     try { result.parsed = JSON.parse(r.stdout.trim()); } catch { /* non-JSON or partial */ }
   }
   return result;
+}
+
+function writeAmbientGate(home, id, point) {
+  const capDir = path.join(home, '.gsd', 'capabilities', id);
+  fs.mkdirSync(capDir, { recursive: true });
+  fs.writeFileSync(path.join(capDir, 'capability.json'), JSON.stringify({
+    id,
+    title: 'Ambient test capability',
+    version: '1.0.0',
+    role: 'feature',
+    tier: 'full',
+    description: 'Capability outside the test fixture that must remain invisible.',
+    engines: { gsd: '>=1.7.0' },
+    requires: [],
+    runtimeCompat: { supported: ['claude'], unsupported: [] },
+    skills: [],
+    agents: [],
+    config: {},
+    steps: [],
+    contributions: [],
+    gates: [{ point, check: { query: 'ambient.check' }, blocking: false, onError: 'skip' }],
+  }), 'utf8');
 }
 
 // ─── Shared fixture teardown ─────────────────────────────────────────────────
@@ -95,6 +116,24 @@ after(() => { for (const d of tmpDirs) { try { cleanup(d); } catch { /* best-eff
 // ─── Section A: loop render-hooks execute:wave:post ──────────────────────────
 
 describe('A. loop render-hooks execute:wave:post — resolution', () => {
+
+  test('#4485: render-hooks ignores capabilities installed in the ambient GSD_HOME', (t) => {
+    const ambientHome = createTempDir('gsd-ambient-wave-post-');
+    writeAmbientGate(ambientHome, 'ambient-wave-post', 'execute:wave:post');
+    const previous = process.env.GSD_HOME;
+    process.env.GSD_HOME = ambientHome;
+    t.after(() => {
+      if (previous === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = previous;
+      cleanup(ambientHome);
+    });
+
+    const dir = makeTmpDir();
+    const result = runTool(['loop', 'render-hooks', 'execute:wave:post', '--raw'], { cwd: dir });
+    assert.strictEqual(result.status, 0, result.stderr);
+    const activeIds = result.parsed.activeHooks.map((hook) => hook.capId);
+    assert.deepStrictEqual(activeIds, ['drift', 'drift', 'ui']);
+  });
 
   test('[happy] full resolution: all 3 gates present with default config', () => {
     const dir = makeTmpDir();

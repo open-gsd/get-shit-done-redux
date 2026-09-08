@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
+const { runGsdTools, createTempProject, createTempDir, cleanup, installSpawnEnv } = require('./helpers.cjs');
 
 const GSD_TOOLS = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
 
@@ -75,13 +75,35 @@ function spawnRenderHooks(point, cwd) {
     cwd,
     encoding: 'utf8',
     timeout: 60000,
-    env: { ...process.env, GSD_SESSION_KEY: '', CODEX_THREAD_ID: '', CLAUDE_SESSION_ID: '' },
+    env: installSpawnEnv({ GSD_SESSION_KEY: '', CODEX_THREAD_ID: '', CLAUDE_SESSION_ID: '' }),
   });
   return {
     status: result.status,
     stdout: (result.stdout || '').trim(),
     stderr: (result.stderr || '').trim(),
   };
+}
+
+function writeAmbientGate(home, id, point) {
+  const capDir = path.join(home, '.gsd', 'capabilities', id);
+  fs.mkdirSync(capDir, { recursive: true });
+  fs.writeFileSync(path.join(capDir, 'capability.json'), JSON.stringify({
+    id,
+    title: 'Ambient test capability',
+    version: '1.0.0',
+    role: 'feature',
+    tier: 'full',
+    description: 'Capability outside the test fixture that must remain invisible.',
+    engines: { gsd: '>=1.7.0' },
+    requires: [],
+    runtimeCompat: { supported: ['claude'], unsupported: [] },
+    skills: [],
+    agents: [],
+    config: {},
+    steps: [],
+    contributions: [],
+    gates: [{ point, check: { query: 'ambient.check' }, blocking: false, onError: 'skip' }],
+  }), 'utf8');
 }
 
 /**
@@ -133,6 +155,23 @@ describe('render-hooks plan:post — gate discovery', () => {
     assert.ok(typeof envelope.rendered === 'string', 'rendered must be string');
     assert.ok(envelope.rendered.includes('gap-analysis'), 'rendered must mention gap-analysis');
     assert.ok(envelope.rendered.includes('gap-analysis.plan-post'), 'rendered must include check query');
+  });
+
+  test('#4485: render-hooks ignores capabilities installed in the ambient GSD_HOME', (t) => {
+    const ambientHome = createTempDir('gsd-ambient-plan-post-');
+    writeAmbientGate(ambientHome, 'ambient-plan-post', 'plan:post');
+    const previous = process.env.GSD_HOME;
+    process.env.GSD_HOME = ambientHome;
+    t.after(() => {
+      if (previous === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = previous;
+      cleanup(ambientHome);
+    });
+
+    const result = spawnRenderHooks('plan:post', tmpDir);
+    assert.strictEqual(result.status, 0, `exit non-zero: ${result.stderr}`);
+    const activeIds = JSON.parse(result.stdout).activeHooks.map((hook) => hook.capId);
+    assert.deepStrictEqual(activeIds, ['gap-analysis']);
   });
 
   test('[negative] render-hooks plan:post returns empty activeHooks when workflow.post_planning_gaps=false (gate deactivated)', () => {
