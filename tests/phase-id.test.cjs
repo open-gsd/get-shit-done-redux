@@ -244,6 +244,23 @@ describe('renderPhaseBranchName (#4126)', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('.{slug}', '8', ''), null);
   });
 
+  // #4252 round 2, Minor (a): a template with NO separator adjacent to `{slug}`
+  // on either side. Behavior is a plain concatenation — correct, and previously
+  // exercised by neither the example tests nor the property generators (which
+  // always join their parts with a separator).
+  test('no adjacent separator on either side — the token drops and the neighbours concatenate', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('abc{slug}def', '8', ''), 'abcdef');
+    assert.strictEqual(phaseId.renderPhaseBranchName('abc{slug}def', '8', 'x'), 'abcxdef');
+  });
+
+  // #4252 round 2, Minor (b): `Infinity` is a truthy NUMBER, so it takes the
+  // truthy-slug path and stringifies verbatim, exactly as the documented
+  // no-validation stance for a pathological truthy slug already says.
+  // Unreachable through either real call site (`phase_slug` is `string | null`);
+  // pinned as characterization so the accepted stance covers this value too.
+  test('Infinity is a truthy number and stringifies verbatim, like any pathological truthy slug', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', Infinity), 'gsd/phase-08-Infinity');
+  });
 
   // Same nit, third half: `phaseSlug` is typed `unknown`, so every shape that is
   // neither a string nor a truthy number must take the empty-slug route rather
