@@ -497,5 +497,12 @@ describe('#3926 — SUMMARY task-commits drift lint', () => {
       'lint:ci must invoke scripts/lint-summary-task-commits-drift.cjs — '
         + 'the #3926 phase-scope parser depends on the template shape this guard pins',
     );
+    // And the standalone alias every other lint script in the chain pairs
+    // with its `lint:ci` entry, so a contributor can run just this check.
+    assert.equal(
+      scripts['lint:summary-task-commits-drift'],
+      'node scripts/lint-summary-task-commits-drift.cjs',
+      'the guard must carry a standalone npm alias, as its cited sibling lint:table-schema-drift does',
+    );
   });
 });
