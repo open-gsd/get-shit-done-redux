@@ -1252,6 +1252,13 @@ describe('init new-project: sub_repos_detected (#4458)', () => {
   });
 
   test('detects a REAL linked git worktree child, matching the issue #4458 repro exactly', () => {
+    // `git worktree add` genuinely needs a real git repo -- this is the only
+    // one of these three tests that does (createTempGitProject spawns
+    // `git init` + a commit, real subprocess overhead on Windows CI's
+    // Defender-scanned spawns; the other two tests below use the plain,
+    // no-git createTempProject fixture instead, matching the pattern
+    // already proven safe by the SUBCOMMANDS loop above running `init
+    // new-project` against a non-git tmpDir).
     tmpDir = fs.realpathSync(createTempGitProject());
     const worktreeDir = path.join(tmpDir, 'child-wt');
     // `git worktree add` checks out files into a new working tree — the same
@@ -1274,7 +1281,10 @@ describe('init new-project: sub_repos_detected (#4458)', () => {
   });
 
   test('detects an ordinary child clone (.git as a directory) — no regression', () => {
-    tmpDir = fs.realpathSync(createTempGitProject());
+    // detectSubRepos only inspects the CHILD directory's .git, not the
+    // root's own git state -- a real outer repo isn't needed here, matching
+    // the SUBCOMMANDS loop above.
+    tmpDir = fs.realpathSync(createTempProject());
     const cloneDir = path.join(tmpDir, 'child-clone');
     fs.mkdirSync(path.join(cloneDir, '.git'), { recursive: true });
 
@@ -1286,7 +1296,7 @@ describe('init new-project: sub_repos_detected (#4458)', () => {
   });
 
   test('does not report an ordinary non-repository directory as a sub-repo', () => {
-    tmpDir = fs.realpathSync(createTempGitProject());
+    tmpDir = fs.realpathSync(createTempProject());
     fs.mkdirSync(path.join(tmpDir, 'not-a-repo'));
 
     const result = runGsdTools('init new-project', tmpDir);
