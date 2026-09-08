@@ -1,4 +1,4 @@
-// allow-test-rule: source-text-is-the-product
+// allow-test-rule: source-text-is-the-product (see #4459)
 // Workflow markdown is the installed orchestration contract — this file's
 // text IS what the executor runs at runtime.
 
