@@ -273,27 +273,18 @@ elif [ -n "$PHASE_START" ]; then
   fi
 fi
 
-# #3926: bound the change set at the phase, not at the present. A
-# `${DIFF_BASE}..HEAD` range sweeps in everything landed after the phase's
-# first commit — interleaved and post-phase work alike (measured: a 20-file
-# phase scoped as 248, crossing the >50 threshold and silently downgrading
-# --depth=deep to standard).
-#
+# #3926: bound the change set at the phase, not at the present — a
+# `${DIFF_BASE}..HEAD` range sweeps in interleaved and post-phase work
+# (measured: a 20-file phase scoped as 248, silently downgrading --depth=deep).
 # The phase's commit set comes from the `## Task Commits` sections of the
-# SUMMARYs under PHASE_DIR. That record is PATH-ANCHORED as PHASE_START is — a
-# later milestone's SUMMARY lives in a different directory — so it needs no
-# message grep (the class re-fixed five times, #2989/#3191/#3503/#3995, and
-# banned by the T6 docs-parity row) and no diff-tip choice (a two-token `A..B`
-# bound silently drops an unscoped post-merge repair commit).
-#
-# The parse is SECTION-SCOPED and BACKTICK-ANCHORED, which is what
-# `scripts/lint-summary-task-commits-drift.cjs` pins across the SUMMARY
-# templates. Both properties are load-bearing: `verifySummaryCore` in
-# `src/phase.cts` matches bare `\b[0-9a-f]{7,40}\b` over a whole SUMMARY, which
-# its own comment calls too noisy to show a user — a short SHA quoted in prose
-# would become a phase commit. This parser is deliberately not that one.
-# SCOPE_SOURCE is initialized before any branch sets it: the tier label reads
-# it, and an inherited value would mislabel an ordinary SUMMARY scope.
+# SUMMARYs under PHASE_DIR: PATH-ANCHORED like PHASE_START, so no message grep
+# (the class re-fixed five times, #2989/#3191/#3503/#3995, banned by T6) and no
+# diff-tip choice (an `A..B` bound drops an unscoped post-merge repair commit).
+# The parse is SECTION-SCOPED, ROW-SCOPED and BACKTICK-ANCHORED — pinned by
+# scripts/lint-summary-task-commits-drift.cjs — and deliberately not
+# `verifySummaryCore`'s bare hex match, under which a SHA quoted in prose
+# becomes a phase commit. SCOPE_SOURCE is initialized before any branch sets
+# it: an inherited value would mislabel an ordinary SUMMARY scope.
 SCOPE_SOURCE=""
 PHASE_SUMMARIES=$(ls "${PHASE_DIR}"/*-SUMMARY.md 2>/dev/null)
 PHASE_COMMIT_SET=""
@@ -301,11 +292,27 @@ if [ -n "$PHASE_SUMMARIES" ]; then
   # Rewrapped through unquoted command substitution for the same zsh reason as
   # Tier 2 above (gsd-core#4109).
   for summary in $(printf '%s' "$PHASE_SUMMARIES"); do
-    TASK_COMMIT_SECTION=$(awk '/^## Task Commits[ \t\r]*$/ { inside=1; next } /^## / { inside=0 } inside' "$summary" 2>/dev/null)
-    [ -n "$TASK_COMMIT_SECTION" ] || continue
-    # shellcheck disable=SC2016  # the backticked hex pattern and the awk program are
-    # literal by design — nothing here is meant to expand.
-    for ref in $(printf '%s' "$TASK_COMMIT_SECTION" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`'); do
+    # Section-scoped, then ROW-scoped: only a task row (optional list marker,
+    # `**Task N:` label closed by the FIRST `**`) contributes, and only the
+    # backticked hex AFTER that closing bold. A hash quoted in prose inside the
+    # section — or the template's own `**Plan metadata:**` line — is not a
+    # task commit. The drift lint pins this row shape and ships the JS model
+    # of this extraction (extractTaskCommitRefs), held to byte-parity with the
+    # pipeline below by the regression suite.
+    # shellcheck disable=SC2016  # literal awk program and hex pattern
+    TASK_COMMIT_ROWS=$(awk '
+      /^## Task Commits[ \t\r]*$/ { inside=1; next }
+      /^## / { inside=0 }
+      !inside { next }
+      /^[ \t]*([0-9]+\.|[-*])?[ \t]*\*\*Task[ \t]+[0-9]+:/ {
+        rest = $0
+        sub(/^[ \t]*([0-9]+\.|[-*])?[ \t]*\*\*Task[ \t]+[0-9]+:/, "", rest)
+        close_at = index(rest, "**")
+        if (close_at > 0) print substr(rest, close_at + 2)
+      }' "$summary" 2>/dev/null)
+    [ -n "$TASK_COMMIT_ROWS" ] || continue
+    # shellcheck disable=SC2016
+    for ref in $(printf '%s' "$TASK_COMMIT_ROWS" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`'); do
       # Resolve, and keep only commits that exist and are reachable from HEAD.
       # A SUMMARY can name a commit that a later rebase dropped; an unresolvable
       # ref is skipped, never guessed at.
@@ -814,35 +821,40 @@ reviewer (a previously-latent bug #4209 made observable — see B3 in `.wolf/bug
 # #3926: also hand the agent an upper bound — its fallback diff otherwise
 # runs ${DIFF_BASE}..HEAD. The bound is the newest commit named by the
 # phase's `## Task Commits` sections, read exactly as compute_file_scope
-# reads them (see that step for why no message grep and no bare hex match).
-# APPROXIMATE by design: commits interleaved inside the phase window stay
-# inside ${DIFF_BASE}..${DIFF_TIP}. That is acceptable for a last-resort net
-# normal operation never reaches (the workflow always passes files:), and it
-# is strictly tighter than HEAD.
+# reads them. APPROXIMATE by design: commits interleaved inside the phase
+# window stay inside ${DIFF_BASE}..${DIFF_TIP} — acceptable for a last-resort
+# net normal operation never reaches, and strictly tighter than HEAD.
 #
 # TWO WAYS THE BOUND CAN BE ABSENT, deliberately not collapsed — a single
-# A..B range cannot express commits on divergent branches, which is why
-# Tier 3 unions per-commit diffs instead of bounding a range:
+# A..B range cannot express commits on divergent branches:
 #   no task commits at all  -> DIFF_TIP stays empty and the agent bounds at
-#     HEAD, unchanged from before this fix. KNOWN RESIDUAL, disclosed not
-#     fixed: Tier 3 fails closed here, the agent's own fallback does not,
-#     because the agent defaults an absent diff_tip to HEAD for direct
-#     invocations. Closing it means changing the agent — a separate concern.
-#   no unique newest commit -> leave DIFF_TIP empty. Picking either tip drops
-#     the other branch's commits; on a last-resort net, over-scoping is the
-#     tolerable error and under-scoping is not.
+#     HEAD, as before this fix. KNOWN RESIDUAL: Tier 3 fails closed here, the
+#     agent's own fallback does not (it defaults an absent diff_tip to HEAD).
+#   no unique newest commit -> leave DIFF_TIP empty; picking either tip drops
+#     the other branch's commits, and under-scoping is the worse error.
 #   a unique newest commit  -> use it.
-# Guarded on DIFF_BASE (set by compute_file_scope, reused verbatim per #4209
-# B3): a tip without a base bounds nothing.
+# Guarded on DIFF_BASE (set by compute_file_scope, reused per #4209 B3): a
+# tip without a base bounds nothing.
 DIFF_TIP=""
 if [ -n "$DIFF_BASE" ]; then
   PHASE_TIP_CANDIDATES=""
   for summary in $(printf '%s' "$(ls "${PHASE_DIR}"/*-SUMMARY.md 2>/dev/null)"); do
-    TASK_COMMIT_SECTION=$(awk '/^## Task Commits[ \t\r]*$/ { inside=1; next } /^## / { inside=0 } inside' "$summary" 2>/dev/null)
-    [ -n "$TASK_COMMIT_SECTION" ] || continue
-    # shellcheck disable=SC2016  # the backticked hex pattern and the awk program are
-    # literal by design — nothing here is meant to expand.
-    for ref in $(printf '%s' "$TASK_COMMIT_SECTION" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`'); do
+    # Same row-scoped parse as compute_file_scope — the two programs are pinned
+    # identical by test.
+    # shellcheck disable=SC2016  # literal awk program and hex pattern
+    TASK_COMMIT_ROWS=$(awk '
+      /^## Task Commits[ \t\r]*$/ { inside=1; next }
+      /^## / { inside=0 }
+      !inside { next }
+      /^[ \t]*([0-9]+\.|[-*])?[ \t]*\*\*Task[ \t]+[0-9]+:/ {
+        rest = $0
+        sub(/^[ \t]*([0-9]+\.|[-*])?[ \t]*\*\*Task[ \t]+[0-9]+:/, "", rest)
+        close_at = index(rest, "**")
+        if (close_at > 0) print substr(rest, close_at + 2)
+      }' "$summary" 2>/dev/null)
+    [ -n "$TASK_COMMIT_ROWS" ] || continue
+    # shellcheck disable=SC2016
+    for ref in $(printf '%s' "$TASK_COMMIT_ROWS" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`'); do
       FULL_SHA=$(git rev-parse --verify --quiet "${ref}^{commit}" 2>/dev/null) || continue
       [ -n "$FULL_SHA" ] || continue
       git merge-base --is-ancestor "$FULL_SHA" HEAD 2>/dev/null || continue
@@ -858,18 +870,12 @@ if [ -n "$DIFF_BASE" ]; then
     # anchor #3191/#3503/#3995 pin by test.
     echo "Note: no SUMMARY task commits for '${PADDED_PHASE}'; the reviewer agent's fallback will bound at HEAD."
   else
-    # The tip must be an ancestor-descendant maximum of the WHOLE set: every
-    # other candidate must be an ancestor of it. Commit DATES are unusable —
-    # a rebase or cherry-pick re-stamps them — so the ordering is topological.
-    #
-    # TWO LINEAR PASSES, not a pairwise scan. Ancestry is a partial order, so a
-    # running maximum is well defined: pass 1 keeps whichever candidate is a
-    # descendant of the one held, pass 2 confirms that candidate really covers
-    # the whole set (pass 1 alone cannot — on divergent branches it ends up
-    # holding an arbitrary incomparable element). Same verdict as comparing
-    # every pair, at ~2n `git merge-base` subprocesses instead of n(n-1); the
-    # pairwise form is fine for a handful of task commits and is not for a
-    # phase with hundreds.
+    # The tip is the ancestry maximum of the WHOLE set (dates are unusable —
+    # a rebase re-stamps them). TWO LINEAR PASSES: pass 1 keeps whichever
+    # candidate descends from the one held; pass 2 confirms it covers the
+    # whole set (alone, pass 1 can end on an incomparable element of a
+    # divergent set). Same verdict as a pairwise scan at ~2n `merge-base`
+    # calls instead of n(n-1).
     for cand in $(printf '%s' "$PHASE_TIP_CANDIDATES"); do
       if [ -z "$DIFF_TIP" ]; then DIFF_TIP="$cand"; continue; fi
       git merge-base --is-ancestor "$DIFF_TIP" "$cand" 2>/dev/null && DIFF_TIP="$cand"

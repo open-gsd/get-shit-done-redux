@@ -1820,6 +1820,45 @@ describe('#3926 — Tier-3 scope is the phase change set, not everything since t
   );
 
   test(
+    'a hash quoted in prose inside the section is not a phase commit — only task rows are read (round 4)',
+    SKIP_WIN32,
+    () => {
+      // The round-4 review's fixture, in a real repo: the section names the
+      // phase commit on a task row and quotes the POST-phase commit in an
+      // aside. Pre-fix, the aside's hash entered the set and post.txt entered
+      // the scope. Negative control: with the row anchor removed from the awk
+      // the scope is ['phase-a.txt', 'post.txt'].
+      const repo = createTempGitProject('gsd-3926-prose-hash-');
+      try {
+        commitFile(repo, 'pre.txt', 'chore: before the phase');
+        commitFile(repo, `${PHASE_DIR}/06-1-PLAN.md`, 'docs: create the phase directory');
+        const phaseA = commitFile(repo, 'phase-a.txt', 'chore: phase work, unscoped subject');
+        const post = commitFile(repo, 'post.txt', 'docs: unrelated work after the phase');
+        const rel = `${PHASE_DIR}/06-1-SUMMARY.md`;
+        fs.writeFileSync(path.join(repo, rel), [
+          '---', 'phase: 06', '---', '',
+          '## Task Commits', '',
+          `1. **Task 1: build the thing** - \`${phaseA}\` (feat)`, '',
+          `Note: this superseded an earlier attempt recorded at \`${post}\`.`, '',
+          `**Plan metadata:** \`${post}\` (docs: complete plan)`, '',
+          '## Files Created/Modified', '',
+        ].join('\n'));
+        gitOrThrow(['add', '--', rel], { cwd: repo, timeoutMs: GIT_TIMEOUT_MS });
+        gitOrThrow(['commit', '-m', 'docs: phase summary'], { cwd: repo, timeoutMs: GIT_TIMEOUT_MS });
+        const result = runScope(repo, 'REVIEW_FILES=()');
+        assert.equal(result.status, 0, `fence exited ${result.status}; stderr=${result.stderr}`);
+        assert.deepStrictEqual(
+          (parseSentinel(result.stdout, 'REVIEW_FILES') || []).sort(),
+          ['phase-a.txt'],
+          'a hash outside a task row must not widen the scope'
+        );
+      } finally {
+        cleanup(repo);
+      }
+    }
+  );
+
+  test(
     'the final tier label names the source that actually produced the scope',
     SKIP_WIN32,
     () => {
@@ -2090,8 +2129,25 @@ describe('#3926 — Tier-3 scope is the phase change set, not everything since t
     // never opens, the commit set comes back empty, and the phase silently
     // scopes to nothing (driven: 0 hashes from CRLF, 1 from LF).
     assert.ok(
-      /awk '\/\^## Task Commits\[ \\t\\r\]\*\$\/ \{ inside=1; next \} \/\^## \/ \{ inside=0 \} inside'/.test(tier3),
+      tier3.includes("/^## Task Commits[ \\t\\r]*$/ { inside=1; next }") && tier3.includes('/^## / { inside=0 }'),
       'the phase commit set must be sliced from the SUMMARY `## Task Commits` section, CRLF-tolerantly (#3926)'
+    );
+    // Round 4: the parser read EVERY backticked hex token in the section, so a
+    // hash quoted in an aside became a phase commit. It now reads task ROWS
+    // only — the awk's row anchor is the label test, and the guard's
+    // ROW_PREFIX mirrors it byte-for-byte. Both fences carry the SAME program:
+    // spawn_reviewer's tip derivation must read the record exactly as
+    // compute_file_scope does, or the two tiers disagree on the phase.
+    const ROW_ANCHOR = '/^[ \\t]*([0-9]+\\.|[-*])?[ \\t]*\\*\\*Task[ \\t]+[0-9]+:/';
+    assert.ok(tier3.includes(ROW_ANCHOR), 'Tier-3 must read hashes from task rows only — the row anchor is the label (#3926 round 4)');
+    const awkPrograms = [...workflow.matchAll(/TASK_COMMIT_ROWS=\$\(awk '([\s\S]*?)' "\$summary"/g)].map((m) => m[1]);
+    assert.equal(awkPrograms.length, 2, 'both Tier-3 and spawn_reviewer derive from the task-commit record');
+    assert.equal(awkPrograms[0], awkPrograms[1], 'the two fences must run the identical awk program');
+    const { ROW_PREFIX } = require('../scripts/lint-summary-task-commits-drift.cjs');
+    assert.equal(
+      ROW_PREFIX.source.replace(/\(\?:/g, '('),
+      ROW_ANCHOR.slice(1, -1),
+      'the guard\'s ROW_PREFIX must be the awk row anchor, byte for byte (non-capturing group aside)'
     );
     assert.ok(
       tier3.includes("grep -oE '`[0-9a-f]{7,40}`'"),

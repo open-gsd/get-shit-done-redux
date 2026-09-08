@@ -31,6 +31,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const {
+  extractTaskCommitRefs,
   findSummaryTaskCommitsDrift,
   listTemplates,
   TEMPLATE_DIR,
@@ -332,6 +333,51 @@ describe('#3926 — SUMMARY task-commits drift lint', () => {
     const failures = findSummaryTaskCommitsDrift(root);
     assert.equal(failures.length, 1);
     assert.match(failures[0], /is the last '## ' section/);
+  });
+
+  test('fail-first: a bullet-form task row is DETECTED and refused — the parser reads it, so the guard must see it', () => {
+    // Round 4: the guard inspected only `N.`-numbered rows while the parser
+    // read the whole section. Detection now mirrors the parser's row anchor
+    // (ROW_PREFIX), so a `-` bullet row — one the parser DOES read — is a row
+    // the guard inspects, and it is not the canonical numbered shape.
+    const root = fixture({
+      'summary.md': [
+        '# S', '', '## Task Commits', '',
+        '1. **Task 1: ok** - `abc123f`',
+        '- **Task 2: bulleted** - `def4567`',
+        '', '## Next', '',
+      ].join('\n'),
+    });
+    const failures = findSummaryTaskCommitsDrift(root);
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /bulleted/);
+  });
+
+  test('the round-4 fixture: a hash quoted in section prose is read by neither the parser model nor the templates it came from', () => {
+    // The review's reproduction: a correctly-opened, correctly-terminated
+    // section whose aside quotes a backticked hash. The pre-fix pipeline
+    // extracted BOTH tokens; the guard reported the template clean. The guard
+    // still reports clean — correctly, because the parser was narrowed to task
+    // rows and no longer reads the aside. The model pins that.
+    const text = [
+      '## Task Commits', '',
+      '1. **Task 1: build the thing** - `abc123f` (feat)', '',
+      'Note: this superseded an earlier attempt recorded at `1234567`.', '',
+      '## Files Created/Modified', '',
+    ].join('\n');
+    assert.deepEqual(extractTaskCommitRefs(text), ['abc123f']);
+    assert.deepEqual(findSummaryTaskCommitsDrift(fixture({ 'summary.md': text })), []);
+  });
+
+  test('the shipped summary.md template: `**Plan metadata:**` inside the section is not a task commit', () => {
+    // The live template carries a non-row backticked token inside the
+    // section. Substituting real hex for every placeholder, the model reads
+    // the three task rows and not the metadata line.
+    const template = fs.readFileSync(path.join(ROOT, TEMPLATE_DIR, 'summary.md'), 'utf8');
+    const hexed = template
+      .replace('`abc123f`', '`aaaaaaa`').replace('`def456g`', '`bbbbbbb`')
+      .replace('`hij789k`', '`ccccccc`').replace('`lmn012o`', '`ddddddd`');
+    assert.deepEqual(extractTaskCommitRefs(hexed), ['aaaaaaa', 'bbbbbbb', 'ccccccc']);
   });
 
   test('fail-first: a section with no backticked task line at all is a finding', () => {

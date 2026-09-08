@@ -7,19 +7,32 @@
  *
  * `gsd-core/workflows/code-review.md` derives a phase's own commit set by
  * slicing each `*-SUMMARY.md` between its `## Task Commits` heading and the
- * next `## ` heading, then matching BACKTICK-DELIMITED hex tokens inside that
- * slice. That derivation replaced a commit-message grep, a class that had
+ * next `## ` heading, then reading BACKTICK-DELIMITED hex tokens from the TASK
+ * ROWS inside that slice — a row is an optional list marker followed by a
+ * `**Task N:` label closed by the first `**`, and only the tokens after that
+ * closing bold count. Nothing else in the section is read: a hash quoted in an
+ * aside, or on the template's own `**Plan metadata:**` line, is not a task
+ * commit. That derivation replaced a commit-message grep, a class that had
  * failed and been re-fixed five times (#2989/#3191/#3503/#3995), so the
  * coupling to the template's line shape is load-bearing rather than
  * incidental — and it is otherwise implicit, which is what this lint makes
  * explicit.
  *
- * Two properties are pinned, and only two, because only these two are what the
+ * Three properties are pinned, and only three, because these are what the
  * parser actually reads:
  *
  *   1. the `## Task Commits` heading exists, and is followed by another `## `
  *      heading (the parser's slice needs a terminator);
- *   2. inside that slice, every task line carries its hash in BACKTICKS.
+ *   2. every task ROW inside that slice — detected exactly as the parser
+ *      detects one (ROW_PREFIX below, the awk's own anchor) — carries its hash
+ *      in BACKTICKS immediately after the label, in the one canonical shape;
+ *   3. the parser reads task rows and nothing else, so this file also ships
+ *      the JS model of that extraction (`extractTaskCommitRefs`), which the
+ *      regression suite holds to byte-parity with the shipped bash over
+ *      generated documents. The round-4 review found the guard claiming
+ *      "only two properties" while the parser then read EVERY backticked hex
+ *      token in the section; the parser was narrowed to rows, and this model
+ *      is what keeps the two from drifting apart again.
  *
  * Deliberately NOT pinned: the hash's own spelling. Some templates ship the
  * literal placeholder `hash` and others `abc123f`, so requiring hex here
@@ -69,6 +82,17 @@ function listTemplates(root = ROOT) {
 // guard reported clean over a section the parser never opens.
 const HEADING = /^## Task Commits[ \t\r]*$/;
 const NEXT_HEADING = /^## /;
+// EXACTLY the shipped awk's row anchor: an optional list marker (`N.`, `-`,
+// `*`), then the `**Task N:` label. This is the parser's row DETECTION, and
+// the guard's detection below mirrors it so that a row the parser would read
+// is a row the guard inspects — a bullet-form row is detected here and then
+// refused as non-canonical, never skipped. `[ \t]`, not `\s`: the awk class
+// does not admit `\r` or a form feed there, and neither may this.
+const ROW_PREFIX = /^[ \t]*(?:[0-9]+\.|[-*])?[ \t]*\*\*Task[ \t]+[0-9]+:/;
+// The parser's hash token, verbatim from the pipeline: backticked lowercase
+// hex, 7 to 40 characters. Uppercase, a shorter run, or a bare token in prose
+// is not a commit to it.
+const HEX_TOKEN = /`[0-9a-f]{7,40}`/g;
 // TWO patterns, and the split is the point: one DETECTS a task row, the other
 // says whether that row is CANONICAL. A finding is a row the first matches and
 // the second does not.
@@ -99,11 +123,14 @@ const NEXT_HEADING = /^## /;
 // `[\s\S]`, not `.`: the dot excludes `\r`, so a carriage return INSIDE a title
 // made detection skip the whole row and its missing hash went unreported —
 // the same silent-miss direction as the asterisk exclusion above.
-const LABEL = String.raw`\*\*Task\s+\d+:(?:(?!\*\*)[\s\S])*\*\*`;
-// DETECT: a numbered task row whose label closes. The closing `**` is required
-// — without it, prose inside the section that merely opens with `2. **Task 2: …`
-// is read as a task row and reported as drifted.
-const TASK_LINE = new RegExp(String.raw`^\s*\d+\.\s+${LABEL}`);
+const LABEL = String.raw`\*\*Task[ \t]+\d+:(?:(?!\*\*)[\s\S])*\*\*`;
+// DETECT: a task row whose label closes — the parser's own row test
+// (ROW_PREFIX: optional list marker, then the label) with the closing `**`
+// required. Without it, prose inside the section that merely opens with
+// `2. **Task 2: …` is read as a task row and reported as drifted. Detection is
+// deliberately WIDER than the canonical shape: a `-`/`*` bullet row is one the
+// parser reads, so the guard must see it in order to refuse it.
+const TASK_LINE = new RegExp(String.raw`^[ \t]*(?:\d+\.|[-*])?[ \t]*${LABEL}`);
 // CANONICAL: label, one punctuation separator, then IMMEDIATELY a backticked
 // token that is a single ALPHANUMERIC RUN. Pinning the token's SHAPE is what
 // closes the last miss class: `` `B, C` `` and `` `B;C` `` satisfy any "there is
@@ -141,6 +168,31 @@ function sliceSections(lines) {
     if (current) current.body.push(line);
   }
   return sections;
+}
+
+/**
+ * The parser, modelled: the hashes `gsd-core/workflows/code-review.md` reads
+ * from `text`, in document order, duplicates included — exactly what the
+ * shipped `awk | grep -oE | tr -d` pipeline emits, which the regression suite
+ * asserts over generated documents. Section-scoped (every `## Task Commits`
+ * section, as the awk reopens), row-scoped (ROW_PREFIX, label closed by the
+ * first `**`), then every backticked hex token after the closing bold — so a
+ * TDD task recording several commits on one row contributes all of them, and a
+ * hash anywhere else in the section contributes nothing.
+ */
+function extractTaskCommitRefs(text) {
+  const refs = [];
+  for (const section of sliceSections(text.split('\n'))) {
+    for (const line of section.body) {
+      const m = ROW_PREFIX.exec(line);
+      if (!m) continue;
+      const rest = line.slice(m[0].length);
+      const close = rest.indexOf('**');
+      if (close === -1) continue;
+      for (const token of rest.slice(close + 2).match(HEX_TOKEN) || []) refs.push(token.slice(1, -1));
+    }
+  }
+  return refs;
 }
 
 /**
@@ -203,11 +255,12 @@ function main() {
     process.stderr.write(`  - ${failure}\n`);
   }
   process.stderr.write("The parser lives in gsd-core/workflows/code-review.md (compute_file_scope): it slices between\n");
-  process.stderr.write("'## Task Commits' and the next '## ' heading, then matches backticked hex tokens inside the slice.\n");
+  process.stderr.write("'## Task Commits' and the next '## ' heading, then reads backticked hex tokens from the task rows\n");
+  process.stderr.write("(`N. **Task N: …** - `hash``) inside the slice — nothing else in the section is read.\n");
   process.stderr.write('Keep the templates and that parser in step, or #3926 silently loses phase scope.\n');
   return 1;
 }
 
 if (require.main === module) runMain(main);
 
-module.exports = { findSummaryTaskCommitsDrift, listTemplates, sliceSections, TEMPLATE_DIR, TEMPLATE_RE };
+module.exports = { extractTaskCommitRefs, findSummaryTaskCommitsDrift, listTemplates, sliceSections, ROW_PREFIX, TEMPLATE_DIR, TEMPLATE_RE };
