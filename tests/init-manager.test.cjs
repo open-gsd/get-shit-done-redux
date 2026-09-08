@@ -1172,13 +1172,17 @@ describe('init subcommands sharing the project_exists/project_path PROJECT.md pa
   // and withProjectRoot) repeated verbatim, via grep, in six more cmdInit*
   // functions. Each is exercised here through its real CLI subcommand rather
   // than re-asserting src/init.cts internals directly, so a regression in the
-  // router wiring would also be caught. `init manager` and `init new-milestone`
-  // are deliberately excluded: `manager` has its own STATE.md/ROADMAP.md
-  // readiness guard (covered separately above via `init complete-milestone`,
-  // which shares withProjectRoot); `new-milestone`'s project_path fix is
-  // real (see src/init.cts) but its dedicated coverage belongs with #4456's
-  // own new-milestone.md workstream-forwarding work, not duplicated here.
-  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project'];
+  // router wiring would also be caught. `init manager` is deliberately
+  // excluded: it has its own STATE.md/ROADMAP.md readiness guard (covered
+  // separately above via `init complete-milestone`, which shares
+  // withProjectRoot). `new-milestone` was originally deferred to #4456's own
+  // new-milestone.md workstream-forwarding work (see PR #4543), but that PR
+  // only exercised the *workflow's* `--ws` argv forwarding through a stubbed
+  // gsd_run, never cmdInitNewMilestone's real project_exists/project_path
+  // output — #4457 closes that gap by folding it into this loop; it has no
+  // manager-style readiness precondition, so it fits the shared assertion
+  // shape below without a dedicated test.
+  const SUBCOMMANDS = ['ingest-docs', 'resume', 'progress', 'new-project', 'new-milestone'];
 
   let tmpDir;
 
