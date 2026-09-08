@@ -183,7 +183,11 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
       const script = `milestone_version="1.0"\n${stubGsdRun({ archive_dir: archiveDir })}${lifecycle5bFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
       throwIfFailed(r, 'bash <lifecycle 5b fence>');
-      assert.ok(r.stdout.includes(path.join(archiveDir, 'v1.0-ROADMAP.md')),
+      // The fence concatenates with a literal bash `/` ("${ARCHIVE_DIR}/v...-ROADMAP.md"),
+      // never path.join — on Windows that yields a MIXED-separator path (backslashes
+      // from archiveDir + one trailing `/`), which path.join's all-backslash output
+      // does not match. Mirror the fence's own concatenation instead (#4455 CI finding).
+      assert.ok(r.stdout.includes(`${archiveDir}/v1.0-ROADMAP.md`),
         `expected ls to find the root archive file, got: ${r.stdout}`);
     });
 
@@ -199,7 +203,8 @@ describe('autonomous.md workstream-scoped paths (#4455)', () => {
       const script = `milestone_version="1.0"\n${stubGsdRun({ archive_dir: wsArchiveDir })}${lifecycle5bFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
       throwIfFailed(r, 'bash <lifecycle 5b fence>');
-      assert.ok(r.stdout.includes(path.join(wsArchiveDir, 'v1.0-ROADMAP.md')),
+      // See the flat-mode test above for why this is a literal `/` join, not path.join.
+      assert.ok(r.stdout.includes(`${wsArchiveDir}/v1.0-ROADMAP.md`),
         `expected ls to find the workstream archive file, got: ${r.stdout}`);
       assert.ok(!r.stdout.includes(rootArchiveDir),
         `must not have checked the root archive dir, got: ${r.stdout}`);
