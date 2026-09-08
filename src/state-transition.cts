@@ -1252,7 +1252,17 @@ function beginPhaseCore(
     const focusLabel = intent.phaseName
       ? `Phase ${intent.phaseNumber} — ${intent.phaseName}`
       : `Phase ${intent.phaseNumber}`;
-    const focusPattern = /(\*\*Current focus:\*\*\s*).*/i;
+    // #4469: anchored to line start with same-line whitespace only, mirroring
+    // #4243/PR #4453's fix to stateReplaceField's bold branch. The pre-fix
+    // pattern carried no `^`/`m` and used `\s*` (crosses newlines), so a bold
+    // `**Current focus:**` quoted mid-sentence elsewhere in the body (e.g. an
+    // Accumulated Context bullet) matched first and had the rest of its line
+    // silently overwritten with the new focus label -- the same #4010
+    // data-loss class. `[ \t]*` (not `\s*`) avoids consuming the newlines
+    // before the label into the match; `$` documents the match ends at
+    // end-of-line (inert here since `.` never crosses line terminators
+    // without `/s`, which is not set).
+    const focusPattern = /^([ \t]*\*\*Current focus:\*\*[ \t]*)(.*)$/im;
     if (focusPattern.test(body)) {
       body = body.replace(focusPattern, (_match, prefix: string) => `${prefix}${focusLabel}`);
       updated.push('Current focus');
