@@ -400,7 +400,7 @@ fi
 grep -A 50 "^user_setup:" .planning/phases/XX-name/{phase}-{plan}-PLAN.md | head -50
 ```
 
-If user_setup exists: create `{phase}-USER-SETUP.md` using template `~/.claude/gsd-core/templates/user-setup.md`. Per service: env vars table, account setup checklist, dashboard config, local dev notes, verification commands. Status "Incomplete". Set `USER_SETUP_CREATED=true`. If empty/missing: skip.
+If user_setup exists: create `{phase}-USER-SETUP.md` using the template at `~/.claude/gsd-core/templates/user-setup.md` (or its `~/.claude/gsd-core/templates/user-setup.compact.md` variant — resolve per `~/.claude/gsd-core/references/compact-content-gate.md` §"Streams 1b and 4"). Per service: env vars table, account setup checklist, dashboard config, local dev notes, verification commands. Status "Incomplete". Set `USER_SETUP_CREATED=true`. If empty/missing: skip.
 </step>
 
 <step name="create_summary">
@@ -409,7 +409,7 @@ emit narrative output between the Write tool call and the commit tool call.
 Truncation at this boundary is a known failure mode (see #2070 rescue logic in
 execute-phase.md step 5.5).
 
-Create `{phase}-{plan}-SUMMARY.md` at `.planning/phases/XX-name/`. Use `~/.claude/gsd-core/templates/summary.md`.
+Create `{phase}-{plan}-SUMMARY.md` at `.planning/phases/XX-name/`. Use the template at `~/.claude/gsd-core/templates/summary.md` (or its `~/.claude/gsd-core/templates/summary.compact.md` variant — resolve per `~/.claude/gsd-core/references/compact-content-gate.md` §"Streams 1b and 4").
 
 **Frontmatter:** phase, plan, subsystem, tags | requires/provides/affects | tech-stack.added/patterns | key-files.created/modified | key-decisions | requirements-completed (**MUST** copy `requirements` array from PLAN.md frontmatter verbatim) | duration ($DURATION), completed ($PLAN_END_TIME date).
 
@@ -547,8 +547,21 @@ fi
 If .planning/codebase/ doesn't exist: skip.
 
 ```bash
-FIRST_TASK=$(git log --oneline --grep="feat({phase}-{plan}):" --grep="fix({phase}-{plan}):" --grep="test({phase}-{plan}):" --reverse | head -1 | cut -d' ' -f1)
-git diff --name-only ${FIRST_TASK}^..HEAD 2>/dev/null || true
+# #4459: a phase number is unique within a MILESTONE, not a repository. The
+# former commit-subject grep had no milestone bound, and its `--reverse |
+# head -1` deliberately selected the OLDEST matching subject — on a
+# milestone that reuses this phase number, that drags in the PREVIOUS
+# milestone's same-numbered phase's commits too. The phase's own directory
+# is the unique identity: base = the parent of the first commit that added
+# anything under the phase directory — the same anchor code-review.md's
+# structural-pre-pass step already uses for the identical problem (#3995).
+PHASE_START=$(git log --format="%H" --diff-filter=A -- ".planning/phases/XX-name" 2>/dev/null | tail -1)
+if [ -n "$PHASE_START" ] && git rev-parse "${PHASE_START}^" >/dev/null 2>&1; then
+  DIFF_BASE="${PHASE_START}^"
+else
+  DIFF_BASE="${PHASE_START:-HEAD}"
+fi
+git diff --name-only ${DIFF_BASE}..HEAD 2>/dev/null || true
 ```
 
 Update only structural changes: new src/ dir → STRUCTURE.md | deps → STACK.md | file pattern → CONVENTIONS.md | API client → INTEGRATIONS.md | config → STACK.md | renamed → update paths. Skip code-only/bugfix/content changes.
@@ -589,7 +602,7 @@ All routes: `/clear` first for fresh context.
 - USER-SETUP.md generated if user_setup in frontmatter
 - SUMMARY.md created with substantive content
 - STATE.md updated (position, decisions, issues, session) — unless parallel mode (orchestrator handles)
-- ROADMAP.md updated — unless parallel mode (orchestrator handles)
+- ROADMAP.md updated — same exception
 - If codebase map exists: map updated with execution changes (or skipped if no significant changes)
-- If USER-SETUP.md created: prominently surfaced in completion output
+- If USER-SETUP.md created: surfaced in completion output
 </success_criteria>

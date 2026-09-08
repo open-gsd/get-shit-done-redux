@@ -25,6 +25,7 @@
 const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { createTempDir, cleanup } = require('./helpers.cjs');
 const { runHook: runHookSeam } = require('./helpers/process-seam.cjs');
@@ -537,6 +538,187 @@ describe('guard <-> complete-milestone workflow binding (the escape hatch is WIR
       'complete-milestone.md must contain exactly one ROADMAP-reorganize step — the ' +
       'sentinel-armed reorganize_roadmap_and_delete_originals; any additional reorganize ' +
       'step is an unguarded catastrophic-shrink Write (#2255 round 8 Blocker)');
+  });
+});
+
+describe('workstream-scoped curated paths (#4455)', () => {
+  // Security-review finding on #4455: planningDir(cwd) (src/planning-workspace.cts)
+  // resolves to `.planning/[<project>/]workstreams/<ws>/...` whenever GSD_WORKSTREAM
+  // is set — but CURATED_PATTERNS only matched the root form, so the guard's ENTIRE
+  // catastrophic-shrink protection (not just the sentinel step — the ratio check too)
+  // silently never engaged for a workstream-scoped ROADMAP.md/STATE.md/milestone
+  // archive Write. complete-milestone.md's reorganize step explicitly targets a
+  // resolved (potentially workstream-scoped) $ROADMAP_PATH via the Write tool and
+  // claims "the guard allows this one shrink" — that claim was FALSE under an active
+  // workstream, since the guard never recognized the target as curated at all.
+  let wsProjectDir;
+  let wsRoadmapPath;
+  let wsStatePath;
+  let wsMilestoneArchivePath;
+  let wsPlanningDir;
+
+  before(() => {
+    wsProjectDir = createTempDir('gsd-write-guard-ws-');
+    wsPlanningDir = path.join(wsProjectDir, '.planning');
+    const wsDir = path.join(wsPlanningDir, 'workstreams', 'alpha');
+    fs.mkdirSync(path.join(wsDir, 'milestones'), { recursive: true });
+    wsRoadmapPath = path.join(wsDir, 'ROADMAP.md');
+    wsStatePath = path.join(wsDir, 'STATE.md');
+    wsMilestoneArchivePath = path.join(wsDir, 'milestones', 'v1.0-ROADMAP.md');
+  });
+
+  after(() => {
+    cleanup(wsProjectDir);
+  });
+
+  test('a workstream-scoped ROADMAP.md catastrophic shrink is BLOCKED (was silently unguarded before #4455)', () => {
+    fs.writeFileSync(wsRoadmapPath, lines(292));
+    const r = runHook(writePayload(wsRoadmapPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a workstream-scoped STATE.md catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(wsStatePath, lines(292));
+    const r = runHook(writePayload(wsStatePath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a workstream-scoped milestone archive ROADMAP catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(wsMilestoneArchivePath, lines(292));
+    const r = runHook(writePayload(wsMilestoneArchivePath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('the sentinel hatch (armed at the ROOT .planning/.gsd-allow-shrink, naming the workstream path) unblocks a workstream ROADMAP.md write', () => {
+    // complete-milestone.md's sentinel fence always writes to the ROOT
+    // .planning/.gsd-allow-shrink (unchanged by #4455 — consumeSentinelFor
+    // derives that same root location from the write TARGET's path
+    // regardless of how deep a workstream target is nested), naming the
+    // resolved (workstream-scoped) $ROADMAP_PATH as its content.
+    fs.writeFileSync(wsRoadmapPath, lines(292));
+    fs.writeFileSync(path.join(wsPlanningDir, '.gsd-allow-shrink'), `${wsRoadmapPath}\n`);
+    const r = runHook(writePayload(wsRoadmapPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 0,
+      `expected the sentinel to unblock the workstream-scoped write, got status ${r.status}; stdout: ${r.stdout}`);
+  });
+
+  test('a non-curated file inside a workstream dir stays exempt (no widening beyond ROADMAP/STATE/milestone-archive)', () => {
+    const notesPath = path.join(wsPlanningDir, 'workstreams', 'alpha', 'NOTES.md');
+    fs.writeFileSync(notesPath, lines(292));
+    const r = runHook(writePayload(notesPath, lines(16), { cwd: wsProjectDir }));
+    assert.equal(r.status, 0, `non-curated workstream file must pass; stdout: ${r.stdout}`);
+  });
+
+  test('the sentinel hatch unblocks even when cwd sits under a symlink (macOS full-test CI finding)',
+    { skip: process.platform === 'win32' ? 'symlink creation needs privilege on Windows' : false }, () => {
+    // PR CI's macos-latest full-test shard caught this for free — os.tmpdir()
+    // on macOS resolves through a /var -> /private/var symlink, so the
+    // ABOVE test (identical cwd/target shape) failed there while passing
+    // everywhere gsd-test's Linux bench runs, where /tmp is not a symlink.
+    // This test reproduces the same asymmetry deterministically on any
+    // platform via an EXPLICIT symlink, so a regression here is caught by
+    // gsd-test too, not only by a real macOS CI run.
+    //
+    // Root cause: the caller (guard's main flow) realpath-resolves the
+    // WRITE TARGET before the curated match (round 9 Minor 1), but
+    // consumeSentinelFor compared the sentinel TOKEN's resolved path
+    // without the same realpath step — an armed, correct sentinel then
+    // never matched whenever cwd traversed a symlink.
+    const realBase = createTempDir('gsd-write-guard-symlink-real-');
+    const linkedProjectDir = path.join(os.tmpdir(), `gsd-write-guard-symlink-link-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(realBase, linkedProjectDir, 'dir');
+    try {
+      const linkedPlanningDir = path.join(linkedProjectDir, '.planning');
+      const linkedWsDir = path.join(linkedPlanningDir, 'workstreams', 'alpha');
+      fs.mkdirSync(linkedWsDir, { recursive: true });
+      const linkedRoadmapPath = path.join(linkedWsDir, 'ROADMAP.md');
+      fs.writeFileSync(linkedRoadmapPath, lines(292));
+      // Armed with the LEXICAL (through-the-symlink) path, matching exactly
+      // what the workflow's own $ROADMAP_PATH (from init.complete-milestone,
+      // never realpath-resolved) would contain.
+      fs.writeFileSync(path.join(linkedPlanningDir, '.gsd-allow-shrink'), `${linkedRoadmapPath}\n`);
+      const r = runHook(writePayload(linkedRoadmapPath, lines(16), { cwd: linkedProjectDir }));
+      assert.equal(r.status, 0,
+        `expected the sentinel to unblock through the symlinked cwd, got status ${r.status}; stdout: ${r.stdout}`);
+    } finally {
+      cleanup(linkedProjectDir);
+      cleanup(realBase);
+    }
+  });
+});
+
+describe('project-only-scoped curated paths (#4455 follow-up)', () => {
+  // planningDir(cwd) ALSO resolves to `.planning/<project>/...` when
+  // GSD_PROJECT is set with NO GSD_WORKSTREAM — an independent dimension
+  // from the workstream nesting covered above. Found during this same PR's
+  // own review pass (identical root cause, one more path-shape variant) and
+  // fixed in the same change per this repo's no-deferral policy rather than
+  // left open as a "pre-existing, out of scope" gap.
+  let projProjectDir;
+  let projPlanningDir;
+  let projRoadmapPath;
+  let projStatePath;
+  let projMilestoneArchivePath;
+
+  before(() => {
+    projProjectDir = createTempDir('gsd-write-guard-proj-');
+    projPlanningDir = path.join(projProjectDir, '.planning');
+    const projDir = path.join(projPlanningDir, 'myproject');
+    fs.mkdirSync(path.join(projDir, 'milestones'), { recursive: true });
+    projRoadmapPath = path.join(projDir, 'ROADMAP.md');
+    projStatePath = path.join(projDir, 'STATE.md');
+    projMilestoneArchivePath = path.join(projDir, 'milestones', 'v1.0-ROADMAP.md');
+  });
+
+  after(() => {
+    cleanup(projProjectDir);
+  });
+
+  test('a project-scoped ROADMAP.md catastrophic shrink is BLOCKED (was silently unguarded before this fix)', () => {
+    fs.writeFileSync(projRoadmapPath, lines(292));
+    const r = runHook(writePayload(projRoadmapPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a project-scoped STATE.md catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(projStatePath, lines(292));
+    const r = runHook(writePayload(projStatePath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a project-scoped milestone archive ROADMAP catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(projMilestoneArchivePath, lines(292));
+    const r = runHook(writePayload(projMilestoneArchivePath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a non-curated file inside a project dir stays exempt', () => {
+    const notesPath = path.join(projPlanningDir, 'myproject', 'NOTES.md');
+    fs.writeFileSync(notesPath, lines(292));
+    const r = runHook(writePayload(notesPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 0, `non-curated project-scoped file must pass; stdout: ${r.stdout}`);
+  });
+
+  test('a project-scoped path is not accidentally matched by the workstream patterns (regex specificity check)', () => {
+    // Guards against a regression where the workstream patterns' optional
+    // `(?:[^/]+\/)?` project prefix is loosened enough to also swallow this
+    // shape by accident — asserting BOTH describe blocks' patterns exist
+    // independently, not that this one only passes via the other's regex.
+    const wsShapeAtProjectPath = path.join(projPlanningDir, 'myproject', 'workstreams');
+    fs.mkdirSync(wsShapeAtProjectPath, { recursive: true });
+    // Sanity: the project-scoped ROADMAP.md itself (not inside `workstreams/`)
+    // must still be curated — already proven above; this test only confirms
+    // the directory literally named "workstreams" existing alongside it
+    // doesn't change that outcome.
+    fs.writeFileSync(projRoadmapPath, lines(292));
+    const r = runHook(writePayload(projRoadmapPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `project-scoped ROADMAP.md must stay blocked; stdout: ${r.stdout}`);
   });
 });
 

@@ -10,7 +10,7 @@ Display GSD command help at the tier the user asked for. Output ONLY the referen
 | When `$ARGUMENTS` is | Read |
 |---|---|
 | `--brief` (or `-b`) alone | `workflows/help/modes/brief.md` |
-| `--full` (or `-f`, `--all`) alone | `workflows/help/modes/full.md` |
+| `--full` (or `-f`, `--all`) alone | `workflows/help/modes/full.md` (or its `workflows/help/modes/full.compact.md` variant per `gsd-core/references/compact-content-gate.md` §"Streams 1b and 4 — variant resolution") |
 | empty / unset | `workflows/help/modes/default.md` |
 | `--brief <topic>` (or `-b <topic>`) | `workflows/help/modes/topic.md` in compact scope (signature + one-line summary of the matched section) |
 | anything else — bare topic, `--full <topic>`, or topic with leading `--` | `workflows/help/modes/topic.md` in full scope (entire matched section) |
