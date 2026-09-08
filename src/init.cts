@@ -3086,6 +3086,20 @@ function cmdInitCompleteMilestone(
   const statePath = path.join(planningBase, 'STATE.md');
   const roadmapPath = path.join(planningBase, 'ROADMAP.md');
   const archiveDir = path.join(planningBase, 'milestones');
+  // #4455 follow-up (code-review finding): MILESTONES.md and PROJECT.md are
+  // workstream-scoped too — cmdMilestoneComplete (src/milestone.cts) writes
+  // MILESTONES.md via planningPaths(cwd).planning (the workstream base, not
+  // root), and planningPaths().project resolves PROJECT.md the same way.
+  // Neither is the deliberately-root-scoped exception `todos` is (#4256) —
+  // an earlier version of this fix wrongly treated both as shared root
+  // files, which would have made the safety commit below silently miss the
+  // actual files milestone.complete just wrote under an active workstream.
+  const milestonesPath = path.join(planningBase, 'MILESTONES.md');
+  const projectPath = path.join(planningBase, 'PROJECT.md');
+  // REQUIREMENTS.md is workstream-scoped the same way (planningPaths(cwd).requirements,
+  // src/planning-workspace.cts) — the git-rm-after-archive step needs the
+  // resolved path too, not the literal root file.
+  const requirementsPath = path.join(planningBase, 'REQUIREMENTS.md');
 
   const result: Record<string, unknown> = {
     // #2994: hoisted from complete-milestone.md's git_tag step
@@ -3094,6 +3108,9 @@ function cmdInitCompleteMilestone(
     state_path: fs.existsSync(statePath) ? toPosixPath(statePath) : null,
     roadmap_path: fs.existsSync(roadmapPath) ? toPosixPath(roadmapPath) : null,
     archive_dir: toPosixPath(archiveDir),
+    milestones_path: fs.existsSync(milestonesPath) ? toPosixPath(milestonesPath) : null,
+    project_path: fs.existsSync(projectPath) ? toPosixPath(projectPath) : null,
+    requirements_path: fs.existsSync(requirementsPath) ? toPosixPath(requirementsPath) : null,
   };
 
   result['section_manifest'] = buildSectionManifestField(cwd, null, options, 'complete-milestone', {

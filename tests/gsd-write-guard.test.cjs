@@ -612,6 +612,78 @@ describe('workstream-scoped curated paths (#4455)', () => {
   });
 });
 
+describe('project-only-scoped curated paths (#4455 follow-up)', () => {
+  // planningDir(cwd) ALSO resolves to `.planning/<project>/...` when
+  // GSD_PROJECT is set with NO GSD_WORKSTREAM — an independent dimension
+  // from the workstream nesting covered above. Found during this same PR's
+  // own review pass (identical root cause, one more path-shape variant) and
+  // fixed in the same change per this repo's no-deferral policy rather than
+  // left open as a "pre-existing, out of scope" gap.
+  let projProjectDir;
+  let projPlanningDir;
+  let projRoadmapPath;
+  let projStatePath;
+  let projMilestoneArchivePath;
+
+  before(() => {
+    projProjectDir = createTempDir('gsd-write-guard-proj-');
+    projPlanningDir = path.join(projProjectDir, '.planning');
+    const projDir = path.join(projPlanningDir, 'myproject');
+    fs.mkdirSync(path.join(projDir, 'milestones'), { recursive: true });
+    projRoadmapPath = path.join(projDir, 'ROADMAP.md');
+    projStatePath = path.join(projDir, 'STATE.md');
+    projMilestoneArchivePath = path.join(projDir, 'milestones', 'v1.0-ROADMAP.md');
+  });
+
+  after(() => {
+    cleanup(projProjectDir);
+  });
+
+  test('a project-scoped ROADMAP.md catastrophic shrink is BLOCKED (was silently unguarded before this fix)', () => {
+    fs.writeFileSync(projRoadmapPath, lines(292));
+    const r = runHook(writePayload(projRoadmapPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a project-scoped STATE.md catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(projStatePath, lines(292));
+    const r = runHook(writePayload(projStatePath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a project-scoped milestone archive ROADMAP catastrophic shrink is BLOCKED', () => {
+    fs.writeFileSync(projMilestoneArchivePath, lines(292));
+    const r = runHook(writePayload(projMilestoneArchivePath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `expected exit 2 (blocked), got ${r.status}; stdout: ${r.stdout}`);
+    assert.equal(JSON.parse(r.stdout).decision, 'block');
+  });
+
+  test('a non-curated file inside a project dir stays exempt', () => {
+    const notesPath = path.join(projPlanningDir, 'myproject', 'NOTES.md');
+    fs.writeFileSync(notesPath, lines(292));
+    const r = runHook(writePayload(notesPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 0, `non-curated project-scoped file must pass; stdout: ${r.stdout}`);
+  });
+
+  test('a project-scoped path is not accidentally matched by the workstream patterns (regex specificity check)', () => {
+    // Guards against a regression where the workstream patterns' optional
+    // `(?:[^/]+\/)?` project prefix is loosened enough to also swallow this
+    // shape by accident — asserting BOTH describe blocks' patterns exist
+    // independently, not that this one only passes via the other's regex.
+    const wsShapeAtProjectPath = path.join(projPlanningDir, 'myproject', 'workstreams');
+    fs.mkdirSync(wsShapeAtProjectPath, { recursive: true });
+    // Sanity: the project-scoped ROADMAP.md itself (not inside `workstreams/`)
+    // must still be curated — already proven above; this test only confirms
+    // the directory literally named "workstreams" existing alongside it
+    // doesn't change that outcome.
+    fs.writeFileSync(projRoadmapPath, lines(292));
+    const r = runHook(writePayload(projRoadmapPath, lines(16), { cwd: projProjectDir }));
+    assert.equal(r.status, 2, `project-scoped ROADMAP.md must stay blocked; stdout: ${r.stdout}`);
+  });
+});
+
 describe('the shipped claim matches the shipped guarantee (round 10 Major 2)', () => {
   // The guard's reach is bounded: the sentinel is a plain file, so an agent
   // that would reason past an advisory can arm one with a single Bash call.

@@ -513,15 +513,23 @@ _gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.a
 STATE_PATH=$(_gsd_field "$INIT_REORG" state_path)
 ROADMAP_PATH=$(_gsd_field "$INIT_REORG" roadmap_path)
 ARCHIVE_DIR=$(_gsd_field "$INIT_REORG" archive_dir)
-gsd_run query commit "chore: archive v[X.Y] milestone files" --files "${ARCHIVE_DIR}/v[X.Y]-ROADMAP.md" "${ARCHIVE_DIR}/v[X.Y]-REQUIREMENTS.md" "${ARCHIVE_DIR}/v[X.Y]-MILESTONE-AUDIT.md" .planning/MILESTONES.md .planning/PROJECT.md "$STATE_PATH" "$ROADMAP_PATH"
+MILESTONES_PATH=$(_gsd_field "$INIT_REORG" milestones_path)
+PROJECT_PATH=$(_gsd_field "$INIT_REORG" project_path)
+gsd_run query commit "chore: archive v[X.Y] milestone files" --files "${ARCHIVE_DIR}/v[X.Y]-ROADMAP.md" "${ARCHIVE_DIR}/v[X.Y]-REQUIREMENTS.md" "${ARCHIVE_DIR}/v[X.Y]-MILESTONE-AUDIT.md" "$MILESTONES_PATH" "$PROJECT_PATH" "$STATE_PATH" "$ROADMAP_PATH"
 ```
 
 This creates a durable checkpoint in git history. If anything fails after this point, the working tree can be reconstructed from git.
 
+MILESTONES.md and PROJECT.md are workstream-scoped the same way STATE.md/ROADMAP.md are (`planningPaths(cwd).planning`/`.project`) — under an active workstream this commits the actual files `milestone complete` wrote, not the root copies.
+
 **Remove REQUIREMENTS.md via git rm** (preserves history, stages deletion atomically):
 
 ```bash
-git rm .planning/REQUIREMENTS.md
+INIT_REORG=$(gsd_run query init.complete-milestone)
+if [[ "$INIT_REORG" == @file:* ]]; then INIT_REORG=$(cat "${INIT_REORG#@file:}"); fi
+_gsd_field() { node -e "const o=JSON.parse(process.argv[1]); const v=o[process.argv[2]]; process.stdout.write(v==null?'':String(v))" "$1" "$2"; }
+REQUIREMENTS_PATH=$(_gsd_field "$INIT_REORG" requirements_path)
+git rm "$REQUIREMENTS_PATH"
 ```
 
 </step>

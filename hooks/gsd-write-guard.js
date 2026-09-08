@@ -118,6 +118,14 @@ const FLOOR_LINES = 40;
 // outer `.planning` segment regardless of what's nested inside it, which is
 // also where the workflow's sentinel `printf` already writes, so no change
 // was needed there.
+//
+// Same gap exists one level up: planningDir(cwd) ALSO resolves to
+// `.planning/<project>/...` when GSD_PROJECT is set with NO GSD_WORKSTREAM
+// (project-only mode — the two env vars are independent; see planningDir's
+// own body). None of the patterns above cover that shape either. Found
+// during #4455's own review pass (same root cause, one more path variant)
+// — fixed in the same change rather than deferred, since it is the
+// identical defect class this PR already exists to close.
 const CURATED_PATTERNS = [
   /(?:^|\/)\.planning\/ROADMAP\.md$/i,
   /(?:^|\/)\.planning\/STATE\.md$/i,
@@ -125,6 +133,9 @@ const CURATED_PATTERNS = [
   /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/ROADMAP\.md$/i,
   /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/STATE\.md$/i,
   /(?:^|\/)\.planning\/(?:[^/]+\/)?workstreams\/[^/]+\/milestones\/[^/]+-ROADMAP\.md$/i,
+  /(?:^|\/)\.planning\/[^/]+\/ROADMAP\.md$/i,
+  /(?:^|\/)\.planning\/[^/]+\/STATE\.md$/i,
+  /(?:^|\/)\.planning\/[^/]+\/milestones\/[^/]+-ROADMAP\.md$/i,
 ];
 
 // Count logical lines, ignoring a single trailing newline so that

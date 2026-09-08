@@ -217,6 +217,7 @@ describe('complete-milestone.md workstream-scoped paths (#4455)', () => {
   const backlogFence = extractFenceContaining(content, STEP_START, STEP_END, 'BACKLOG_SECTION');
   const sentinelFence = extractFenceContaining(content, STEP_START, STEP_END, '.gsd-allow-shrink');
   const commitFilesFence = extractFenceContaining(content, STEP_START, STEP_END, 'gsd_run query commit');
+  const requirementsRmFence = extractFenceContaining(content, STEP_START, STEP_END, 'git rm');
 
   let tmpDir;
 
@@ -291,7 +292,7 @@ describe('complete-milestone.md workstream-scoped paths (#4455)', () => {
     });
   });
 
-  describe('safety commit --files list: STATE/ROADMAP/archive paths scoped, MILESTONES.md/PROJECT.md stay shared', () => {
+  describe('safety commit --files list: STATE/ROADMAP/archive/MILESTONES/PROJECT paths all scoped together', () => {
     function runCommitFence(cmJson) {
       const script = `${stubGsdRun(cmJson)}${commitFilesFence}`;
       const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
@@ -299,43 +300,81 @@ describe('complete-milestone.md workstream-scoped paths (#4455)', () => {
       return r.stdout;
     }
 
-    test('flat mode: --files lists root STATE.md/ROADMAP.md/archive paths (regression guard)', () => {
+    test('flat mode: --files lists root STATE/ROADMAP/archive/MILESTONES/PROJECT paths (regression guard)', () => {
       const statePath = path.join(tmpDir, 'STATE-root.md');
       const roadmapPath = path.join(tmpDir, 'ROADMAP-root.md');
       const archiveDir = path.join(tmpDir, 'milestones-root');
-      const out = runCommitFence({ state_path: statePath, roadmap_path: roadmapPath, archive_dir: archiveDir });
+      const milestonesPath = path.join(tmpDir, 'MILESTONES-root.md');
+      const projectPath = path.join(tmpDir, 'PROJECT-root.md');
+      const out = runCommitFence({
+        state_path: statePath, roadmap_path: roadmapPath, archive_dir: archiveDir,
+        milestones_path: milestonesPath, project_path: projectPath,
+      });
 
       assert.ok(out.includes('gsd_run_call:query commit'), `expected the commit call to be recorded, got: ${out}`);
       assert.ok(out.includes(statePath), `expected root STATE.md in --files, got: ${out}`);
       assert.ok(out.includes(roadmapPath), `expected root ROADMAP.md in --files, got: ${out}`);
       assert.ok(out.includes(`${archiveDir}/v[X.Y]-ROADMAP.md`), `expected root archive ROADMAP in --files, got: ${out}`);
+      assert.ok(out.includes(milestonesPath), `expected root MILESTONES.md in --files, got: ${out}`);
+      assert.ok(out.includes(projectPath), `expected root PROJECT.md in --files, got: ${out}`);
     });
 
-    test('GSD_WORKSTREAM=alpha: --files lists workstream-scoped STATE/ROADMAP/archive paths, not root (#4455 regression)', () => {
+    test('GSD_WORKSTREAM=alpha: --files lists workstream-scoped STATE/ROADMAP/archive/MILESTONES/PROJECT paths, not root (#4455 regression)', () => {
       const wsStatePath = path.join(tmpDir, 'STATE-alpha.md');
       const wsRoadmapPath = path.join(tmpDir, 'ROADMAP-alpha.md');
       const wsArchiveDir = path.join(tmpDir, 'milestones-alpha');
-      const out = runCommitFence({ state_path: wsStatePath, roadmap_path: wsRoadmapPath, archive_dir: wsArchiveDir });
+      const wsMilestonesPath = path.join(tmpDir, 'MILESTONES-alpha.md');
+      const wsProjectPath = path.join(tmpDir, 'PROJECT-alpha.md');
+      const out = runCommitFence({
+        state_path: wsStatePath, roadmap_path: wsRoadmapPath, archive_dir: wsArchiveDir,
+        milestones_path: wsMilestonesPath, project_path: wsProjectPath,
+      });
 
       assert.ok(out.includes(wsStatePath), `expected workstream STATE.md in --files, got: ${out}`);
       assert.ok(out.includes(wsRoadmapPath), `expected workstream ROADMAP.md in --files, got: ${out}`);
       assert.ok(out.includes(`${wsArchiveDir}/v[X.Y]-ROADMAP.md`), `expected workstream archive ROADMAP in --files, got: ${out}`);
+      // MILESTONES.md and PROJECT.md are workstream-scoped too — cmdMilestoneComplete
+      // (src/milestone.cts) writes MILESTONES.md via planningPaths(cwd).planning (the
+      // workstream base), and PROJECT.md resolves the same way (planningPaths().project).
+      // An earlier version of this fix wrongly pinned both as shared root files, which
+      // would have made this safety commit silently miss the actual files
+      // `milestone complete` just wrote under an active workstream (#4455 follow-up,
+      // caught by isolated code review).
+      assert.ok(out.includes(wsMilestonesPath), `expected workstream MILESTONES.md in --files, got: ${out}`);
+      assert.ok(out.includes(wsProjectPath), `expected workstream PROJECT.md in --files, got: ${out}`);
       assert.ok(!out.includes(path.join(tmpDir, '.planning', 'STATE.md')),
         `must not fall back to the flat root STATE.md path, got: ${out}`);
       assert.ok(!out.includes(path.join(tmpDir, '.planning', 'ROADMAP.md')),
         `must not fall back to the flat root ROADMAP.md path, got: ${out}`);
+      assert.ok(!out.includes(path.join(tmpDir, '.planning', 'MILESTONES.md')),
+        `must not fall back to the flat root MILESTONES.md path, got: ${out}`);
+      assert.ok(!out.includes(path.join(tmpDir, '.planning', 'PROJECT.md')),
+        `must not fall back to the flat root PROJECT.md path, got: ${out}`);
+    });
+  });
+
+  describe('REQUIREMENTS.md removal: git rm uses init.complete-milestone requirements_path, not a hardcoded literal', () => {
+    test('flat mode: removes the root REQUIREMENTS.md path (regression guard)', () => {
+      const requirementsPath = path.join(tmpDir, 'REQUIREMENTS-root.md');
+      fs.writeFileSync(requirementsPath, '# Requirements\n');
+      fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true }); // git rm needs a repo; the stub below intercepts it
+      const script = `git() { printf 'git_call:%s\\n' "$*"; }\n${stubGsdRun({ requirements_path: requirementsPath })}${requirementsRmFence}`;
+      const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+      throwIfFailed(r, 'bash <requirements rm fence>');
+      assert.ok(r.stdout.includes(`git_call:rm ${requirementsPath}`),
+        `expected git rm to target the root REQUIREMENTS.md, got: ${r.stdout}`);
     });
 
-    test('MILESTONES.md and PROJECT.md stay literal root paths regardless of workstream (shared-file regression guard)', () => {
-      const wsStatePath = path.join(tmpDir, 'STATE-alpha.md');
-      const wsRoadmapPath = path.join(tmpDir, 'ROADMAP-alpha.md');
-      const wsArchiveDir = path.join(tmpDir, 'milestones-alpha');
-      const out = runCommitFence({ state_path: wsStatePath, roadmap_path: wsRoadmapPath, archive_dir: wsArchiveDir });
-
-      assert.ok(out.includes('.planning/MILESTONES.md'),
-        `MILESTONES.md must stay a literal shared root path, got: ${out}`);
-      assert.ok(out.includes('.planning/PROJECT.md'),
-        `PROJECT.md must stay a literal shared root path, got: ${out}`);
+    test('GSD_WORKSTREAM=alpha: removes the workstream-scoped REQUIREMENTS.md, not root (#4455 follow-up regression)', () => {
+      const wsRequirementsPath = path.join(tmpDir, 'REQUIREMENTS-alpha.md');
+      fs.writeFileSync(wsRequirementsPath, '# Requirements\n');
+      const script = `git() { printf 'git_call:%s\\n' "$*"; }\n${stubGsdRun({ requirements_path: wsRequirementsPath })}${requirementsRmFence}`;
+      const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd: tmpDir });
+      throwIfFailed(r, 'bash <requirements rm fence>');
+      assert.ok(r.stdout.includes(`git_call:rm ${wsRequirementsPath}`),
+        `expected git rm to target the workstream REQUIREMENTS.md, got: ${r.stdout}`);
+      assert.ok(!r.stdout.includes('git_call:rm .planning/REQUIREMENTS.md'),
+        `must not have targeted the literal root REQUIREMENTS.md path, got: ${r.stdout}`);
     });
   });
 });
