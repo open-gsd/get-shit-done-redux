@@ -2950,8 +2950,8 @@ function convertClaudeCommandToKiloSkill(content, skillName) {
  * Dual-sourced exactly like `--portable-hooks`/`GSD_PORTABLE_HOOKS`:
  * `bin/install.js` sets the variable when the flag is passed, so the flag and
  * the environment cannot disagree, and every seam that computes a path prefix
- * (the install engine, the two rewrite entry points, the install plan, and
- * `applySurface`) reads the same answer without five signatures having to
+ * (the installer copy path, the install engine, the two rewrite entry points,
+ * the install plan, and `applySurface`) reads the same answer without six signatures having to
  * grow a parameter each and stay in sync.
  *
  * Opt-in, not the new default. Making relative the default would change every
@@ -3274,10 +3274,46 @@ function isRelativePathPrefix(pathPrefix): boolean {
  */
 function withShellDefaultsPreserved(content, rewrite) {
   const preserved: string[] = [];
-  const masked = content.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*:-[^}]*\}/g, (match) => {
-    preserved.push(match);
-    return `@@GSD4377:${preserved.length - 1}@@`;
-  });
+  let masked = '';
+  let copiedThrough = 0;
+  let searchFrom = 0;
+
+  // Scan balanced `${...}` expansions instead of stopping at the first `}`.
+  // The launcher has nested defaults such as `${A:-${B:-$HOME/.x}}`; a
+  // single `[^}]*` regex only recognizes a prefix of that expression and
+  // makes preservation depend accidentally on where the rewritten text sits.
+  while (searchFrom < content.length) {
+    const start = content.indexOf('${', searchFrom);
+    if (start === -1) break;
+    const opener = /^\$\{[A-Za-z_][A-Za-z0-9_]*:-/.exec(content.slice(start));
+    if (!opener) {
+      searchFrom = start + 2;
+      continue;
+    }
+
+    let depth = 1;
+    let end = start + opener[0].length;
+    while (end < content.length && depth > 0) {
+      if (content.startsWith('${', end)) {
+        depth += 1;
+        end += 2;
+        continue;
+      }
+      if (content[end] === '}') depth -= 1;
+      end += 1;
+    }
+    if (depth !== 0) {
+      searchFrom = start + 2;
+      continue;
+    }
+
+    masked += content.slice(copiedThrough, start);
+    preserved.push(content.slice(start, end));
+    masked += `@@GSD4377:${preserved.length - 1}@@`;
+    copiedThrough = end;
+    searchFrom = end;
+  }
+  masked += content.slice(copiedThrough);
   return rewrite(masked).replace(/@@GSD4377:(\d+)@@/g, (_m, i) => preserved[Number(i)]);
 }
 

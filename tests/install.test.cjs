@@ -8076,14 +8076,15 @@ describe('#607 cleanupLegacyGsdCc: exported helper unit tests', () => {
 // _computePathPrefix itself. This is the end-to-end proof: the prefix has to
 // travel from the CLI flag, through the install engine, through the rewrite
 // pass, and land in the bytes on disk. A pure-function test alone would pass
-// happily while any one of those five seams kept computing the absolute form.
+// happily while any one of those six seams kept computing the absolute form.
 describe('#4377: --relative-includes emits project-relative @ includes for a local install', () => {
   // `before`/`after` are not in this file's tail scope (the earlier folds each
   // bring their own); pull them from node:test directly rather than relying on
   // whatever binding happens to be visible here.
   const { before: beforeAll, after: afterAll } = require('node:test');
-  const { spawnSync } = require('node:child_process');
   const { installSpawnEnv } = require('./helpers.cjs');
+  const { throwIfFailed } = require('./helpers/git-fixture.cjs');
+  const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
   const installPath = path.join(__dirname, '..', 'bin', 'install.js');
 
   // Two independent reasons the raw temp root does not appear in emitted
@@ -8128,10 +8129,10 @@ describe('#4377: --relative-includes emits project-relative @ includes for a loc
     // ambient GSD_RELATIVE_INCLUDES would silently opt the CONTROL arm in and
     // make this suite prove nothing. Scrub it and let the flag speak.
     delete env.GSD_RELATIVE_INCLUDES;
-    const r = spawnSync(process.execPath, [installPath, ...args], {
-      cwd, env, encoding: 'utf-8', timeout: 180000,
+    const r = runNode([installPath, ...args], {
+      cwd, env, timeoutMs: INSTALL_TIMEOUT_MS,
     });
-    assert.equal(r.status, 0, `install ${args.join(' ')} failed: ${r.stderr || r.stdout}`);
+    throwIfFailed(r, `node ${installPath} ${args.join(' ')}`);
   };
 
   let absDir;

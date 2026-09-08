@@ -27,6 +27,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const espree = require('espree');
+const fc = require('./helpers/fast-check-setup.cjs');
 const { splitLines, joinLines } = require('../gsd-core/bin/lib/text-lines.cjs');
 
 const { createTempDir, cleanup, writePackageSourceMarkerFixture } = require('./helpers.cjs');
@@ -5308,9 +5309,57 @@ describe('#4377 _relativeIncludesEnabled — the opt-in is off unless asked for'
   test('an absent variable is off', () => {
     assert.equal(conversion._relativeIncludesEnabled({}), false);
   });
+
+  test('the opt-in is true for exactly the string 1 over arbitrary JSON values', () => {
+    fc.assert(fc.property(fc.jsonValue(), (value) => {
+      assert.equal(
+        conversion._relativeIncludesEnabled({ GSD_RELATIVE_INCLUDES: value }),
+        value === '1',
+      );
+    }));
+  });
+});
+
+describe('#4377 project-relative prefix properties', () => {
+  const segment = fc.array(
+    fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz0123456789_-'),
+    { minLength: 1, maxLength: 12 },
+  ).map((chars) => chars.join(''));
+
+  test('safe descriptor segments normalize to one POSIX prefix', () => {
+    fc.assert(fc.property(
+      fc.array(segment, { minLength: 1, maxLength: 5 }),
+      fc.constantFrom('/', '\\'),
+      fc.boolean(),
+      (segments, separator, trailingSlash) => {
+        const localDirName = segments.join(separator) + (trailingSlash ? separator : '');
+        assert.equal(conversion._projectRelativePrefix(localDirName), `${segments.join('/')}/`);
+      },
+    ));
+  });
+
+  test('a traversal segment is rejected at every generated depth', () => {
+    fc.assert(fc.property(
+      fc.array(segment, { maxLength: 4 }),
+      fc.array(segment, { maxLength: 4 }),
+      (before, after) => {
+        assert.equal(conversion._projectRelativePrefix([...before, '..', ...after].join('/')), '');
+      },
+    ));
+  });
 });
 
 describe('#4377 relative rewrites preserve every runtime launcher shell default', () => {
+  test('the shared mask preserves a complete nested shell default as one unit', () => {
+    const nested = '${OUTER:-${INNER:-$HOME/.claude}/gsd-core}';
+    const input = `outside=$HOME/.claude inside=${nested}`;
+    const rewritten = conversion._withShellDefaultsPreserved(
+      input,
+      (body) => body.replace(/\$HOME\/\.claude/g, '.claude'),
+    );
+    assert.equal(rewritten, `outside=.claude inside=${nested}`);
+  });
+
   test('all emitted runtime conversions leave ${VAR:-default} probes verbatim', () => {
     const launcher = fs.readFileSync(
       path.join(__dirname, '..', 'gsd-core', 'workflows', '_runtime-launcher.snippet.sh'),
