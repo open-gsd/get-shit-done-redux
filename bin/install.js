@@ -10829,7 +10829,15 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
     try {
       codexPreInstallManifestBytes = fs.readFileSync(path.join(targetDir, MANIFEST_NAME));
       const preManifest = JSON.parse(codexPreInstallManifestBytes.toString('utf8'));
-      for (const relPath of Object.keys((preManifest && preManifest.files) || {})) {
+      // A schema-valid-but-shapeless manifest (e.g. `{}`, `{"version":1}`) parses
+      // without throwing, but Object.keys(undefined || {}) then silently reads as
+      // "zero files predate this install" instead of "files key missing, unknown
+      // predates this install" — the same false-known state the catch block below
+      // exists to prevent for a syntax-broken manifest. Route it there too.
+      if (!preManifest || typeof preManifest.files !== 'object' || preManifest.files === null) {
+        throw new Error('prior manifest has no files object');
+      }
+      for (const relPath of Object.keys(preManifest.files)) {
         // Confine to targetDir: a hand-edited manifest must not turn rollback
         // into an arbitrary-path write.
         const resolved = resolveInstallRelativePath(targetDir, relPath);
@@ -10876,10 +10884,12 @@ function install(isGlobal, runtime = DEFAULT_RUNTIME, options = {}) {
       if (!resolved || codexPreInstallManagedPaths.has(resolved.relPath)) continue;
       // rmSync leaves the emptied directory behind on purpose: the next install
       // writes into it, and pruning dirs risks removing user content beside it.
-      try { fs.rmSync(resolved.fullPath, { force: true }); } catch (_) { /* best-effort */ }
+      try { fs.rmSync(resolved.fullPath, { force: true }); }
+      catch (err) { console.warn(`  ${yellow}!${reset} Could not remove ${resolved.relPath} left by the failed install (${err.message})`); }
     }
     // Usable implies a parsed prior manifest, so these bytes always exist.
-    try { fs.writeFileSync(postManifestPath, codexPreInstallManifestBytes); } catch (_) { /* best-effort */ }
+    try { fs.writeFileSync(postManifestPath, codexPreInstallManifestBytes); }
+    catch (err) { console.warn(`  ${yellow}!${reset} Could not restore ${MANIFEST_NAME} to its pre-install contents during rollback (${err.message})`); }
   };
 
   // Run manifest-backed cleanup migrations before package materialization.

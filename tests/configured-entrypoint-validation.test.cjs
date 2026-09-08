@@ -482,6 +482,28 @@ test('a malformed prior manifest degrades the Codex rollback instead of deleting
   });
 });
 
+test('a schema-valid but files-less prior manifest degrades the Codex rollback the same way (#4249 agy review)', (t) => {
+  withSandboxedHome(t, 'configured-entrypoint-codex-shapelessmanifest-', () => {
+    const first = install(true, 'codex');
+    const managedPath = path.join(first.configDir, 'gsd-core', 'CHANGELOG.md');
+    // Valid JSON with no `files` key parses without throwing. Object.keys(undefined
+    // || {}) then silently reads as "zero files predate this install" instead of
+    // "files key missing, unknown predates this install" — the same false-known
+    // state the unparseable-manifest test above guards against, reached through a
+    // JSON.parse success instead of a failure.
+    fs.writeFileSync(path.join(first.configDir, 'gsd-file-manifest.json'), JSON.stringify({ version: 1 }));
+
+    const second = install(true, 'codex');
+    second.rollbackInstallerMigrations();
+
+    assert.equal(
+      fs.existsSync(managedPath),
+      true,
+      'a prior manifest missing its files object must not let rollback delete the managed payload',
+    );
+  });
+});
+
 test('a minimal Codex rollback restores skills from the alternate skills home (#4249 CodeRabbit)', (t) => {
   withSandboxedHome(t, 'configured-entrypoint-codex-skills-', (root) => {
     const first = install(true, 'codex');
