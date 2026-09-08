@@ -388,8 +388,11 @@ function normalizePhaseName(phase: unknown): string {
 // separator, so the default template renders `gsd/phase-08`: still unique per
 // phase, visibly nameless rather than falsely named, and still a string — the
 // execute-phase workflow's handle_branching step feeds `branch_name` straight
-// into `git checkout -b` and has no null arm, so refusing outright would trade
-// a misleading name for a broken checkout. Which separator goes: the one
+// into `git checkout -b`, so refusing outright would trade a misleading name
+// for a broken checkout. (That step gained an explicit null arm in #4252 round
+// 2 — it now stops with a diagnostic rather than branching — but the reasoning
+// for dropping rather than refusing is unchanged: a nameless-but-unique branch
+// is still better than no branch at all wherever one CAN be rendered.) Which separator goes: the one
 // BEFORE the token, unless that one is a `/` and a non-slash separator follows
 // — `/` is a ref-hierarchy boundary, not a word joiner, so
 // `feature/{slug}-phase-{phase}` must render `feature/phase-08`, never
@@ -437,15 +440,39 @@ function renderPhaseBranchName(template: string, phaseNumber: unknown, phaseSlug
   // `a..{slug}` -> `a.`, and the leading-edge twins). That contradicted this
   // function's own rationale above: it produced the broken checkout it exists
   // to avoid, silently, surfacing only when `git checkout -b` failed.
-  // The terminal edge-trim is what makes the invariant hold, and a wider
-  // adjacent-run strip provably does NOT: `{phase}/{slug}/` and
-  // `{phase}.{slug}.` leave their residue on the side the drop never touches.
-  // Scoped to `/` and `.` — the characters whose presence at an edge makes a
-  // ref INVALID. `-`/`_` are ref-legal at an edge, and dropping them would
-  // over-drop a template that deliberately opens with one (`-{phase}-{slug}`
-  // renders `-08` with a slug and must not render `08` without one). The
-  // invariant is that the empty-slug render is never worse-FORMED than the
-  // truthy-slug render of the same template, not that it is prettier.
+  // A terminal edge-trim, rather than a wider adjacent-run strip: the remedy as
+  // the review stated it — "strip the entire contiguous separator run adjacent
+  // to the token" — does not reach `{phase}/{slug}/` or `{phase}.{slug}.`,
+  // whose residue sits on the side the drop never touches. An adjacency-based
+  // variant CAN reach them by additionally testing whether the remainder on the
+  // far side is separators-only (verified by adversarial review of this round),
+  // but it costs more branching for the same outcome. The trim is the simpler
+  // shape, not the only possible one.
+  // Scoped to `/` and `.` — the characters whose presence at an EDGE make a ref
+  // invalid. `-`/`_` are ref-legal at an edge, and dropping them would over-drop
+  // a template that deliberately opens with one (`-{phase}-{slug}` renders
+  // `-08-x` with a slug and must not render `08` without one).
+  //
+  // What this establishes is bounded, and the bound is worth stating because the
+  // obvious stronger claim is FALSE. This fixes EDGE well-formedness only. It is
+  // NOT a general "the empty-slug render is never worse-formed than the truthy
+  // one": a template can straddle `{slug}` with a fragment that only becomes
+  // illegal once the token is removed — `a.lo{slug}ck/{phase}` renders the valid
+  // `a.loxck/08` with a slug and the INVALID `a.lock/08` without one (git
+  // forbids a `.lock` component). The converse exists too (`x{slug}.lock` is
+  // invalid WITH a slug and fine without), so neither render dominates the other
+  // in general.
+  //
+  // Not fixed here, and the reason is scope rather than difficulty — an earlier
+  // draft of this comment said validation "would refuse templates that work
+  // today", which is a false choice: a targeted REPAIR rejects nothing. The real
+  // objection is that `.lock` is one of several juxtaposition rules git enforces
+  // (`..`, `@{`, a leading `.` per component, and more), so patching the one
+  // instance an adversarial pass happened to construct is an enumeration that
+  // silently falls behind the rules it mirrors. The principled fix is a
+  // junction-validity check returning null — now safe, since both consumers
+  // handle null as of this round — and that is a scope call for the maintainer,
+  // not something to slip into an empty-slug fix. Disclosed and characterized.
   return (before + after).replace(/\/{2,}/g, '/').replace(/^[./]+|[./]+$/g, '') || null;
 }
 

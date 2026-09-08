@@ -217,10 +217,11 @@ describe('renderPhaseBranchName (#4126)', () => {
   });
 
   // The residue that the review's FIRST suggested remedy — "strip the entire
-  // contiguous separator run adjacent to the token" — provably cannot reach:
-  // here the leftover separator sits on the side the drop never touches, so no
-  // widening of the adjacent-run strip removes it. Only a terminal edge-trim
-  // does. Pinned so the narrower remedy is not reintroduced as a simplification.
+  // contiguous separator run adjacent to the token" — does not reach as stated:
+  // here the leftover separator sits on the side the drop never touches. An
+  // adjacency-based variant CAN reach it by additionally testing whether the
+  // far-side remainder is separators-only; it just costs more branching for the
+  // same result. Pinned either way, so whichever shape is in force keeps these.
   test('residue on the side the drop did NOT touch is trimmed too', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}/', '8', ''), '08');
     assert.strictEqual(phaseId.renderPhaseBranchName('{phase}.{slug}.', '8', ''), '08');
@@ -233,6 +234,22 @@ describe('renderPhaseBranchName (#4126)', () => {
   test('a ref-LEGAL edge separator is preserved — the trim fixes validity, not aesthetics', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('-{phase}-{slug}', '8', ''), '-08');
     assert.strictEqual(phaseId.renderPhaseBranchName('{phase}--{slug}', '8', ''), '08-');
+  });
+
+  // The bound on the test above, pinned so the edge-trim is not mistaken for
+  // whole-ref validation. A template that straddles `{slug}` with a fragment
+  // which only becomes illegal once the token is dropped is NOT covered — and
+  // the converse exists too, so neither render dominates the other. Both
+  // directions are characterized here rather than left for a later round to
+  // rediscover as a regression.
+  test('the edge-trim is not whole-ref validation — a straddled `.lock` is out of scope', () => {
+    // empty-slug render is the invalid one here...
+    assert.strictEqual(phaseId.renderPhaseBranchName('a.lo{slug}ck/{phase}', '8', ''), 'a.lock/08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('a.lo{slug}ck/{phase}', '8', 'x'), 'a.loxck/08');
+    // ...and here it is the truthy one, which is why "never worse-formed" is
+    // not the property this fix establishes.
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}.lock', '8', ''), '08/lock');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}.lock', '8', 'x'), '08/x.lock');
   });
 
   // New null reachability created by the trim, and the reason the consumer arm
@@ -1856,16 +1873,33 @@ describe('#4126 renderPhaseBranchName — properties', () => {
   });
 
   // #4252 round 3 (blocker), as an invariant rather than the four hand-picked
-  // shapes above: whatever the template, an empty-slug render that is non-null
-  // must be a WELL-FORMED ref — no leading or trailing `/` or `.`, and no `//`
-  // run. `runSeparatorTemplate` is the generator that reaches this, because the
+  // shapes above: for a template CONTAINING `{slug}`, an empty-slug render that
+  // is non-null carries no leading or trailing `/` or `.` and no `//` run.
+  //
+  // The `{slug}`-containing precondition is load-bearing, not throat-clearing. A
+  // template with no token returns early and unnormalized — `renderPhaseBranchName('a/', '8', '')`
+  // is `'a/'` — because there is no drop to repair and nothing this fix touches.
+  // `runSeparatorTemplate` always emits the token, so the sampled corpus honours
+  // the precondition by construction; an earlier draft of this comment said
+  // "whatever the template", which was simply false.
+  // `runSeparatorTemplate` is the generator that reaches this, because the
   // defect needs a separator RUN adjacent to the token; the well-formed corpus
   // joins with exactly one separator and can never produce it, which is why the
   // shipped property suite passed over a live invalid-ref bug.
   //
+  // NAMED FOR WHAT IT CHECKS, not for what one might wish it checked. This
+  // predicate is a string test, not `git check-ref-format`, so it says nothing
+  // about forbidden MIDDLE constructions — `a.lo{slug}ck/{phase}` renders the
+  // ref-invalid `a.lock/08` and passes here. That residual is real, disclosed in
+  // the renderer's own comment, and deliberately out of scope: validating whole
+  // refs is a different change. An earlier draft of this test was called "always
+  // a well-formed ref", which overclaimed its own oracle.
+  //
   // Reversion-controlled: with the terminal `.replace(/^[./]+|[./]+$/g, '')`
-  // removed, this property fails (`feature//{slug}` -> `feature/`).
-  test('an empty-slug render is always a well-formed ref: no edge `/` or `.`, no `//`', () => {
+  // removed, this property fails (`feature//{slug}` -> `feature/`). The sampled
+  // half is independently non-vacuous — under that reversion the
+  // `runSeparatorTemplate` predicate alone fails within ~10-25 runs.
+  test('an empty-slug render carries no edge `/` or `.` and no `//` run', () => {
     // DETERMINISTIC first — the exact shapes the round-3 review demonstrated,
     // plus their leading-edge twins and the two other-side residues that the
     // review's narrower suggested remedy could not have reached.
