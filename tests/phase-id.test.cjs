@@ -191,10 +191,59 @@ describe('renderPhaseBranchName (#4126)', () => {
   // The asymmetry is deliberate — collapsing on the truthy path would change
   // behavior #4126 is not scoped to touch, and no template in this repo reaches
   // it. Pinned so that it reads as a decision rather than an oversight.
+  //
+  // The empty-slug expectation here was `'feature/'` until #4252 round 3, which
+  // is the shape of the bug rather than an incidental wrong number: the test
+  // pinned an INVALID ref (`git check-ref-format` rejects a trailing `/`) as
+  // correct, which is exactly what would have made the defect hard to see later.
   test('the double-slash collapse is empty-slug-only — a truthy slug leaves the template\'s own "//" alone', () => {
     assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', 'x'), 'feature//x');
-    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature/');
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature');
   });
+
+  // #4252 round 3 (blocker): a separator RUN adjacent to `{slug}`, with the
+  // token at an edge of the template, used to leave a lone leading/trailing `/`
+  // or `.` — a ref `git check-ref-format` rejects. The drop removes ONE
+  // character and the `//` collapse only matches runs of 2+ slashes, so nothing
+  // caught the single residual character.
+  test('an edge-adjacent separator RUN never leaves a leading or trailing `/` or `.`', () => {
+    // trailing-edge residue — the two shapes the round-3 review demonstrated
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature');
+    assert.strictEqual(phaseId.renderPhaseBranchName('a..{slug}', '8', ''), 'a');
+    // leading-edge twins — same defect, mirrored; not in the review, found by
+    // driving the shipped function across both edges
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}//feature', '8', ''), 'feature');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}..a', '8', ''), 'a');
+  });
+
+  // The residue that the review's FIRST suggested remedy — "strip the entire
+  // contiguous separator run adjacent to the token" — provably cannot reach:
+  // here the leftover separator sits on the side the drop never touches, so no
+  // widening of the adjacent-run strip removes it. Only a terminal edge-trim
+  // does. Pinned so the narrower remedy is not reintroduced as a simplification.
+  test('residue on the side the drop did NOT touch is trimmed too', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}/', '8', ''), '08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}.{slug}.', '8', ''), '08');
+  });
+
+  // The trim is scoped to `/` and `.` — the characters whose presence at an edge
+  // makes a ref INVALID. `-` and `_` are ref-legal at an edge, and trimming them
+  // would OVER-drop: this template renders `-08-x` with a slug, so rendering
+  // `08` rather than `-08` without one would silently change a valid name.
+  test('a ref-LEGAL edge separator is preserved — the trim fixes validity, not aesthetics', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('-{phase}-{slug}', '8', ''), '-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}--{slug}', '8', ''), '08-');
+  });
+
+  // New null reachability created by the trim, and the reason the consumer arm
+  // in gsd-core/workflows/execute-phase.md landed in the same round (#4252
+  // round 2): a template that reduces to separators only has nothing left to
+  // name, exactly as a `{slug}`-alone template does.
+  test('a template that reduces to separators only returns null, not a bare separator', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('//{slug}', '8', ''), null);
+    assert.strictEqual(phaseId.renderPhaseBranchName('.{slug}', '8', ''), null);
+  });
+
 
   // Same nit, third half: `phaseSlug` is typed `unknown`, so every shape that is
   // neither a string nor a truthy number must take the empty-slug route rather
@@ -1788,4 +1837,36 @@ describe('#4126 renderPhaseBranchName — properties', () => {
       ),
     );
   });
+
+  // #4252 round 3 (blocker), as an invariant rather than the four hand-picked
+  // shapes above: whatever the template, an empty-slug render that is non-null
+  // must be a WELL-FORMED ref — no leading or trailing `/` or `.`, and no `//`
+  // run. `runSeparatorTemplate` is the generator that reaches this, because the
+  // defect needs a separator RUN adjacent to the token; the well-formed corpus
+  // joins with exactly one separator and can never produce it, which is why the
+  // shipped property suite passed over a live invalid-ref bug.
+  //
+  // Reversion-controlled: with the terminal `.replace(/^[./]+|[./]+$/g, '')`
+  // removed, this property fails (`feature//{slug}` -> `feature/`).
+  test('an empty-slug render is always a well-formed ref: no edge `/` or `.`, no `//`', () => {
+    // DETERMINISTIC first — the exact shapes the round-3 review demonstrated,
+    // plus their leading-edge twins and the two other-side residues that the
+    // review's narrower suggested remedy could not have reached.
+    for (const t of ['feature//{slug}', 'a..{slug}', '{slug}//feature', '{slug}..a',
+                     '{phase}/{slug}/', '{phase}.{slug}.']) {
+      const out = phaseId.renderPhaseBranchName(t, '8', '');
+      if (out !== null) {
+        assert.ok(!/^[./]|[./]$/.test(out), `edge separator survived in ${JSON.stringify(out)} from ${t}`);
+        assert.ok(!out.includes('//'), `slash run survived in ${JSON.stringify(out)} from ${t}`);
+      }
+    }
+    fc.assert(
+      fc.property(runSeparatorTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        if (out === null) return true; // nothing left to name is the honest answer, not a bad ref
+        return !/^[./]|[./]$/.test(out) && !out.includes('//');
+      }),
+    );
+  });
+
 });

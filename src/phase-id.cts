@@ -402,9 +402,13 @@ function normalizePhaseName(phase: unknown): string {
 // had; a truthy number is stringified, as `.replace` did (`phase_slug` is only
 // ever a string or null in practice — the coercion exists so the helper never
 // SILENTLY widens the empty-slug arm).
-// Returns null only when nothing is left to name (a template that was `{slug}`
-// alone) — the same "do not branch" signal a not-found phase already yields at
-// both sites. `{project}` is deliberately NOT handled here: only init.cts
+// Returns null when nothing is left to name — a template that was `{slug}`
+// alone, or one that reduces to separators only (`//{slug}`) once the drop and
+// the edge-trim below have run — the same "do not branch" signal a not-found
+// phase already yields at both sites. `cmdCommit` guards it (`if (branchName)`
+// -> no branch); `cmdInitExecutePhase` emits it as a null `branch_name`, and
+// execute-phase.md's handle_branching step carries the matching arm (#4252
+// round 2). `{project}` is deliberately NOT handled here: only init.cts
 // substitutes it (#904), and that asymmetry is that site's own, not part of
 // the shared seam.
 const BRANCH_TEMPLATE_SLUG_TOKEN = '{slug}';
@@ -425,7 +429,24 @@ function renderPhaseBranchName(template: string, phaseNumber: unknown, phaseSlug
   } else if (nextSep) {
     after = after.slice(1);
   }
-  return (before + after).replace(/\/{2,}/g, '/') || null;
+  // #4252 round 3: the drop removes ONE adjacent separator and the collapse
+  // above only matches runs of 2+ slashes, so a template whose separator run
+  // adjacent to `{slug}` is itself 2 characters, with the token at an EDGE,
+  // used to leave a lone leading/trailing `/` or `.` — refs `git
+  // check-ref-format` rejects outright (`feature//{slug}` -> `feature/`,
+  // `a..{slug}` -> `a.`, and the leading-edge twins). That contradicted this
+  // function's own rationale above: it produced the broken checkout it exists
+  // to avoid, silently, surfacing only when `git checkout -b` failed.
+  // The terminal edge-trim is what makes the invariant hold, and a wider
+  // adjacent-run strip provably does NOT: `{phase}/{slug}/` and
+  // `{phase}.{slug}.` leave their residue on the side the drop never touches.
+  // Scoped to `/` and `.` — the characters whose presence at an edge makes a
+  // ref INVALID. `-`/`_` are ref-legal at an edge, and dropping them would
+  // over-drop a template that deliberately opens with one (`-{phase}-{slug}`
+  // renders `-08` with a slug and must not render `08` without one). The
+  // invariant is that the empty-slug render is never worse-FORMED than the
+  // truthy-slug render of the same template, not that it is prettier.
+  return (before + after).replace(/\/{2,}/g, '/').replace(/^[./]+|[./]+$/g, '') || null;
 }
 
 function getMilestoneFromPhaseId(phaseId: unknown, convention?: string): string | null {
