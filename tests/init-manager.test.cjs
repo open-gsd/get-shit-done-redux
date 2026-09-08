@@ -1243,6 +1243,7 @@ describe('init subcommands sharing the project_exists/project_path PROJECT.md pa
 describe('init new-project: sub_repos_detected (#4458)', () => {
   const { execFileSync } = require('child_process');
   const { createTempGitProject } = require('./helpers.cjs');
+  const { GIT_FIXTURE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
   let tmpDir;
 
@@ -1253,7 +1254,11 @@ describe('init new-project: sub_repos_detected (#4458)', () => {
   test('detects a REAL linked git worktree child, matching the issue #4458 repro exactly', () => {
     tmpDir = fs.realpathSync(createTempGitProject());
     const worktreeDir = path.join(tmpDir, 'child-wt');
-    execFileSync('git', ['worktree', 'add', '-b', 'wt-branch', worktreeDir], { cwd: tmpDir, stdio: 'pipe' });
+    // `git worktree add` checks out files into a new working tree — the same
+    // "construction" weight class as init/config/add/commit, not plain
+    // plumbing (rev-parse/branch/log), so GIT_FIXTURE_TIMEOUT_MS is the
+    // correct shared norm here (tests/helpers/timeouts.cjs).
+    execFileSync('git', ['worktree', 'add', '-b', 'wt-branch', worktreeDir], { cwd: tmpDir, stdio: 'pipe', timeout: GIT_FIXTURE_TIMEOUT_MS });
 
     // Confirm the fixture actually reproduces the reported shape before
     // trusting the assertion below: a linked worktree's .git is a FILE.
