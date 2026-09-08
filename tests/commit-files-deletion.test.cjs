@@ -764,6 +764,39 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.strictEqual(JSON.parse(result.output).reason, 'staging_failed', result.output);
     assert.strictEqual(git(['ls-files', '-s', '--', path.join(PENDING, 'mine.md')]), staged, 'the pre-staged blob survives the rollback');
   });
+
+  test('a symlink to a directory is one tracked path, not a directory entry', () => {
+    // Review of #4253 read the `lstatSync(...).isDirectory()` test as a defect
+    // because it does not follow symlinks. It is deliberate, and following the
+    // link would be the bug: git tracks a symlink as a single blob (mode
+    // 120000) and does NOT traverse it, so the tracked paths "under" it live
+    // at the REAL directory and were never named by the caller. Treating the
+    // link as a directory entry would stage those -- the directory sweep
+    // #4208 exists to remove -- while the entry the caller DID name still sat
+    // present on disk, contradicting its own declaration.
+    fs.mkdirSync(path.join(tmpDir, PENDING, 'real'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, PENDING, 'real', 'a.md'), 'a\n');
+    fs.symlinkSync('real', path.join(tmpDir, PENDING, 'link'));
+    git(['add', '.planning/']);
+    git(['commit', '-q', '-m', 'seed a symlinked dir']);
+
+    // The premise, driven rather than asserted: one path, and git does not
+    // traverse it.
+    assert.match(git(['ls-files', '-s', '--', path.join(PENDING, 'link')]), /^120000 /, 'git tracks the symlink itself');
+    assert.strictEqual(git(['ls-files', '--', path.join(PENDING, 'link') + '/']), '', 'git does not traverse the symlink');
+
+    const head = git(['rev-parse', 'HEAD']);
+    const result = runGsdTools(
+      ['commit', 'docs: remove a symlinked dir', '--files-removed', '.planning/todos/pending/link'],
+      tmpDir,
+    );
+    const parsed = JSON.parse(result.output);
+    assert.strictEqual(parsed.reason, 'staging_failed', result.output);
+    assert.match(parsed.error, /still present on disk/);
+    assert.strictEqual(git(['rev-parse', 'HEAD']), head, 'nothing may be committed');
+    assert.match(git(['ls-files', '--', PENDING]), /real\/a\.md/, 'the path behind the link is untouched -- the caller never named it');
+  });
+
 });
 
 // RULESET.TESTS.property-based-testing: the two-list commit parser is a real
