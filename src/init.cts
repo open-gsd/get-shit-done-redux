@@ -3043,6 +3043,16 @@ function cmdInitManager(cwd: string, raw: boolean): void {
     roadmap_exists: true,
     state_exists: true,
     manager_flags: managerFlags,
+    // #4455: workstream-scoped STATE/ROADMAP/milestone-archive paths — same
+    // pattern cmdInitPlanPhase already uses (existence-checked, toPosixPath'd,
+    // null when absent) plus the archive dir composition milestone.cts's
+    // `cmdMilestoneComplete` uses (#1911: planningPaths(cwd).planning +
+    // 'milestones', workstream-aware). autonomous.md's discover_phases/
+    // iterate/lifecycle steps consume these instead of hardcoding
+    // `.planning/STATE.md` / `.planning/milestones/...`.
+    state_path: fs.existsSync(paths.state) ? toPosixPath(paths.state) : null,
+    roadmap_path: fs.existsSync(paths.roadmap) ? toPosixPath(paths.roadmap) : null,
+    archive_dir: toPosixPath(path.join(paths.planning, 'milestones')),
   };
 
   output(withProjectRoot(cwd, result), raw);
@@ -3068,10 +3078,21 @@ function cmdInitCompleteMilestone(
 ): void {
   const gitCreateTag = detectGitCreateTag(cwd);
 
+  // #4455: workstream-scoped STATE/ROADMAP/milestone-archive paths for
+  // complete-milestone.md's reorganize_roadmap_and_delete_originals step —
+  // same pattern cmdInitPlanPhase already uses, mirrored here since this is
+  // that workflow's own dedicated init entry point.
+  const statePath = path.join(planningDir(cwd), 'STATE.md');
+  const roadmapPath = path.join(planningDir(cwd), 'ROADMAP.md');
+  const archiveDir = path.join(planningDir(cwd), 'milestones');
+
   const result: Record<string, unknown> = {
     // #2994: hoisted from complete-milestone.md's git_tag step
     // <config-check> resolver (git.create_tag, fail-open default true).
     git_create_tag: gitCreateTag,
+    state_path: fs.existsSync(statePath) ? toPosixPath(statePath) : null,
+    roadmap_path: fs.existsSync(roadmapPath) ? toPosixPath(roadmapPath) : null,
+    archive_dir: toPosixPath(archiveDir),
   };
 
   result['section_manifest'] = buildSectionManifestField(cwd, null, options, 'complete-milestone', {

@@ -6,7 +6,8 @@ const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { runGsdTools, createTempProject, cleanup } = require('./helpers.cjs');
+const { runGsdTools, createTempProject, cleanup, absPlanningPath } = require('./helpers.cjs');
+const { seedWorkstream } = require('./fixtures/index.cjs');
 
 // Helper: write a minimal ROADMAP.md with phases
 function writeRoadmap(tmpDir, phases) {
@@ -915,6 +916,118 @@ describe('init manager — cross-milestone dependency satisfaction (#2267)', () 
       false,
       'Phase 7 dep on non-existent Phase 99 should not be satisfied'
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #4455 — init manager emits workstream-scoped state_path/roadmap_path/
+// archive_dir (same pattern cmdInitPlanPhase already uses, plus the
+// milestone.cts archive-dir composition, #1911). autonomous.md's
+// discover_phases/iterate/lifecycle steps consume these instead of
+// hardcoding `.planning/STATE.md` / `.planning/milestones/...`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('init manager — state_path/roadmap_path/archive_dir (#4455)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    // macOS: realpath before absPlanningPath comparisons (symlinked /var/tmp).
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('flat mode (no GSD_WORKSTREAM): paths resolve to root .planning (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+
+    const result = runGsdTools('init manager', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: paths resolve into the workstream, not root (#4455 regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+
+    const result = runGsdTools('init manager', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'milestones'));
+    // Goodhart both-directions: must NOT be the flat root form.
+    assert.notStrictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.notStrictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.notStrictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('state_path/roadmap_path are null when the files do not exist yet', () => {
+    // init manager itself requires ROADMAP.md/STATE.md to exist to proceed
+    // past its own readiness guard, so exercise the null branch through
+    // init complete-milestone instead — same fs.existsSync(...) ? ... : null
+    // pattern, no upstream guard blocking an empty-fixture run.
+    const result = runGsdTools('init complete-milestone', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, null);
+    assert.strictEqual(output.roadmap_path, null);
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+});
+
+describe('init complete-milestone — state_path/roadmap_path/archive_dir (#4455)', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = require('fs').realpathSync(createTempProject());
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('flat mode (no GSD_WORKSTREAM): paths resolve to root .planning (regression guard)', () => {
+    writeState(tmpDir);
+    writeRoadmap(tmpDir, [{ number: '1', name: 'Setup' }]);
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: '' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
+  });
+
+  test('GSD_WORKSTREAM=alpha: paths resolve into the workstream, not root (#4455 regression)', () => {
+    seedWorkstream(tmpDir, {
+      name: 'alpha',
+      state: '---\nstatus: active\n---\n# State\n',
+      roadmap: '# Roadmap\n\n## Progress\n\n- [ ] **Phase 1: Setup**\n\n### Phase 1: Setup\n\n**Goal:** Bootstrap\n',
+    });
+
+    const result = runGsdTools('init complete-milestone', tmpDir, { GSD_WORKSTREAM: 'alpha' });
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+
+    assert.strictEqual(output.state_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'STATE.md'));
+    assert.strictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'ROADMAP.md'));
+    assert.strictEqual(output.archive_dir, absPlanningPath(tmpDir, 'workstreams', 'alpha', 'milestones'));
+    assert.notStrictEqual(output.state_path, absPlanningPath(tmpDir, 'STATE.md'));
+    assert.notStrictEqual(output.roadmap_path, absPlanningPath(tmpDir, 'ROADMAP.md'));
+    assert.notStrictEqual(output.archive_dir, absPlanningPath(tmpDir, 'milestones'));
   });
 });
 
