@@ -22,7 +22,7 @@ const { createTempGitProject, cleanup, runGsdTools } = require('./helpers.cjs');
 const { execFileSync } = require('node:child_process');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 // #3145: class-norm timeout, not a per-suite value — see helpers/timeouts.cjs.
-const { GIT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+const { GIT_TIMEOUT_MS, PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const {
   bareCommandName, tokenize, shellDashCPayloads, commentPortion,
   ISSUE_REF_RE, declarationReason, isDeclared, isUntrackedDeclaration,
@@ -433,6 +433,16 @@ describe('commit --files: pathspec honors declared scope (#2112)', () => {
 // shared DEFAULT_GIT_TIMEOUT_MS norm.
 const STAGING_GIT_TIMEOUT_MS = 5000;
 
+/**
+ * `commitWithFailingAdd`/`subrepoCommitWithFailingAdd` below spawn
+ * `process.execPath -e <script>` where the script mocks `execGit` in-process
+ * (no real git subprocess runs) and calls `cmdCommit`/`cmdCommitToSubrepo`.
+ * Not the same class as `PROBE_TIMEOUT_MS` (15000ms) below — kept at its
+ * pre-existing, more generous value rather than lowered without a bench
+ * citation proving 15000ms is safe for this harness.
+ */
+const MOCKED_GIT_SPAWN_TIMEOUT_MS = 30000;
+
 const LIB = path.join(__dirname, '..', 'gsd-core', 'bin', 'lib');
 
 /**
@@ -488,7 +498,7 @@ cmdCommit(${JSON.stringify(cwd)}, 'docs: map existing codebase', ${JSON.stringif
 
   const run = spawnSync(process.execPath, ['-e', script], {
     encoding: 'utf8',
-    timeout: 30000,
+    timeout: MOCKED_GIT_SPAWN_TIMEOUT_MS,
     killSignal: 'SIGKILL',
     env: { ...process.env, GSD_TEST_MODE: '1' },
   });
@@ -548,7 +558,7 @@ cmdCommitToSubrepo(${JSON.stringify(cwd)}, 'feat: subrepo change', ${JSON.string
 `;
   const run = spawnSync(process.execPath, ['-e', script], {
     encoding: 'utf8',
-    timeout: 30000,
+    timeout: MOCKED_GIT_SPAWN_TIMEOUT_MS,
     killSignal: 'SIGKILL',
     env: { ...process.env, GSD_TEST_MODE: '1' },
   });
@@ -3195,7 +3205,7 @@ projection.execGit = (args, opts) => {
 };
 cmdCommit(${JSON.stringify(cwd)}, 'docs: probe', ${JSON.stringify(files)}, false, false, false);
 `;
-    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 15_000 });
+    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS });
     if (run.status !== 0 && !run.stdout) {
       throw new Error(`probe crashed: ${run.stderr}`);
     }
@@ -3207,9 +3217,16 @@ cmdCommit(${JSON.stringify(cwd)}, 'docs: probe', ${JSON.stringify(files)}, false
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3886-'));
     fs.mkdirSync(path.join(tmpDir, '.planning'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, '.planning', 'STATE.md'), '# State\n');
-    execFileSync('git', ['init', '-b', 'main'], { cwd: tmpDir, timeout: 15_000 });
-    execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: tmpDir, timeout: 15_000 });
-    execFileSync('git', ['config', 'user.name', 'T'], { cwd: tmpDir, timeout: 15_000 });
+    // `GIT_TIMEOUT_MS` (15000ms, "plumbing READS") rather than the heavier
+    // `GIT_FIXTURE_TIMEOUT_MS` (60000ms, "fixture CONSTRUCTION calls —
+    // init/config/add/commit") that helpers/git-fixture.cjs's own docstring
+    // says this exact call shape belongs to. Not reclassified: doing so would
+    // RAISE this site's bound 15000ms -> 60000ms with no bench citation
+    // proving the smaller value is unsafe here — out of scope for a
+    // rename-only migration. Flagged, not silently resolved either way.
+    execFileSync('git', ['init', '-b', 'main'], { cwd: tmpDir, timeout: GIT_TIMEOUT_MS });
+    execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: tmpDir, timeout: GIT_TIMEOUT_MS });
+    execFileSync('git', ['config', 'user.name', 'T'], { cwd: tmpDir, timeout: GIT_TIMEOUT_MS });
   });
   afterEach(() => cleanup(tmpDir));
 
@@ -3247,7 +3264,7 @@ projection.execGit = (args, opts) => {
 };
 cmdCommit(${JSON.stringify(tmpDir)}, 'docs: probe', ['.planning/STATE.md'], false, false, false);
 `;
-    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 15_000 });
+    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS });
     const result = JSON.parse(run.stdout);
     assert.equal(result.reason, 'commit_timeout', 'the timeout gate must win over the nothing-to-commit text in partial output');
     assert.equal(result.timed_out, true);
@@ -3268,7 +3285,7 @@ projection.execGit = (args, opts) => {
 };
 cmdCommit(${JSON.stringify(tmpDir)}, 'docs: probe', ['.planning/STATE.md'], false, false, false);
 `;
-    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 15_000 });
+    const run = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: PROBE_TIMEOUT_MS });
     const result = JSON.parse(run.stdout);
     assert.equal(result.committed, false);
     assert.equal(result.reason, 'commit_failed');
