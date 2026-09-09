@@ -134,10 +134,12 @@ if [ -n "${PHASE_DIR}" ]; then
   if [ "$_pd_root" != "${PHASE_DIR}" ]; then
     for _arch in "${_pd_root}"/milestones/v[0-9]*-phases/"${_pd_base}"; do
       # `-d`, not `-e`: only a real archived phase DIRECTORY is evidence of prior use, and a
-      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` mirrors
-      # cmdFindPhase's own /^v\d+.*-phases$/ filter, so a malformed sibling cannot trigger a
-      # refusal over a directory the resolver would never have returned. An unmatched glob
-      # stays literal and fails `-d`, which is why no nullglob is needed.
+      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` TRACKS
+      # cmdFindPhase's own /^v\d+.*-phases$/ filter closely enough to reject the malformed
+      # siblings that matter, without claiming to be equivalent to it -- the glob's `*` matches
+      # a newline where the regex's `.` does not, so the shell set is marginally wider. An
+      # unmatched glob stays literal and fails `-d`, which is why no nullglob is needed. See
+      # the shell-state residual below for what this scan does NOT survive.
       [ -d "$_arch" ] || continue
       PHASE_DIR_LIVE="${PHASE_DIR}"; PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
     done
@@ -240,10 +242,12 @@ if [ -n "${PHASE_DIR}" ]; then
   if [ "$_pd_root" != "${PHASE_DIR}" ]; then
     for _arch in "${_pd_root}"/milestones/v[0-9]*-phases/"${_pd_base}"; do
       # `-d`, not `-e`: only a real archived phase DIRECTORY is evidence of prior use, and a
-      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` mirrors
-      # cmdFindPhase's own /^v\d+.*-phases$/ filter, so a malformed sibling cannot trigger a
-      # refusal over a directory the resolver would never have returned. An unmatched glob
-      # stays literal and fails `-d`, which is why no nullglob is needed.
+      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` TRACKS
+      # cmdFindPhase's own /^v\d+.*-phases$/ filter closely enough to reject the malformed
+      # siblings that matter, without claiming to be equivalent to it -- the glob's `*` matches
+      # a newline where the regex's `.` does not, so the shell set is marginally wider. An
+      # unmatched glob stays literal and fails `-d`, which is why no nullglob is needed. See
+      # the shell-state residual below for what this scan does NOT survive.
       [ -d "$_arch" ] || continue
       PHASE_DIR_LIVE="${PHASE_DIR}"; PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
     done
@@ -329,6 +333,17 @@ under an archived milestone means the path has been used before, so the anchor i
 and both modes refuse. `code-review.md` carries the same weakness on the same anchor, where it
 is read-only and merely widens a review scope; here it reverts, which is why this one is a
 refusal rather than a note.
+
+**Known residual — the reused-path scan assumes default shell options.** The collision check
+is the only fence here that relies on **pathname expansion**; every other one uses `case`
+patterns, which `set -f` does not affect. So a runtime that has disabled globbing skips the
+scan silently and the refusal fails **open** on a genuine collision, and one with
+`shopt -s failglob` aborts the fence on a *non*-match instead of passing. Both are outside the
+shell state this workflow otherwise assumes, and neither is defended against here rather than
+being hidden. Relatedly, the check is deliberately **conservative** at two edges: `[ -d ]`
+follows symlinks, and an empty directory of the right name counts — either will refuse an undo
+that a stricter ownership test might have allowed. Refusing too often costs a `--last N`;
+refusing too rarely reverts another milestone's work.
 
 **Known residual — concurrent workstreams.** The window above is scoped to the target
 phase's own directory, which is workstream-correct, but the commit subjects it filters
