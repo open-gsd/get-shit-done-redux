@@ -1,6 +1,16 @@
-// allow-test-rule: source-text-is-the-product (see #4465)
-// Reads .md product files whose deployed text IS what the runtime loads —
-// testing text content tests the deployed contract.
+// This file reads .md product files whose deployed text IS what the runtime loads, so
+// testing text content tests the deployed contract. Suppression is SITE-scoped, not
+// file-wide (CONTRIBUTING.md: the marker must sit within MAX_MARKER_LOOKAHEAD_LINES = 8
+// of the line it covers, with nothing but blanks and comments between) — so the
+// `allow-test-rule` markers live next to the two read sites below, not up here.
+//
+// Those markers are belt-and-braces today, and the reason is NOT that the rule ignores
+// `RegExp.test` — it handles `regex.test(tracked)` explicitly (no-source-grep.cjs:239,
+// :597-605). It is that neither read is tracked in the first place: `looksLikeSourcePath`
+// (:378-390) admits only .cjs/.cts/.js/.mjs/.mts/.ts and UNDO_PATH is a .md, and the
+// second site's reader is `readFileNormalized`, which the rule does not recognise as
+// `readFileSync`. The markers are correct where they now sit, and become load-bearing if
+// either scope widens.
 
 /**
  * #4465 — /gsd:undo commit selection must be milestone-bounded and HEAD-reachable.
@@ -15,9 +25,9 @@
  * `--phase` and `--plan`, drops `--all`, and fails closed instead of widening.
  *
  * Two halves. The first pins the SHAPE of undo.md's fences (substring assertions over
- * the deployed prose — the allow-test-rule above covers it). The second EXECUTES those
- * fences against a real git fixture and the real `gsd-tools.cjs`, so a fence that
- * matches the expected text but does not do the expected thing still fails.
+ * the deployed prose — each half's own read site carries the marker). The second
+ * EXECUTES those fences against a real git fixture and the real `gsd-tools.cjs`, so
+ * a fence that matches the expected text but does not do the expected thing still fails.
  */
 
 const { test, describe } = require('node:test');
@@ -41,6 +51,7 @@ function extractBashBlocks(content) {
 }
 
 describe('#4465: undo commit selection is bounded', () => {
+  // allow-test-rule: source-text-is-the-product (see #4465)
   const content = fs.readFileSync(UNDO_PATH, 'utf-8');
   const bash = extractBashBlocks(content).join('\n');
 
@@ -213,6 +224,21 @@ describe('#4465: undo commit selection is bounded', () => {
     }
   });
 
+  test('N: the purpose line no longer advertises the removed phase manifest', () => {
+    // B already reads the WHOLE file, so scope is not why it missed this: it greps the
+    // hyphenated `phase-manifest` token — the filename — while the purpose line described
+    // the same dead mechanism in prose, as "the phase manifest". Pinning the block itself
+    // is spelling-independent, where widening B's pattern to /manifest/i would fire on any
+    // future sentence that merely mentions one.
+    // Sliced, not regex-matched: an unbounded `[\s\S]*?` over readFileSync content is a
+    // catastrophic-backtracking risk and `local/no-unbounded-quantifier` rejects it.
+    const open = content.indexOf('<purpose>');
+    const close = content.indexOf('</purpose>', open + 1);
+    assert.ok(open !== -1 && close !== -1, 'undo.md must carry a <purpose> block');
+    const purpose = content.slice(open, close);
+    assert.ok(!/manifest/i.test(purpose),
+      `<purpose> must not describe the removed manifest mechanism; got:\n${purpose}`);
+  });
 });
 
 // ─── Behavioral half (review round 1, #4472) ──────────────────────────────────
@@ -261,6 +287,7 @@ function fenceWhere(bodies, label, pred) {
 }
 
 describe('#4465: undo commit selection — executed against a git fixture', { skip: SKIP_WIN32 }, () => {
+  // allow-test-rule: source-text-is-the-product (see #4465)
   const content = readFileNormalized(UNDO_PATH);
   const bodies = fenceBodies(content);
 

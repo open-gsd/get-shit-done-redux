@@ -1,5 +1,5 @@
 <purpose>
-Safe git revert workflow. Rolls back GSD phase or plan commits using the phase manifest with dependency checks and a confirmation gate. Uses git revert --no-commit (NEVER git reset) to preserve history.
+Safe git revert workflow. Rolls back GSD phase or plan commits selected within the phase directory's own commit window with dependency checks and a confirmation gate. Uses git revert --no-commit (NEVER git reset) to preserve history.
 </purpose>
 
 <required_reading>
@@ -249,6 +249,18 @@ work falls outside it, a *later* milestone's same-numbered phase falls inside an
 the subject grep. Driven on a two-archived-milestone fixture it selected the wrong
 milestone's commit and none of the right one's. Both modes now refuse an archived
 `PHASE_DIR` outright; `/gsd:undo --last N` is the route for a phase that has been archived.
+
+**Known residual — a phase directory introduced by a merge commit resolves no anchor.**
+`git log --diff-filter=A -- "${PHASE_DIR}"` does not walk merge diffs by default. A phase
+directory added on a side branch is still found, because the side-branch commit that added
+it is itself in history; the uncovered case is a directory that first appears *in the merge
+resolution itself*, which a **default** `git log` does not show: it suppresses merge diffs
+unless asked (`-m` prints the add once per parent, so the information exists — the anchor
+command simply does not request it). `PHASE_START` then resolves
+empty and both modes fail closed on a legitimate phase. Safe-direction only — it refuses
+rather than mis-selects — and untested: constructing the evil-merge fixture costs more than
+the branch is worth while the failure mode is a refusal. `/gsd:undo --last N` is the route
+if it is ever hit.
 
 **Known residual — concurrent workstreams.** The window above is scoped to the target
 phase's own directory, which is workstream-correct, but the commit subjects it filters
