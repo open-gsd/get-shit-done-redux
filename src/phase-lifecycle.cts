@@ -158,11 +158,17 @@ export function clampPercent(completed: number, total: number): number {
  * #4294: the RENDER half's kernel — the counterpart of `clampPercentFromFraction`
  * one layer down. That function owns `fraction -> integer percent`; this one
  * owns `integer percent -> filled cells`, and is the single place that rounding
- * is expressed. Six call sites used to carry their own
- * `Math.round((percent / 100) * width)`, and every copy saturated: at width 10
- * that rounds to a full bar from 95 up, at width 20 from 98 up, so a project
- * at 19/20 plans drew the same bar as a shipped one beside a number that said
- * otherwise.
+ * is expressed. Five inline copies of the rounding carried it before this
+ * change — three in `commands.cts`, and one each in `gsd2-import.cts` and
+ * `formatProgressMachineSegment` here; the latter two used `/ 10` with the
+ * width already substituted (`pct` in `gsd2-import.cts`, `clamped` in the
+ * formatter). (#4294 counts SIX call sites because it counts
+ * `cmdStateUpdateProgress` and `syncCore` separately; #4231 had already routed
+ * both through `formatProgressMachineSegment` — as it does
+ * `applyPostSyncPreservation` — so by this branch's base they share one copy.)
+ * Every copy saturated: at width 10 that rounds to a full bar from 95 up, at
+ * width 20 from 98 up, so a project at 19/20 plans drew the same bar as a
+ * shipped one beside a number that said otherwise.
  *
  * Contract:
  *   - A FULL bar is reserved for an actual 100. Below 100 the fill is held one
