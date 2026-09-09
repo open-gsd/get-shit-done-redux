@@ -355,6 +355,22 @@ describe('gsd-secret-read-guard: Kimi vocabulary', () => {
   });
 });
 
+describe('gsd-secret-read-guard: Antigravity vocabulary', () => {
+  test('blocks grep_search when SearchPath names a secret', () => {
+    const r = runHook({
+      toolCall: { name: 'grep_search', args: { SearchPath: '/p/.env', Query: 'TOKEN' } },
+    });
+    assertBlocked(r, 'grep_search SearchPath', { tool: 'Grep', path: '/p/.env' });
+  });
+
+  test('blocks grep_search when Includes selects the secret namespace', () => {
+    const r = runHook({
+      toolCall: { name: 'grep_search', args: { SearchPath: '/p', Query: 'TOKEN', Includes: '.env*' } },
+    });
+    assertBlocked(r, 'grep_search Includes', { tool: 'Grep', path: '.env*' });
+  });
+});
+
 describe('gsd-secret-read-guard: scope and crash policy', () => {
   test('ignores other tools even when they name a secret file', () => {
     assertAllowed(runHook({ tool_name: 'Write', tool_input: { file_path: '.env', content: 'X=1' } }), 'Write');

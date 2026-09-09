@@ -11,8 +11,9 @@
 // This hook enforces the constraint at the tooling layer, making it HARD-BLOCKING.
 //
 // Triggers on: Edit, Write, and MultiEdit tool calls
-// Action: BLOCK (exit 2) if file_path is absolute and outside the worktree root
-// No-op: relative paths, non-worktree CWDs, hook errors (silent fail)
+// Action: BLOCK (exit 2) if file_path is absolute and outside the worktree root,
+//         or if Antigravity multi_replace_file_content supplies a relative path
+// No-op: other relative paths, non-worktree CWDs, hook errors (silent fail)
 
 const fs = require('fs');
 const path = require('path');
@@ -141,6 +142,60 @@ function normalizeKimiPayload(data) {
   return data;
 }
 
+// #4332: Antigravity's hook bus is the #2304 defect one runtime over, plus a
+// layer. `install --antigravity` registers 13 hooks whose EVENT names are
+// translated (BeforeTool/AfterTool — ADR-857/1016, #1077) but whose matchers
+// and payload reads were left in Claude Code's vocabulary, so every guard was
+// spawned and then exited 0 on `data.tool_name === undefined`. Antigravity
+// does not merely rename the tools the way Kimi does — it NESTS the call and
+// uses PascalCase argument keys:
+//   { toolCall: { name: 'write_to_file', args: { AbsolutePath, TargetFile } },
+//     conversationId: '…' }
+// so a name map alone (the #2507 shape) is not enough; the envelope needs
+// lifting too. `AbsolutePath` is authoritative and wins outright over
+// `TargetFile`, for the same reason Kimi's `path` wins over a model-supplied
+// `file_path` (#2547/#2752): overwriting can only narrow what a guard inspects
+// to the path that will actually be written, so it cannot under-block.
+// Runs BEFORE normalizeKimiPayload and is a no-op on every other runtime — a
+// payload with no `toolCall` object is returned untouched, so a Claude Code or
+// Kimi payload never enters this path. Inlined per guard, not hooks/lib/, for
+// the reason stated above the Kimi block.
+const ANTIGRAVITY_TOOL_NAMES = new Map([['write_to_file', 'Write'], ['replace_file_content', 'Edit'], ['multi_replace_file_content', 'Edit'], ['view_file', 'Read'], ['run_command', 'Bash'], ['grep_search', 'Grep']]);
+function normalizeAntigravityPayload(data) {
+  if (data === null || typeof data !== 'object') return data;
+  const call = data.toolCall;
+  if (call === null || typeof call !== 'object') return data;
+  const raw = call.name;
+  if (typeof raw !== 'string') return data;
+  const mapped = ANTIGRAVITY_TOOL_NAMES.get(raw);
+  if (!mapped) return data;
+  data.tool_name = mapped;
+  if (typeof data.session_id !== 'string' && typeof data.conversationId === 'string') {
+    data.session_id = data.conversationId;
+  }
+  const args = call.args;
+  if (args !== null && typeof args === 'object') {
+    // A nested Antigravity call is authoritative. Start fresh rather than
+    // retaining fields from a synthetic flat+nested hybrid payload.
+    const input = {};
+    // Only documented keys are lifted, and only from a string: a bulk copy of
+    // `args` would carry an attacker-chosen `__proto__` key into a plain
+    // object, and would invent field names this runtime has not been observed
+    // to send. A key that is absent leaves the guard reading `undefined` and
+    // failing open exactly as it does today — never worse than dormant.
+    if (typeof args.TargetFile === 'string') input.file_path = args.TargetFile;
+    if (typeof args.AbsolutePath === 'string') input.file_path = args.AbsolutePath;
+    if (typeof args.CommandLine === 'string') input.command = args.CommandLine;
+    // grep_search uses a search root plus an optional include pattern. Lift
+    // both documented fields into the Grep vocabulary consumed by the secret
+    // guard; other guards ignore these extra, typed fields.
+    if (raw === 'grep_search' && typeof args.SearchPath === 'string') input.path = args.SearchPath;
+    if (raw === 'grep_search' && typeof args.Includes === 'string') input.glob = args.Includes;
+    data.tool_input = input;
+  }
+  return data;
+}
+
 let input = '';
 const stdinTimeout = setTimeout(() => allow(undefined), 3000);
 process.stdin.setEncoding('utf8');
@@ -148,7 +203,7 @@ process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   clearTimeout(stdinTimeout);
   try {
-    const data = normalizeKimiPayload(JSON.parse(input));
+    const data = normalizeKimiPayload(normalizeAntigravityPayload(JSON.parse(input)));
     const toolName = data.tool_name;
 
     // Only guard Edit, Write, and MultiEdit tool calls
@@ -221,6 +276,11 @@ process.stdin.on('end', () => {
       allow(undefined);
     }
 
+    const antigravityToolName = data.toolCall !== null && typeof data.toolCall === 'object'
+      && typeof data.toolCall.name === 'string'
+      ? data.toolCall.name
+      : '';
+
     // Relative paths resolve against the tool's CWD, which is inside the worktree
     // — so under the runtime this guard was written for they cannot leave it.
     //
@@ -236,6 +296,22 @@ process.stdin.on('end', () => {
     // `../`-laden path exits 0 at this line and escapes the worktree. Stating a
     // mechanism and an unverified premise — not asserting a live bypass.
     if (!path.isAbsolute(rawFilePath)) {
+      // #4332: Antigravity documents multi_replace_file_content with only a
+      // TargetFile argument, but does not promise that it is absolute or state
+      // which directory resolves a relative value. This PR makes that payload
+      // reach this guard for the first time. Refuse the ambiguous shape inside
+      // a managed executor worktree instead of assuming it resolves from cwd
+      // and silently allowing a ../ escape.
+      if (antigravityToolName === 'multi_replace_file_content') {
+        const output = {
+          decision: 'block',
+          reason:
+            `Worktree path guard: Antigravity multi_replace_file_content supplied the relative ` +
+            `TargetFile '${rawFilePath}'. Its resolution base is not guaranteed by the hook ` +
+            `contract, so an absolute path inside the active worktree is required.`,
+        };
+        deny(output, output.reason);
+      }
       allow(undefined);
     }
 
