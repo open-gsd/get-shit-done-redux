@@ -8,7 +8,7 @@ Read config.json for planning behavior settings.
 
 @~/.claude/gsd-core/references/git-integration.md
 
-**Not running as a spawned `gsd-executor`?** (`--interactive`, Copilot's sequential default, Pattern C inline, an `agent_hint` specialist.) The build-time embed hands `references/checkpoints.md` and `templates/summary.md` to spawned executors only, and `agents/gsd-executor.md` — resolved against the install root — only when that agent is the one spawned. On any other route **Read** each file this workflow points at, deviation rules first.
+**Not running as a spawned `gsd-executor`?** (`--interactive`, Copilot's sequential default, Pattern C inline, an `agent_hint` specialist.) The build-time embed hands `gsd-core/references/checkpoints.md` and `gsd-core/templates/summary.md` to spawned executors only, and `agents/gsd-executor.md` — resolved against the install root — only when that agent is the one spawned. On any other route **Read** each file this workflow points at, deviation rules first.
 </required_reading>
 
 <atomic_close_out_invariant>
