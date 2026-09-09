@@ -704,7 +704,9 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
-  test('a removal the call cannot put back is reported, never as nothing_to_commit', (t) => {
+  test('a removal the call cannot put back is reported, never as nothing_to_commit',
+    { skip: process.platform === 'win32' ? 'chmod cannot make a directory unwritable on Windows (driven: a write into a ReadOnly directory succeeds), so the fixture cannot drive a failed restore' : false },
+    (t) => {
     // The restore is best-effort, so it can FAIL -- and reporting
     // nothing_to_commit over a removal we tried and could not undo is the same
     // false "no state changed" the restore exists to prevent, one level down.
@@ -749,7 +751,9 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.match(parsed.error, /gone\.md/);
   });
 
-  test('a rollback that cannot restore a removal discloses it, even when the reported failure is another entry', (t) => {
+  test('a rollback that cannot restore a removal discloses it, even when the reported failure is another entry',
+    { skip: process.platform === 'win32' ? 'chmod cannot make a directory unwritable on Windows (driven: a write into a ReadOnly directory succeeds), so the fixture cannot drive a failed restore' : false },
+    (t) => {
     // The rollback exit reports the failure that CAUSED it -- here a
     // contradictory declaration about a path still on disk -- so a caller
     // reading `failures` would learn nothing about the removal this call had
@@ -926,7 +930,9 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
-  test('a tracked filename containing a glob removes only itself, never its neighbours', () => {
+  test('a tracked filename containing a glob removes only itself, never its neighbours',
+    { skip: process.platform === 'win32' ? 'a filename containing `*` cannot exist on Windows (driven: IOException)' : false },
+    () => {
     // An index path handed back to git is parsed as a PATHSPEC. A tracked file
     // literally named `*.md` therefore GLOBS: `rm --cached` on it also removed
     // the peers, only the declared entry was recorded, and the rollback then
@@ -956,7 +962,9 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.strictEqual(git(['ls-files', '-s', '--', PENDING]), before, 'the index is exactly as it was');
   });
 
-  test('a tracked filename containing pathspec magic is removed, and commits nothing else', () => {
+  test('a tracked filename containing pathspec magic is removed, and commits nothing else',
+    { skip: process.platform === 'win32' ? 'a filename containing `:` cannot exist on Windows (driven: FileNotFoundException)' : false },
+    () => {
     // The quieter half of the same defect: pathspec magic binds at the START of
     // the operand, so a file named `:(literal)mine` at the repo ROOT has its
     // prefix PARSED -- the rm matched nothing, exited 0, and the entry survived
@@ -994,7 +1002,9 @@ describe('commit --files-removed: index states absent by design are never remova
     );
   });
 
-  test('a glob-named removal commits only itself, never an undeclared peer edit', () => {
+  test('a glob-named removal commits only itself, never an undeclared peer edit',
+    { skip: process.platform === 'win32' ? 'a filename containing `*` cannot exist on Windows (driven: IOException)' : false },
+    () => {
     // Literalising the STAGING is not enough: `git commit -- <paths>` takes the
     // same paths as a pathspec, so a tracked file named `*.md` swept a MODIFIED
     // peer into the commit the caller never declared -- the sweep this flag
@@ -1020,7 +1030,9 @@ describe('commit --files-removed: index states absent by design are never remova
     assert.match(porcelain(PENDING), /^ M \.planning\/todos\/pending\/peer\.md$/m, "the peer's edit stays uncommitted");
   });
 
-  test('an intent-to-add entry with a glob name keeps its intent flag', () => {
+  test('an intent-to-add entry with a glob name keeps its intent flag',
+    { skip: process.platform === 'win32' ? 'a filename containing `*` cannot exist on Windows (driven: IOException)' : false },
+    () => {
     // The intent-to-add probe is a `diff --cached` over the path, so an
     // unliteralised glob name matched a STAGED PEER instead of itself, the
     // entry was misclassified as ordinary content, removed, and then restored
