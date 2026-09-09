@@ -772,6 +772,44 @@ const http = require('http');
 const os = require('os');
 const { spawnSync, execFile } = require('child_process');
 
+// DELIVER A SCRIPT AS A FILE rather than through `bash -c`, wherever the script text is
+// generated or carries a backslash. Crossing the Win32 argv boundary an ADJACENT DOUBLED
+// backslash is collapsed before bash parses it, so `-c` hands Windows bash a script that is
+// not the one under test: `echo three \\` arrives as `echo three \`, which is a line
+// continuation, and swallows the command after it. Measured on Git Bash 5.2.37(1) (msys)
+// against WSL bash 5.2 with the five-line fixture below: `-c` yields 3 commands on msys and
+// 4 on POSIX, while the file form yields 4 on both. `bash -c 'exit 0'` above is deliberately
+// left as-is — it is a fixed, backslash-free liveness probe and cannot reach this.
+// ONE directory for the whole file, not one per call: the two properties below run 60 and
+// 250 cases, and a mkdtemp/rm pair per case is ~311 synchronous filesystem round-trips on a
+// platform where each is antivirus-scanned. It also removes a failure surface — `cleanup()`
+// swallows Windows EBUSY/ENOTEMPTY/EPERM, so a per-call teardown can both leak and mask the
+// result of the test that triggered it.
+let bashScriptDir = null;
+let bashScriptSeq = 0;
+function runBashScript(script, env) {
+  if (bashScriptDir === null) {
+    bashScriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-4176-bash-'));
+  }
+  // A FRESH NAME per call, inside the one directory. Reusing a single hot `script.sh` across
+  // 311 rapid overwrite-and-execute cycles invites the Windows failure this whole commit is
+  // about, one layer down: a scanner or a not-yet-released handle can transiently block the
+  // next overwrite, and `writeFileSync` has no retry. A new name cannot contend with the
+  // handle the previous call just closed, and costs one inode rather than one mkdtemp+rm.
+  const file = path.join(bashScriptDir, `script-${(bashScriptSeq += 1)}.sh`);
+  // Written VERBATIM, with no trailing newline appended: a script whose last line ends in a
+  // continuation would change meaning if one were added, and bash executes a final line that
+  // lacks one. `$0` and `BASH_SOURCE[0]` differ from the `-c` form (the pathname rather than
+  // `bash`); no caller here reads either, or any positional parameter.
+  fs.writeFileSync(file, script);
+  return spawnSync('bash', [file], {
+    encoding: 'utf8',
+    timeout: PROBE_TIMEOUT_MS,
+    ...(env ? { env: { ...process.env, ...env } } : {}),
+  });
+}
+after(() => { if (bashScriptDir !== null) cleanup(bashScriptDir); });
+
 // The probe is `node -e '<program>' "<url>"`. Take the program out verbatim.
 function probeProgram() {
   const line = logicalLines(screenshotApproachLines().map(stripComment))
@@ -1482,10 +1520,29 @@ describe('#4176 — bash reader, units', () => {
     assert.deepStrictEqual(logicalLines(['echo a \\', '  b \\ ', 'c']), ['echo a b \\ ', 'c']);
   });
 
+  // REGRESSION, #4224 round 4: the script must reach bash BYTE-INTACT. This is the platform
+  // defect that reddened `test (windows-latest, 24, shard 1/3)` — an adjacent doubled
+  // backslash is collapsed crossing the Win32 argv boundary, so `bash -c` delivered
+  // `echo three \\` as `echo three \`, a line continuation that swallowed the next command
+  // and made bash run 3 where POSIX runs 4. It asserts the DELIVERY, not the reader: it is
+  // the only check here that fails if the transport starts mangling text again, and on Linux
+  // it passes under either transport, so it is a Windows-only guard by construction. It is
+  // not the only check that would catch a mangling transport — the two tests that actually
+  // failed on Windows are proof it is not — but it is the only one that names the transport
+  // as the thing under test, so a future regression reports the cause rather than the symptom.
+  test('a doubled backslash survives delivery — bash runs two commands, not one',
+    { skip: BASH_OK ? false : 'no runnable bash on this host' }, () => {
+    const r = runBashScript('echo three \\\\\necho four');
+    assert.strictEqual(r.status, 0, `bash rejected the script: ${r.stderr}`);
+    assert.deepStrictEqual(splitLines(r.stdout).filter(Boolean), ['three \\', 'four'],
+      'the doubled backslash was collapsed in transit: bash saw a line continuation, '
+      + 'joined the two commands, and the script under test is not the script written');
+  });
+
   test('logicalLines agrees with bash on how many commands a continuation-bearing script runs',
     { skip: BASH_OK ? false : 'no runnable bash on this host' }, () => {
     const script = ['echo one \\ ', 'echo two', 'echo three \\\\', 'echo four \\', '  five'].join('\n');
-    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
+    const r = runBashScript(script);
     const printed = splitLines(r.stdout).filter(Boolean);
     const modelled = logicalLines(splitLines(script)).map((l) => l.trim());
     assert.strictEqual(printed.length, modelled.length,
@@ -1689,7 +1746,7 @@ describe('#4176 — bash reader, property-based (fast-check)', () => {
           }
           const env = {};
           conds.forEach((c, i) => { env[`C${i}`] = truth[i] ? '1' : '0'; });
-          const r = spawnSync('bash', ['-c', lines.join('\n')], { encoding: 'utf8', env: { ...process.env, ...env }, timeout: PROBE_TIMEOUT_MS });
+          const r = runBashScript(lines.join('\n'), env);
           assert.strictEqual(r.status, 0, `bash rejected a generated script — the generator is wrong, not the reader:\n${lines.join('\n')}\n${r.stderr}`);
           const printed = new Set([...r.stdout.matchAll(/\bM(\d+)\b/g)].map((m) => Number(m[1])));
           assert.deepStrictEqual([...predicted].sort((a, b) => a - b), [...printed].sort((a, b) => a - b),
@@ -1722,7 +1779,7 @@ describe('#4176 — bash reader, property-based (fast-check)', () => {
           assert.ok(label !== null, `every generated label is legal bash, so the reader must parse it: ${JSON.stringify(labelText)}`);
           const claimed = label.some(isTwoXxRange);
           const script = 'for s in 200 250 299 199 300 500; do case "$s" in ' + labelText + ') printf Y;; *) printf N;; esac; done';
-          const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
+          const r = runBashScript(script);
           assert.strictEqual(r.status, 0, `bash cannot run the generated label ${JSON.stringify(labelText)}: ${r.stderr}`);
           reached += 1;
           const admitsAll2xx = r.stdout.slice(0, 3) === 'YYY';
