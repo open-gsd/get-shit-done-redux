@@ -30,6 +30,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { ExitError, runMain } = require('./lib/cli-exit.cjs');
+const { describeNpmVersionCheckFailure } = require('./lib/npm-version-check-diagnosis.cjs');
 
 // On Windows, npm ships as npm.cmd (a batch wrapper); spawnSync without
 // shell:true requires the exact filename including extension.
@@ -180,18 +181,21 @@ function main() {
   // Check 2: npm version vs engines.npm (skip if field absent)
   // ---------------------------------------------------------------------------
   const enginesNpm = pkgField('engines.npm', PROJECT_ROOT);
+  const NPM_VERSION_TIMEOUT_MS = 10_000;
   let currentNpm = '';
+  let npmSpawnResult = null;
+  let npmSpawnThrew = null;
   try {
-    const res = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: 10_000, shell: process.platform === 'win32' });
-    if (res.status === 0 && res.stdout) {
-      currentNpm = res.stdout.trim();
+    npmSpawnResult = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: NPM_VERSION_TIMEOUT_MS, shell: process.platform === 'win32' });
+    if (npmSpawnResult.status === 0 && npmSpawnResult.stdout) {
+      currentNpm = npmSpawnResult.stdout.trim();
     }
-  } catch { /* ignore */ }
+  } catch (e) { npmSpawnThrew = e; }
 
   if (!enginesNpm) {
     addCheck('npm-version', 'skip', 'engines.npm not set in package.json — skipping');
   } else if (!currentNpm) {
-    addCheck('npm-version', 'fail', 'npm binary not found on PATH');
+    addCheck('npm-version', 'fail', describeNpmVersionCheckFailure(npmSpawnResult, npmSpawnThrew, NPM_VERSION_TIMEOUT_MS));
   } else {
     if (satisfiesConstraint(currentNpm, enginesNpm)) {
       addCheck('npm-version', 'pass', `npm ${currentNpm} satisfies ${enginesNpm}`);
