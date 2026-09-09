@@ -110,6 +110,23 @@ const INSTALL_TIMEOUT_MS = 120000;
  */
 const SEAM_DEFAULT_TIMEOUT_MS = 60000;
 
+/**
+ * A cheap, lightweight subprocess/hook invocation whose own work is
+ * trivial -- a synchronous in-process guard hook, a fully-mocked shell
+ * harness (git/gh functions stubbed out), a small `node -e` snippet, or a
+ * lint script scanning a tiny temp fixture -- with no real git/network/
+ * fan-out work inside. 10000ms leaves generous headroom over each call
+ * site's sub-second observed worst case (#4514, batch 3 of the ad hoc
+ * timeout literal migration, epic #4445 -- consolidates 5 call sites
+ * across 4 files that had all independently arrived at this exact value).
+ *
+ * Deliberately NOT the same as `PROBE_TIMEOUT_MS` (15000ms): consolidating
+ * onto that would RAISE these sites' bound with no bench citation, which
+ * this migration's scope (naming, not tuning) does not permit. This norm
+ * is for the even-lighter end of the spectrum PROBE_TIMEOUT_MS occupies.
+ */
+const QUICK_SPAWN_TIMEOUT_MS = 10000;
+
 module.exports = {
   PROBE_TIMEOUT_MS,
   HOOK_FANOUT_TIMEOUT_MS,
@@ -118,4 +135,5 @@ module.exports = {
   BUILD_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   SEAM_DEFAULT_TIMEOUT_MS,
+  QUICK_SPAWN_TIMEOUT_MS,
 };

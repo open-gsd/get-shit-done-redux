@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripFencedCode, scanFencedBlocks } = require('../gsd-core/bin/lib/markdown-sectionizer.cjs');
 const { cleanup, createTempDir, readFileNormalized } = require('./helpers.cjs');
+const { QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const SHIP_MD = path.join(__dirname, '..', 'gsd-core', 'workflows', 'ship.md');
 
@@ -76,7 +77,7 @@ function runTrackShipping(responses) {
     const result = spawnSync('bash', ['-c', `${preamble}\n${extractTrackShippingScript()}`], {
       cwd: tmpDir,
       encoding: 'utf8',
-      timeout: 10000,
+      timeout: QUICK_SPAWN_TIMEOUT_MS,
       env: {
         ...process.env,
         CURRENT_BRANCH: 'fix/ship-note',
