@@ -633,16 +633,17 @@ function validateEntryShape(e: unknown, i: number): WindowEntry {
     resolved_at: resolvedStr,
     // #4487: NOT in `required` above -- an entry recorded before this field
     // existed has no `milestone` key at all, and that must parse cleanly.
-    // Preserve the absence itself (as `undefined`) rather than collapsing it
-    // to `null`: renderLedger re-serializes this object verbatim, and
-    // JSON.stringify keeps an explicit `null` but drops `undefined` -- so
-    // collapsing absence to null here would stamp every legacy entry with
-    // permanent `"milestone": null` noise the moment the ledger is next
-    // touched. A genuinely-recorded-but-unresolvable milestone (set by
-    // appendWindow) is still an explicit null and round-trips as one.
-    milestone: 'milestone' in o
-      ? (typeof o.milestone === 'string' ? o.milestone : null)
-      : undefined,
+    // Preserve the absence itself -- by not materializing the property at
+    // all, via the conditional spread below, rather than assigning it
+    // `milestone: undefined` (an object literal property set to `undefined`
+    // is still an OWN property; `'milestone' in entry` reads true either
+    // way) -- so a genuinely absent key stays absent both to `in` and to
+    // JSON.stringify on re-render. Collapsing absence to an explicit null
+    // instead would stamp every legacy entry with permanent
+    // `"milestone": null` noise the moment the ledger is next touched. A
+    // genuinely-recorded-but-unresolvable milestone (set by appendWindow)
+    // is still an explicit null and round-trips as one.
+    ...('milestone' in o ? { milestone: typeof o.milestone === 'string' ? o.milestone : null } : {}),
   };
 }
 
