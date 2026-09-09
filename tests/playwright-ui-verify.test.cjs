@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { splitLines } = require('../gsd-core/bin/lib/text-lines.cjs');
 const { cleanup } = require('./helpers.cjs');
+const { PROBE_TIMEOUT_MS, HOOK_FANOUT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 // #2994 fragmentization moved the automated_ui_verification step out of
 // verify-work.md into gsd-core/workflows/verify-work/steps/automated-ui-verification.md
@@ -799,7 +800,7 @@ const urlOf = (server) => `http://127.0.0.1:${server.address().port}`;
 // suite — a self-inflicted instance of the false-clean class the rest of this file is about.
 function runProbe(url) {
   return new Promise((resolve) => {
-    execFile(process.execPath, ['-e', probeProgram(), url], { timeout: 30000 },
+    execFile(process.execPath, ['-e', probeProgram(), url], { timeout: PROBE_TIMEOUT_MS },
       // MODEL THE WHOLE SHELL EXPRESSION, not just the program. The fence runs
       //   PROBE=$(node -e '…' "$url" 2>/dev/null || echo "000"); PROBE=${PROBE:-000}
       // so a program that PRINTS 200 and then exits non-zero yields `200000` — which
@@ -888,7 +889,7 @@ describe('#4176 — the probe program, executed against real servers', () => {
     // nothing to do with the server. The version is carried so the report can name it.
     const program = `delete globalThis.fetch; ${probeProgram()}`;
     const out = await new Promise((resolve) => {
-      execFile(process.execPath, ['-e', program, 'http://127.0.0.1:1/'], { timeout: 30000 },
+      execFile(process.execPath, ['-e', program, 'http://127.0.0.1:1/'], { timeout: PROBE_TIMEOUT_MS },
         (err, stdout) => resolve({ code: err && typeof err.code === 'number' ? err.code : 0, stdout: String(stdout) }));
     });
     assert.strictEqual(out.code, 0, 'the nofetch branch must not throw');
@@ -911,7 +912,7 @@ describe('#4176 — the probe program, executed against real servers', () => {
 // platform: a `process.platform === 'win32'` gate also skips silently on any non-Windows
 // host without bash, and claims Windows has none when Git Bash is often present.
 const BASH_OK = (() => {
-  const r = spawnSync('bash', ['-c', 'exit 0'], { encoding: 'utf8', timeout: 15000 });
+  const r = spawnSync('bash', ['-c', 'exit 0'], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
   return r.status === 0;
 })();
 
@@ -1017,7 +1018,7 @@ describe('#4176 — the capture fence, executed', { skip: BASH_OK ? false : 'no 
     const r = spawnSync('bash', [script], {
       cwd: dir,
       encoding: 'utf8',
-      timeout: 60000,
+      timeout: HOOK_FANOUT_TIMEOUT_MS,
       env: {
         ...process.env,
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
@@ -1484,7 +1485,7 @@ describe('#4176 — bash reader, units', () => {
   test('logicalLines agrees with bash on how many commands a continuation-bearing script runs',
     { skip: BASH_OK ? false : 'no runnable bash on this host' }, () => {
     const script = ['echo one \\ ', 'echo two', 'echo three \\\\', 'echo four \\', '  five'].join('\n');
-    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 15000 });
+    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
     const printed = splitLines(r.stdout).filter(Boolean);
     const modelled = logicalLines(splitLines(script)).map((l) => l.trim());
     assert.strictEqual(printed.length, modelled.length,
@@ -1688,7 +1689,7 @@ describe('#4176 — bash reader, property-based (fast-check)', () => {
           }
           const env = {};
           conds.forEach((c, i) => { env[`C${i}`] = truth[i] ? '1' : '0'; });
-          const r = spawnSync('bash', ['-c', lines.join('\n')], { encoding: 'utf8', env: { ...process.env, ...env }, timeout: 15000 });
+          const r = spawnSync('bash', ['-c', lines.join('\n')], { encoding: 'utf8', env: { ...process.env, ...env }, timeout: PROBE_TIMEOUT_MS });
           assert.strictEqual(r.status, 0, `bash rejected a generated script — the generator is wrong, not the reader:\n${lines.join('\n')}\n${r.stderr}`);
           const printed = new Set([...r.stdout.matchAll(/\bM(\d+)\b/g)].map((m) => Number(m[1])));
           assert.deepStrictEqual([...predicted].sort((a, b) => a - b), [...printed].sort((a, b) => a - b),
@@ -1721,7 +1722,7 @@ describe('#4176 — bash reader, property-based (fast-check)', () => {
           assert.ok(label !== null, `every generated label is legal bash, so the reader must parse it: ${JSON.stringify(labelText)}`);
           const claimed = label.some(isTwoXxRange);
           const script = 'for s in 200 250 299 199 300 500; do case "$s" in ' + labelText + ') printf Y;; *) printf N;; esac; done';
-          const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: 15000 });
+          const r = spawnSync('bash', ['-c', script], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
           assert.strictEqual(r.status, 0, `bash cannot run the generated label ${JSON.stringify(labelText)}: ${r.stderr}`);
           reached += 1;
           const admitsAll2xx = r.stdout.slice(0, 3) === 'YYY';
