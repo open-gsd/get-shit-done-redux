@@ -264,6 +264,33 @@ Check `branching_strategy` from init:
 
 **"phase" or "milestone":** Use pre-computed `branch_name` from init.
 
+**If `branch_name` is null/empty:** Stop — do NOT continue on the current branch. This arm has already
+established `branching_strategy` is `phase` or `milestone`, so an empty value can only mean a branch
+template that renders to nothing; continuing would land the phase's commits on whatever HEAD happens to
+be (#2916).
+
+When you read the init payload, map a JSON `null` `branch_name` to an EMPTY `$BRANCH_NAME`, and set
+`$BRANCHING_STRATEGY` from `branching_strategy`. Map by type, not by text: a JSON null rendered as the
+four characters `null` is a valid branch name and would be checked out, while a phase legitimately
+slugged `null` is a real (if contrived) name that must survive — testing emptiness after a typed read
+keeps both cases right, where a string comparison gets one of them wrong whichever way it is written
+(#4252).
+
+```bash
+if [ -z "$BRANCH_NAME" ]; then
+  case "$BRANCHING_STRATEGY" in
+    milestone) KEY="git.milestone_branch_template" ;;
+    *)         KEY="git.phase_branch_template" ;;
+  esac
+  echo "ERROR: branching_strategy is '$BRANCHING_STRATEGY' but init computed no branch_name." >&2
+  echo "       Your $KEY renders empty here — fix it in .planning/config.json" >&2
+  echo "       (leave something besides {slug} to name), then re-run." >&2
+  exit 1
+fi
+```
+
+Both strategies reach this guard, so the message names the template actually in play.
+
 Fork the new phase branch off `origin/HEAD` (the project's default branch), not the current HEAD — otherwise consecutive phases compound and stay unpushed (#2916). If `$BRANCH_NAME` already exists locally, reuse it as-is.
 
 ```bash

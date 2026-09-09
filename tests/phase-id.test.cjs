@@ -106,6 +106,196 @@ describe('normalizePhaseName', () => {
 
 // ─── comparePhaseNum ──────────────────────────────────────────────────────────
 
+describe('renderPhaseBranchName (#4126)', () => {
+  const T = 'gsd/phase-{phase}-{slug}';
+
+  test('substitutes a real slug and normalizes the phase number (negative control)', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '1', 'setup'), 'gsd/phase-01-setup');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, 'CK-3', 'auth'), 'gsd/phase-03-auth');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '45.14', 'golden-capture'), 'gsd/phase-45.14-golden-capture');
+  });
+
+  test('empty-string slug (name outside the transliterator) drops {slug} and the separator before it', () => {
+    // Route 2 of #4126: phase_name resolved (e.g. CJK) but generateSlugInternal
+    // returned '' — the tool must not fabricate a name it is not displaying.
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', ''), 'gsd/phase-08');
+  });
+
+  test('null / undefined slug (no name segment) renders the same way as the empty-string route', () => {
+    // Route 1 of #4126: a `07` directory — phase_name and phase_slug both null.
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '7', null), 'gsd/phase-07');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '7', undefined), 'gsd/phase-07');
+  });
+
+  test('never substitutes the literal placeholder "phase", and stays distinguishable from a phase named "Phase"', () => {
+    const empty = phaseId.renderPhaseBranchName(T, '8', '');
+    assert.strictEqual(empty, 'gsd/phase-08');
+    assert.notStrictEqual(empty, phaseId.renderPhaseBranchName(T, '8', 'phase'),
+      'an empty slug must not collide with a phase genuinely slugged "phase"');
+  });
+
+  test('a leading {slug} drops the separator AFTER it instead', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}-{phase}', '4', ''), '04');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/{slug}/{phase}', '4', ''), 'gsd/04');
+  });
+
+  test('a slash separator is dropped too, so no trailing slash survives (invalid ref otherwise)', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}/{slug}', '8', ''), 'gsd/phase-08');
+  });
+
+  test('a preceding "/" is kept when a non-slash separator follows — hierarchy survives, the joiner goes', () => {
+    // Adversarial review finding: `feature/{slug}-phase-{phase}` must not collapse
+    // to `feature-phase-08`; `/` is a ref-hierarchy boundary, not a word joiner.
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}-phase-{phase}', '8', ''), 'feature/phase-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/{slug}_{phase}', '8', ''), 'gsd/08');
+  });
+
+  test('a slash run left behind by the drop is collapsed — "//" is not a valid ref component', () => {
+    // Adversarial review finding (round 2): `feature/{slug}-/{phase}` dropped the
+    // following `-` and left `feature//08`, which `git check-ref-format` rejects.
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}-/{phase}', '8', ''), 'feature/08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature/{slug}_/{phase}', '8', ''), 'feature/08');
+  });
+
+  test('a truthy number slug is stringified, matching the prior .replace semantics', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}-{phase}', '8', 1), '1-08');
+  });
+
+  test('a template without {slug} is unaffected by an empty slug', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}', '8', ''), 'gsd/phase-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('gsd/phase-{phase}', '8', 'ignored'), 'gsd/phase-08');
+  });
+
+  test('returns null only when nothing is left to name', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}', '8', ''), null);
+    assert.strictEqual(phaseId.renderPhaseBranchName('', '8', 'x'), null);
+  });
+
+  test('substitutes only the FIRST {slug}, matching the prior .replace(string) semantics at both call sites', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', 'x'), 'x/02-{slug}');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}/{phase}-{slug}', '2', ''), '02-{slug}');
+  });
+
+  // Review nit (#4252, round 1): the truthy-slug path performs NO validation,
+  // exactly preserving the `.replace(string, …)` semantics both call sites had.
+  // Unreachable through either real call site — `phase_slug` is null or
+  // `generateSlugInternal`'s output, which can never be whitespace-only or
+  // all-separator — but the helper is exported and reusable, so the preserved
+  // behavior is pinned here rather than left to be rediscovered as a regression.
+  test('a pathological truthy slug is substituted verbatim — no validation, prior behavior preserved', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', ' '), 'gsd/phase-08- ');
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', '-'), 'gsd/phase-08--');
+  });
+
+  // Same nit, second half: the `//` collapse runs ONLY in the empty-slug branch.
+  // The asymmetry is deliberate — collapsing on the truthy path would change
+  // behavior #4126 is not scoped to touch, and no template in this repo reaches
+  // it. Pinned so that it reads as a decision rather than an oversight.
+  //
+  // The empty-slug expectation here was `'feature/'` until #4252 round 3, which
+  // is the shape of the bug rather than an incidental wrong number: the test
+  // pinned an INVALID ref (`git check-ref-format` rejects a trailing `/`) as
+  // correct, which is exactly what would have made the defect hard to see later.
+  test('the double-slash collapse is empty-slug-only — a truthy slug leaves the template\'s own "//" alone', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', 'x'), 'feature//x');
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature');
+  });
+
+  // #4252 round 3 (blocker): a separator RUN adjacent to `{slug}`, with the
+  // token at an edge of the template, used to leave a lone leading/trailing `/`
+  // or `.` — a ref `git check-ref-format` rejects. The drop removes ONE
+  // character and the `//` collapse only matches runs of 2+ slashes, so nothing
+  // caught the single residual character.
+  test('an edge-adjacent separator RUN never leaves a leading or trailing `/` or `.`', () => {
+    // trailing-edge residue — the two shapes the round-3 review demonstrated
+    assert.strictEqual(phaseId.renderPhaseBranchName('feature//{slug}', '8', ''), 'feature');
+    assert.strictEqual(phaseId.renderPhaseBranchName('a..{slug}', '8', ''), 'a');
+    // leading-edge twins — same defect, mirrored; not in the review, found by
+    // driving the shipped function across both edges
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}//feature', '8', ''), 'feature');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{slug}..a', '8', ''), 'a');
+  });
+
+  // The residue that the review's FIRST suggested remedy — "strip the entire
+  // contiguous separator run adjacent to the token" — does not reach as stated:
+  // here the leftover separator sits on the side the drop never touches. An
+  // adjacency-based variant CAN reach it by additionally testing whether the
+  // far-side remainder is separators-only; it just costs more branching for the
+  // same result. Pinned either way, so whichever shape is in force keeps these.
+  test('residue on the side the drop did NOT touch is trimmed too', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}/', '8', ''), '08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}.{slug}.', '8', ''), '08');
+  });
+
+  // The trim is scoped to `/` and `.` — the characters whose presence at an edge
+  // makes a ref INVALID. `-` and `_` are ref-legal at an edge, and trimming them
+  // would OVER-drop: this template renders `-08-x` with a slug, so rendering
+  // `08` rather than `-08` without one would silently change a valid name.
+  test('a ref-LEGAL edge separator is preserved — the trim fixes validity, not aesthetics', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('-{phase}-{slug}', '8', ''), '-08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}--{slug}', '8', ''), '08-');
+    // BOTH ref-legal separators, not just the hyphen. Pinning `-` alone left the
+    // underscore unheld: widening the trim class to `[._/]` kept all 161 tests
+    // green, so the claim that `_` is preserved was asserted by nothing.
+    assert.strictEqual(phaseId.renderPhaseBranchName('_{phase}_{slug}', '8', ''), '_08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}__{slug}', '8', ''), '08_');
+  });
+
+  // The bound on the test above, pinned so the edge-trim is not mistaken for
+  // whole-ref validation. A template that straddles `{slug}` with a fragment
+  // which only becomes illegal once the token is dropped is NOT covered — and
+  // the converse exists too, so neither render dominates the other. Both
+  // directions are characterized here rather than left for a later round to
+  // rediscover as a regression.
+  test('the edge-trim is not whole-ref validation — a straddled `.lock` is out of scope', () => {
+    // empty-slug render is the invalid one here...
+    assert.strictEqual(phaseId.renderPhaseBranchName('a.lo{slug}ck/{phase}', '8', ''), 'a.lock/08');
+    assert.strictEqual(phaseId.renderPhaseBranchName('a.lo{slug}ck/{phase}', '8', 'x'), 'a.loxck/08');
+    // ...and here it is the truthy one, which is why "never worse-formed" is
+    // not the property this fix establishes.
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}.lock', '8', ''), '08/lock');
+    assert.strictEqual(phaseId.renderPhaseBranchName('{phase}/{slug}.lock', '8', 'x'), '08/x.lock');
+  });
+
+  // New null reachability created by the trim, and the reason the consumer arm
+  // in gsd-core/workflows/execute-phase.md landed in the same round (#4252
+  // round 2): a template that reduces to separators only has nothing left to
+  // name, exactly as a `{slug}`-alone template does.
+  test('a template that reduces to separators only returns null, not a bare separator', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('//{slug}', '8', ''), null);
+    assert.strictEqual(phaseId.renderPhaseBranchName('.{slug}', '8', ''), null);
+  });
+
+  // #4252 round 2, Minor (a): a template with NO separator adjacent to `{slug}`
+  // on either side. Behavior is a plain concatenation — correct, and previously
+  // exercised by neither the example tests nor the property generators (which
+  // always join their parts with a separator).
+  test('no adjacent separator on either side — the token drops and the neighbours concatenate', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName('abc{slug}def', '8', ''), 'abcdef');
+    assert.strictEqual(phaseId.renderPhaseBranchName('abc{slug}def', '8', 'x'), 'abcxdef');
+  });
+
+  // #4252 round 2, Minor (b): `Infinity` is a truthy NUMBER, so it takes the
+  // truthy-slug path and stringifies verbatim, exactly as the documented
+  // no-validation stance for a pathological truthy slug already says.
+  // Unreachable through either real call site (`phase_slug` is `string | null`);
+  // pinned as characterization so the accepted stance covers this value too.
+  test('Infinity is a truthy number and stringifies verbatim, like any pathological truthy slug', () => {
+    assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', Infinity), 'gsd/phase-08-Infinity');
+  });
+
+  // Same nit, third half: `phaseSlug` is typed `unknown`, so every shape that is
+  // neither a string nor a truthy number must take the empty-slug route rather
+  // than stringifying into the branch name. `0` and `NaN` are the interesting
+  // pair — both are numbers and both are falsy, so both mean "no slug", never
+  // "the slug 0".
+  test('a non-string, non-truthy-number slug takes the empty-slug route, never String(value)', () => {
+    for (const [label, shape] of [['{}', {}], ['[]', []], ['true', true], ['false', false], ['0', 0], ['NaN', NaN]]) {
+      assert.strictEqual(phaseId.renderPhaseBranchName(T, '8', shape), 'gsd/phase-08', label);
+    }
+  });
+});
+
 describe('comparePhaseNum', () => {
   test('sorts numeric phases in ascending order', () => {
     const phases = ['03', '01', '10', '02'];
@@ -1506,4 +1696,233 @@ describe('phaseKeyFrom* — one key space for directories and prose', () => {
       ),
     );
   });
+});
+
+// ─── #4126 branch-name renderer property tests (fast-check) ──────────────────
+
+// A WELL-FORMED phase-branch template: word segments joined by exactly one
+// separator, with exactly one `{slug}` token and at most one `{phase}`.
+// "Well-formed" is load-bearing rather than convenient. A template that already
+// carries a doubled or trailing separator (`feature//{slug}`) keeps that
+// artifact across the drop, so the containment property below is a statement
+// about what the DROP introduces, never about what the template brought with it.
+const branchWord = fc.constantFrom('gsd', 'feature', 'fix', 'phase', 'wip', 'team');
+const branchSep = fc.constantFrom('-', '_', '.', '/');
+
+// `{phase}` goes at an ARBITRARY position among the parts, not just at an end.
+// Restricting it to the two ends was a measured blind spot: the corpus then
+// never generated the repo's OWN default arrangement, `gsd/phase-{phase}-{slug}`,
+// where `{phase}` is internal and precedes `{slug}`. A location-sensitive
+// regression that renders that template as the invalid `gsd/phase-08-` passed
+// the edge-separator property against the ends-only corpus.
+const assemble = (before, after, withPhase, phaseAt, joins) => {
+  const parts = [...before, '{slug}', ...after];
+  if (withPhase) parts.splice(phaseAt % (parts.length + 1), 0, '{phase}');
+  return parts.reduce((acc, part, i) => `${acc}${joins[i % joins.length]}${part}`);
+};
+
+// Known real-world arrangements, seeded into the corpus directly rather than
+// left to generation. Only the first is a SHIPPED default (`git.phase_branch_template`,
+// docs/CONFIGURATION.md); the rest are supported custom shapes this file already
+// characterizes. Seeding raises the odds these arrangements are exercised — it does
+// NOT guarantee any single one is drawn, which is why the default template is also
+// asserted deterministically inside the edge-separator property below.
+const knownTemplate = fc.constantFrom(
+  'gsd/phase-{phase}-{slug}',
+  'gsd/phase-{phase}',
+  'feature/{slug}-phase-{phase}',
+  'gsd/phase-{phase}/{slug}',
+);
+
+const wellFormedTemplate = fc.oneof(
+  knownTemplate,
+  fc
+    .record({
+      before: fc.array(branchWord, { maxLength: 2 }),
+      after: fc.array(branchWord, { maxLength: 2 }),
+      withPhase: fc.boolean(),
+      phaseAt: fc.nat({ max: 8 }),
+      seps: fc.array(branchSep, { minLength: 6, maxLength: 6 }),
+    })
+    .map(({ before, after, withPhase, phaseAt, seps }) =>
+      assemble(before, after, withPhase, phaseAt, seps),
+    ),
+);
+
+// A template whose joins may be a RUN of two separators. This is the shape that
+// actually reaches the `/\\/{2,}/g` collapse — `feature/{slug}-/{phase}` drops the
+// `-` and leaves `feature//08` — and it is kept separate from the well-formed
+// generator on purpose: a run can also leave a legitimately trailing separator
+// (`a--{slug}` renders `a-`), so only the no-`//` clause is true of it.
+const runSeparatorTemplate = fc
+  .record({
+    before: fc.array(branchWord, { maxLength: 2 }),
+    after: fc.array(branchWord, { maxLength: 2 }),
+    withPhase: fc.boolean(),
+    phaseAt: fc.nat({ max: 8 }),
+    seps: fc.array(fc.array(branchSep, { minLength: 1, maxLength: 2 }), {
+      minLength: 6,
+      maxLength: 6,
+    }),
+  })
+  .map(({ before, after, withPhase, phaseAt, seps }) =>
+    assemble(
+      before,
+      after,
+      withPhase,
+      phaseAt,
+      seps.map((run) => run.join('')),
+    ),
+  );
+
+// The alphabet `generateSlugInternal` can actually emit: lowercase alphanumeric
+// runs joined by single hyphens, never empty and never edge-hyphenated.
+const realSlug = fc
+  .array(fc.stringMatching(/^[a-z0-9]{1,6}$/), { minLength: 1, maxLength: 3 })
+  .map((words) => words.join('-'));
+
+describe('#4126 renderPhaseBranchName — properties', () => {
+  // The reported defect itself, stated as an invariant rather than as the one
+  // hand-picked example above: whatever the template, a phase with no derivable
+  // slug must never render the branch name a phase genuinely slugged "phase"
+  // would get. That collision is precisely what `|| 'phase'` produced.
+  test('an empty slug never collides with a phase genuinely slugged "phase"', () => {
+    fc.assert(
+      fc.property(wellFormedTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        // Precondition: a template carrying no `{slug}` renders identically for
+        // every slug — `gsd/phase-{phase}` is a supported shape (not the shipped
+        // default) and the example block already pins it. Nothing to collide.
+        if (!template.includes('{slug}')) return true;
+        const nameless = phaseId.renderPhaseBranchName(template, String(num), '');
+        return nameless !== phaseId.renderPhaseBranchName(template, String(num), 'phase');
+      }),
+    );
+  });
+
+  // Boundary containment. Deliberately scoped to SINGLE-`{slug}` templates:
+  // only the first `{slug}` is substituted (pinned by the example test above),
+  // so a two-token template legitimately renders a literal `{slug}` and a
+  // blanket "the output never contains {slug}" invariant would be false against
+  // this function's own documented contract.
+  test('the drop leaves no {slug} token and no edge separator behind', () => {
+    // DETERMINISTIC first, sampled second. `fc.oneof` makes the shipped default
+    // statistically reachable, never guaranteed to be drawn on any given run —
+    // so the one arrangement that must never be missed is asserted outright.
+    // This is the shape the ends-only corpus could not generate at all.
+    for (const num of ['0', '8', '45.14', '999']) {
+      const out = phaseId.renderPhaseBranchName('gsd/phase-{phase}-{slug}', num, '');
+      assert.ok(
+        out && !out.includes('{slug}') && !/^[-_./]/.test(out) && !/[-_./]$/.test(out),
+        `default template with an empty slug rendered ${JSON.stringify(out)}`,
+      );
+    }
+    fc.assert(
+      fc.property(wellFormedTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        if (out === null) return true; // `{slug}` alone — the documented "nothing left to name" case
+        return !out.includes('{slug}') && !/^[-_./]/.test(out) && !/[-_./]$/.test(out);
+      }),
+    );
+  });
+
+  // The collapse's own invariant, and it needs the run-separator generator to be
+  // reachable at all: a single-separator template can never leave a slash run
+  // behind, so asserting no-`//` over that corpus would pass vacuously. `//` is
+  // not a valid ref component, so this one holds for ANY template shape.
+  test('a slash run left by the drop is always collapsed, whatever the template', () => {
+    fc.assert(
+      fc.property(runSeparatorTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        return out === null || !out.includes('//');
+      }),
+    );
+  });
+
+  // Containment, not round-trip: this asserts the slug SURVIVES into the output,
+  // which is weaker than reconstructing an input from an output. Named for what
+  // it checks rather than for the nearest invariant category.
+  test('a real slug always survives into the rendered name', () => {
+    fc.assert(
+      fc.property(
+        wellFormedTemplate,
+        fc.integer({ min: 0, max: 999 }),
+        realSlug,
+        (template, num, slug) => {
+          if (!template.includes('{slug}')) return true; // nothing to survive into
+          const out = phaseId.renderPhaseBranchName(template, String(num), slug);
+          return out !== null && out.includes(slug);
+        },
+      ),
+    );
+  });
+
+  // Monotonicity — the formal statement of "the empty-slug arm removes, and
+  // never adds". The placeholder substitution #4126 removed did the opposite:
+  // it made the nameless render LONGER than some real-slug renders, which is
+  // how `gsd/phase-08-phase` came to out-name an honestly slugged phase.
+  test('the empty-slug render is strictly shorter than any real-slug render', () => {
+    fc.assert(
+      fc.property(
+        wellFormedTemplate,
+        fc.integer({ min: 0, max: 999 }),
+        realSlug,
+        (template, num, slug) => {
+          if (!template.includes('{slug}')) return true; // no token to drop, so no shortening
+          const nameless = phaseId.renderPhaseBranchName(template, String(num), '');
+          const named = phaseId.renderPhaseBranchName(template, String(num), slug);
+          if (nameless === null) return true; // `{slug}` alone — no nameless render to compare
+          return named !== null && nameless.length < named.length;
+        },
+      ),
+    );
+  });
+
+  // #4252 round 3 (blocker), as an invariant rather than the four hand-picked
+  // shapes above: for a template CONTAINING `{slug}`, an empty-slug render that
+  // is non-null carries no leading or trailing `/` or `.` and no `//` run.
+  //
+  // The `{slug}`-containing precondition is load-bearing, not throat-clearing. A
+  // template with no token returns early and unnormalized — `renderPhaseBranchName('a/', '8', '')`
+  // is `'a/'` — because there is no drop to repair and nothing this fix touches.
+  // `runSeparatorTemplate` always emits the token, so the sampled corpus honours
+  // the precondition by construction; an earlier draft of this comment said
+  // "whatever the template", which was simply false.
+  // `runSeparatorTemplate` is the generator that reaches this, because the
+  // defect needs a separator RUN adjacent to the token; the well-formed corpus
+  // joins with exactly one separator and can never produce it, which is why the
+  // shipped property suite passed over a live invalid-ref bug.
+  //
+  // NAMED FOR WHAT IT CHECKS, not for what one might wish it checked. This
+  // predicate is a string test, not `git check-ref-format`, so it says nothing
+  // about forbidden MIDDLE constructions — `a.lo{slug}ck/{phase}` renders the
+  // ref-invalid `a.lock/08` and passes here. That residual is real, disclosed in
+  // the renderer's own comment, and deliberately out of scope: validating whole
+  // refs is a different change. An earlier draft of this test was called "always
+  // a well-formed ref", which overclaimed its own oracle.
+  //
+  // Reversion-controlled: with the terminal `.replace(/^[./]+|[./]+$/g, '')`
+  // removed, this property fails (`feature//{slug}` -> `feature/`). The sampled
+  // half is independently non-vacuous — under that reversion the
+  // `runSeparatorTemplate` predicate alone fails within ~10-25 runs.
+  test('an empty-slug render carries no edge `/` or `.` and no `//` run', () => {
+    // DETERMINISTIC first — the exact shapes the round-3 review demonstrated,
+    // plus their leading-edge twins and the two other-side residues that the
+    // review's narrower suggested remedy could not have reached.
+    for (const t of ['feature//{slug}', 'a..{slug}', '{slug}//feature', '{slug}..a',
+                     '{phase}/{slug}/', '{phase}.{slug}.']) {
+      const out = phaseId.renderPhaseBranchName(t, '8', '');
+      if (out !== null) {
+        assert.ok(!/^[./]|[./]$/.test(out), `edge separator survived in ${JSON.stringify(out)} from ${t}`);
+        assert.ok(!out.includes('//'), `slash run survived in ${JSON.stringify(out)} from ${t}`);
+      }
+    }
+    fc.assert(
+      fc.property(runSeparatorTemplate, fc.integer({ min: 0, max: 999 }), (template, num) => {
+        const out = phaseId.renderPhaseBranchName(template, String(num), '');
+        if (out === null) return true; // nothing left to name is the honest answer, not a bad ref
+        return !/^[./]|[./]$/.test(out) && !out.includes('//');
+      }),
+    );
+  });
+
 });

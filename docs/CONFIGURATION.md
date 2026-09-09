@@ -1305,6 +1305,37 @@ non-default branch — see issue #3819.
 | `{milestone}` | `milestone_branch_template` | `v1.0` |
 | `{num}` / `{quick}` | `quick_branch_template` | `260317-abc` (quick task ID) |
 
+When a phase has no derivable slug — a phase directory with no name segment
+(`.planning/phases/07`), or a name with no character the slug generator keeps
+(it keeps ASCII letters and digits, transliterates Russian, Ukrainian and
+Belarusian Cyrillic, and turns any other run of characters into a single hyphen
+that is then trimmed at the ends — so a phase name made only of such
+characters, CJK included, yields an empty slug: the name segment of
+`08-日本語のテスト` is `日本語のテスト`, which slugs to `""`) — `{slug}` is
+dropped from `phase_branch_template` together with one adjacent separator if
+there is one (the one before it, unless that is a `/` and a non-slash separator
+follows), so the default template renders `gsd/phase-08`. The branch still identifies the
+phase by number and is visibly nameless; it is never padded with a placeholder
+word.
+
+Two consequences matter only for **custom** templates; the shipped default
+reaches neither.
+
+Any `/` or `.` left at the very start or end of the rendered name is trimmed,
+and a run of slashes is collapsed to one. A template whose separator run next
+to `{slug}` is more than one character (`feature//{slug}`, `a..{slug}`) would
+otherwise be left with a lone edge separator, which `git check-ref-format`
+rejects — a broken checkout rather than a merely ugly branch name. A `-` or `_`
+at an edge is left alone: those are legal in a ref, so trimming them would
+change a name that was never broken.
+
+If a template leaves **nothing** to name once `{slug}` is dropped — it was
+`{slug}` alone, or it reduces to separators only — no branch name is produced.
+`gsd query commit` then makes no branch, and `/gsd-execute-phase` stops with an
+error pointing back at this setting rather than running the phase on whatever
+branch happens to be checked out. A template that keeps `{phase}` can never
+reach this, since the phase number always renders.
+
 Example quick-task branching:
 
 ```json

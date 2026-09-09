@@ -370,6 +370,116 @@ function normalizePhaseName(phase: unknown): string {
   return str;
 }
 
+// #4126: the single owner of `{phase}` / `{slug}` substitution into a
+// phase-branch template. `cmdCommit`'s phase-branching arm (commands.cts) and
+// `cmdInitExecutePhase`'s `branch_name` (init.cts) used to inline the same two
+// `.replace()` calls with `|| 'phase'` as the empty-slug fallback, so a phase
+// whose slug could not be derived — a directory with no name segment (`07`),
+// or a name entirely outside `transliterateForSlug`'s Cyrillic scope (CJK,
+// Greek, Arabic, Hebrew, Devanagari all collapse to '') — was branched onto the
+// literal `gsd/phase-07-phase`: non-identifying, indistinguishable from a
+// phase genuinely named "Phase", and self-contradictory beside the honest
+// `phase_slug: null` the same `init execute-phase` payload reports.
+// `generateSlugInternal` (#3896 / ADR-3473 §8.3) returns that falsy value on
+// purpose to say "no slug"; this renderer carries the answer through instead
+// of papering over it.
+//
+// Empty slug → the `{slug}` token is DROPPED together with ONE adjacent
+// separator, so the default template renders `gsd/phase-08`: still unique per
+// phase, visibly nameless rather than falsely named, and still a string — the
+// execute-phase workflow's handle_branching step feeds `branch_name` straight
+// into `git checkout -b`, so refusing outright would trade a misleading name
+// for a broken checkout. (That step gained an explicit null arm in #4252 round
+// 2 — it now stops with a diagnostic rather than branching — but the reasoning
+// for dropping rather than refusing is unchanged: a nameless-but-unique branch
+// is still better than no branch at all wherever one CAN be rendered.) Which separator goes: the one
+// BEFORE the token, unless that one is a `/` and a non-slash separator follows
+// — `/` is a ref-hierarchy boundary, not a word joiner, so
+// `feature/{slug}-phase-{phase}` must render `feature/phase-08`, never
+// `feature-phase-08` (adversarial review of this fix, 2026-09-03). A `/` is
+// still dropped when it is the only candidate (`gsd/phase-{phase}/{slug}` →
+// `gsd/phase-08`), because a trailing slash is not a valid ref — and a run of
+// slashes the drop leaves behind (`feature/{slug}-/{phase}` → `feature//08`)
+// is collapsed to one for the same reason. Only the FIRST `{slug}` is
+// substituted, matching the `.replace(string, …)` semantics both call sites
+// had; a truthy number is stringified, as `.replace` did (`phase_slug` is only
+// ever a string or null in practice — the coercion exists so the helper never
+// SILENTLY widens the empty-slug arm).
+// Returns null when nothing is left to name — a template that was `{slug}`
+// alone, or one that reduces to separators only (`//{slug}`) once the drop and
+// the edge-trim below have run — the same "do not branch" signal a not-found
+// phase already yields at both sites. `cmdCommit` guards it (`if (branchName)`
+// -> no branch); `cmdInitExecutePhase` emits it as a null `branch_name`, and
+// execute-phase.md's handle_branching step carries the matching arm (#4252
+// round 2). `{project}` is deliberately NOT handled here: only init.cts
+// substitutes it (#904), and that asymmetry is that site's own, not part of
+// the shared seam.
+const BRANCH_TEMPLATE_SLUG_TOKEN = '{slug}';
+const BRANCH_TEMPLATE_SEPARATOR_RE = /[-_./]/;
+
+function renderPhaseBranchName(template: string, phaseNumber: unknown, phaseSlug: unknown): string | null {
+  const withPhase = template.replace('{phase}', normalizePhaseName(phaseNumber));
+  const slug = typeof phaseSlug === 'string' ? phaseSlug : (typeof phaseSlug === 'number' && phaseSlug ? String(phaseSlug) : '');
+  if (slug) return withPhase.replace(BRANCH_TEMPLATE_SLUG_TOKEN, slug) || null;
+  const at = withPhase.indexOf(BRANCH_TEMPLATE_SLUG_TOKEN);
+  if (at === -1) return withPhase || null;
+  let before = withPhase.slice(0, at);
+  let after = withPhase.slice(at + BRANCH_TEMPLATE_SLUG_TOKEN.length);
+  const prevSep = before && BRANCH_TEMPLATE_SEPARATOR_RE.test(before[before.length - 1]) ? before[before.length - 1] : '';
+  const nextSep = after && BRANCH_TEMPLATE_SEPARATOR_RE.test(after[0]) ? after[0] : '';
+  if (prevSep && (prevSep !== '/' || !nextSep)) {
+    before = before.slice(0, -1);
+  } else if (nextSep) {
+    after = after.slice(1);
+  }
+  // #4252 round 3: the drop removes ONE adjacent separator and the collapse
+  // above only matches runs of 2+ slashes, so a template whose separator run
+  // adjacent to `{slug}` is itself 2 characters, with the token at an EDGE,
+  // used to leave a lone leading/trailing `/` or `.` — refs `git
+  // check-ref-format` rejects outright (`feature//{slug}` -> `feature/`,
+  // `a..{slug}` -> `a.`, and the leading-edge twins). That contradicted this
+  // function's own rationale above: it produced the broken checkout it exists
+  // to avoid, silently, surfacing only when `git checkout -b` failed.
+  // A terminal edge-trim, rather than a wider adjacent-run strip: the remedy as
+  // the review stated it — "strip the entire contiguous separator run adjacent
+  // to the token" — does not reach `{phase}/{slug}/` or `{phase}.{slug}.`,
+  // whose residue sits on the side the drop never touches. An adjacency-based
+  // variant CAN reach them by additionally testing whether the remainder on the
+  // far side is separators-only (verified by adversarial review of this round),
+  // but it costs more branching for the same outcome. The trim is the simpler
+  // shape, not the only possible one.
+  // Scoped to `/` and `.` — the characters whose presence at an EDGE make a ref
+  // invalid. `-`/`_` are ref-legal at an edge, and dropping them would over-drop
+  // a template that deliberately opens with one (`-{phase}-{slug}` renders
+  // `-08-x` with a slug and must not render `08` without one).
+  //
+  // What this establishes is bounded, and the bound is worth stating because the
+  // obvious stronger claim is FALSE. This fixes EDGE well-formedness only. It is
+  // NOT a general "the empty-slug render is never worse-formed than the truthy
+  // one": a template can straddle `{slug}` with a fragment that only becomes
+  // illegal once the token is removed — `a.lo{slug}ck/{phase}` renders the valid
+  // `a.loxck/08` with a slug and the INVALID `a.lock/08` without one (git
+  // forbids a `.lock` component). The converse exists too (`x{slug}.lock` is
+  // invalid WITH a slug and fine without), so neither render dominates the other
+  // in general.
+  //
+  // Not fixed here, and the reason is scope rather than difficulty — an earlier
+  // draft of this comment said validation "would refuse templates that work
+  // today", which is a false choice: a targeted REPAIR rejects nothing. The real
+  // objection is that `.lock` is one of several juxtaposition rules git enforces
+  // (`..`, `@{`, a leading `.` per component, and more), so patching the one
+  // instance an adversarial pass happened to construct is an enumeration that
+  // silently falls behind the rules it mirrors. The principled fix is to detect
+  // the junction and raise an explicit INVALID-NAME error at both consumers —
+  // NOT to return null: `cmdCommit` reads null as "no branch wanted" and skips
+  // the whole branch block, so it would suppress even the warning an invalid
+  // name produces today (commands.cts, the failed-`checkout -b` arm). That
+  // changes error semantics at both call sites, which is a scope call for the
+  // maintainer rather than something to slip into an empty-slug fix. Disclosed
+  // and characterized.
+  return (before + after).replace(/\/{2,}/g, '/').replace(/^[./]+|[./]+$/g, '') || null;
+}
+
 function getMilestoneFromPhaseId(phaseId: unknown, convention?: string): string | null {
   // READING-B (#612): under the bracket convention the milestone comes from the
   // `[PROJECT.MM]` / `{CODE}.{MM}-` prefix, never the phase-token leading
@@ -1507,6 +1617,7 @@ export = {
   bracketQualifiedKey,
   stripProjectCodePrefix,
   normalizePhaseName,
+  renderPhaseBranchName,
   getMilestoneFromPhaseId,
   getPhaseDirFromPhaseId,
   parsePhaseId,
