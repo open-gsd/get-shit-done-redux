@@ -19,6 +19,12 @@
  * tests/fragment-single-edit-propagation.install.test.cjs) keeps its own
  * local constant with its own justifying comment — do not force those
  * sites onto a shared value that doesn't describe them.
+ *
+ * One exception to "bench-derived class norm": `SEAM_DEFAULT_TIMEOUT_MS`
+ * below is a structural mirror of another module's un-exported default,
+ * not an independently bench-measured bound — see its own doc comment for
+ * why it still belongs here (shared by ≥2 call sites) rather than as a
+ * local constant.
  */
 
 const { DEFAULT_GIT_TIMEOUT_MS, GIT_FIXTURE_TIMEOUT_MS } = require('./git-fixture.cjs');
@@ -86,6 +92,24 @@ const BUILD_TIMEOUT_MS = 30000;
  */
 const INSTALL_TIMEOUT_MS = 120000;
 
+/**
+ * Mirrors `tests/helpers/process-seam.cjs`'s own internal fallback for an
+ * omitted `timeoutMs` (#4512, batch 1 of the ad hoc timeout literal
+ * migration, epic #4445). That module does not export its fallback —
+ * exporting it is out of this batch's scope, since `process-seam.cjs`
+ * itself is not one of the batch's files — so this constant restates the
+ * SAME pre-existing number under a name, purely so call sites asserting
+ * parity with the seam's own fallback (rather than a measured class norm)
+ * have something to import instead of a bare literal.
+ *
+ * Deliberately a separate name from `HOOK_FANOUT_TIMEOUT_MS`, even though
+ * the two currently coincide: that constant is a bench-justified bound for
+ * a heavier, specific subprocess shape (nested shell fan-out), while this
+ * one is only "no unbounded path" — collapsing them would let a future,
+ * independent tune of either value silently move the other.
+ */
+const SEAM_DEFAULT_TIMEOUT_MS = 60000;
+
 module.exports = {
   PROBE_TIMEOUT_MS,
   HOOK_FANOUT_TIMEOUT_MS,
@@ -93,4 +117,5 @@ module.exports = {
   GIT_FIXTURE_TIMEOUT_MS,
   BUILD_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
+  SEAM_DEFAULT_TIMEOUT_MS,
 };
