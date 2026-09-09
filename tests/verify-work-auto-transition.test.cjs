@@ -219,18 +219,18 @@ describe('bug #3381: verify-work forwards workstream context', () => {
     // After #3797 architectural fix, callsites use gsd_run
     assert.match(
       workflow,
-      /gsd_run query init\.verify-work "\$\{PHASE_ARG\}" \$\{GSD_WS\}/,
-      'init.verify-work must receive GSD_WS so phase_dir resolves in workstreams',
+      /gsd_run query init\.verify-work "\$\{PHASE_ARG\}" --ws "\$\{GSD_WS#--ws \}"/,
+      'init.verify-work must receive GSD_WS as quoted argv so phase_dir resolves in workstreams',
     );
     assert.match(
       workflow,
-      /gsd_run query phase\.mvp-mode "\$\{phase_number\}" \$\{GSD_WS\} --pick active/,
-      'phase.mvp-mode must receive GSD_WS so roadmap mode is workstream-scoped',
+      /gsd_run query phase\.mvp-mode "\$\{phase_number\}" --ws "\$\{GSD_WS#--ws \}" --pick active/,
+      'phase.mvp-mode must receive GSD_WS as quoted argv so roadmap mode is workstream-scoped',
     );
     assert.match(
       workflow,
-      /gsd_run check "\$\{hook_check_query\}" "\$\{PHASE_DIR\}" \$\{GSD_WS\} --raw/,
-      'verify:pre checks must receive the explicit workstream scope',
+      /gsd_run check "\$\{hook_check_query\}" "\$\{PHASE_DIR\}" --ws "\$\{GSD_WS#--ws \}" --raw/,
+      'verify:pre checks must receive the explicit workstream scope as quoted argv',
     );
     assert.match(
       workflow,

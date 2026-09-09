@@ -44,7 +44,11 @@ GSD_WS=""
 echo "$ARGUMENTS" | grep -qE -- '--ws[[:space:]]+[A-Za-z0-9._-]+' && GSD_WS=$(echo "$ARGUMENTS" | grep -oE -- '--ws[[:space:]]+[A-Za-z0-9._-]+')
 PHASE_ARG=$(echo "$ARGUMENTS" | sed -E 's/--ws[[:space:]]+[A-Za-z0-9._-]+//g' | xargs)
 
-INIT=$(gsd_run query init.verify-work "${PHASE_ARG}" ${GSD_WS})
+if [ -n "$GSD_WS" ]; then
+  INIT=$(gsd_run query init.verify-work "${PHASE_ARG}" --ws "${GSD_WS#--ws }")
+else
+  INIT=$(gsd_run query init.verify-work "${PHASE_ARG}")
+fi
 if [[ "$INIT" == @file:* ]]; then INIT=$(cat "${INIT#@file:}"); fi
 AGENT_SKILLS_PLANNER=$(gsd_run query agent-skills gsd-planner)
 AGENT_SKILLS_CHECKER=$(gsd_run query agent-skills gsd-plan-checker)
@@ -58,7 +62,11 @@ Parse JSON for: `planner_model`, `checker_model`, `commit_docs`, `phase_found`, 
 # MVP mode detection via the centralized phase.mvp-mode resolver.
 # verify-work has no --mvp CLI flag (mode is inherited from the planned phase),
 # so we omit --cli-flag — the verb falls through roadmap → config → false.
-MVP_MODE=$(gsd_run query phase.mvp-mode "${phase_number}" ${GSD_WS} --pick active)
+if [ -n "$GSD_WS" ]; then
+  MVP_MODE=$(gsd_run query phase.mvp-mode "${phase_number}" --ws "${GSD_WS#--ws }" --pick active)
+else
+  MVP_MODE=$(gsd_run query phase.mvp-mode "${phase_number}" --pick active)
+fi
 ```
 </step>
 
@@ -91,7 +99,11 @@ For each active gate hook, run its declared check (a `check.query` gate runs
 runs `gsd_run check predicate --predicate '<hook.check.predicate as JSON>' --phase-dir "${PHASE_DIR}" --raw`):
 
 ```bash
-GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" ${GSD_WS} --raw)
+if [ -n "$GSD_WS" ]; then
+  GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" --ws "${GSD_WS#--ws }" --raw)
+else
+  GATE_RESULT=$(gsd_run check "${hook_check_query}" "${PHASE_DIR}" --raw)
+fi
 GATE_BLOCK=$(printf '%s' "$GATE_RESULT" | jq -r '.block // false' 2>/dev/null || echo "false")
 ```
 
