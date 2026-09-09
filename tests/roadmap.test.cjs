@@ -363,6 +363,127 @@ describe('roadmap analyze command', () => {
     assert.strictEqual(output.phases[1].goal, 'Colon outside bold', 'colon-outside goal works');
     assert.strictEqual(output.phases[1].depends_on, 'Phase 1', 'colon-outside depends_on works');
   });
+
+  // #4478: collectAnalyzePhases's phase-heading regex had no line anchor —
+  // #{2,4} could match a `### Phase N:`-shaped mention ANYWHERE the global
+  // regex scan reached: mid-sentence prose, inside a blockquote, inside an
+  // inline code span (backtick-quoted on the same line, not a fenced code
+  // block tokenizeHeadings would exclude). Any such line minted a phantom
+  // phase entry. Rows mirror the issue's own reproduction table exactly.
+  const PHANTOM_PHASE_LOOKALIKE_ROWS = [
+    ['blockquote + inline code span', '> A note mentioning `### Phase 2:` in a blockquote.'],
+    ['blockquote, no code span', '> A note mentioning ### Phase 2: in a blockquote.'],
+    ['plain prose + inline code span', 'A note mentioning `### Phase 2:` in plain prose.'],
+    ['plain prose, no code span', 'A note mentioning ### Phase 2: in plain prose.'],
+    ['list item + inline code span', '- list item mentioning `### Phase 2:` here.'],
+  ];
+
+  for (const [label, lookalikeLine] of PHANTOM_PHASE_LOOKALIKE_ROWS) {
+    test(`#4478: does not mint a phantom phase — ${label}`, () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '.planning', 'ROADMAP.md'),
+        `# Roadmap
+
+## Milestone v1.0 — Example
+
+${lookalikeLine}
+
+### Phase 1: Real First Phase
+
+**Goal**: Real.
+`
+      );
+      const result = runGsdTools('roadmap analyze', tmpDir);
+      assert.ok(result.success, `Command failed: ${result.error}`);
+      const output = JSON.parse(result.output);
+      assert.strictEqual(output.phase_count, 1, `expected only the real phase, got: ${JSON.stringify(output.phases)}`);
+      assert.deepStrictEqual(output.phases.map((p) => p.name), ['Real First Phase']);
+    });
+  }
+
+  test('#4478: a phantom does not shadow or collide with a real heading sharing its number', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      `# Roadmap
+
+## Milestone v1.0 — Example
+
+### Phase 1: Real First Phase
+
+**Goal**: Real.
+
+A note mentioning ### Phase 2: in plain prose.
+
+### Phase 2: Real Second Phase
+
+**Goal**: Also real.
+`
+    );
+    const result = runGsdTools('roadmap analyze', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_count, 2, `expected exactly the two real phases, got: ${JSON.stringify(output.phases)}`);
+    assert.deepStrictEqual(
+      output.phases.map((p) => p.name).sort(),
+      ['Real First Phase', 'Real Second Phase'].sort(),
+    );
+  });
+
+  test('#4478: a legitimately-indented (1-3 space) real heading is still counted', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      `# Roadmap
+
+## Milestone v1.0 — Example
+
+  ### Phase 1: Indented but real
+
+**Goal**: Real.
+`
+    );
+    const result = runGsdTools('roadmap analyze', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.phase_count, 1, `expected the indented heading to still count, got: ${JSON.stringify(output.phases)}`);
+    assert.deepStrictEqual(output.phases.map((p) => p.name), ['Indented but real']);
+  });
+
+  // Follow-up (found by this fix's own independent code review): the "next
+  // heading" section-boundary lookup a few lines below phasePattern lacked
+  // the SAME {0,3} leading-space tolerance, so an indented NEXT phase heading
+  // was invisible to it, letting the prior phase's field extraction bleed
+  // across the section boundary. Uses **Depends on:** specifically because
+  // it is a field only the SECOND phase has — Goal alone can't demonstrate
+  // the bleed since both phases have one and the first (non-global) match
+  // still finds phase 1's own occurrence first either way.
+  test('#4478: an indented NEXT phase heading still bounds the prior phase\'s field extraction', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      `# Roadmap
+
+## Milestone v1.0 — Example
+
+### Phase 1: Real First Phase
+
+**Goal**: First goal.
+
+  ### Phase 2: Indented Next Phase
+
+**Goal**: Second goal.
+**Depends on:** Phase 1
+`
+    );
+    const result = runGsdTools('roadmap analyze', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    const output = JSON.parse(result.output);
+    const byNumber = Object.fromEntries(output.phases.map((p) => [p.number, p]));
+    assert.strictEqual(
+      byNumber['1'].depends_on,
+      null,
+      `phase 1 has no Depends on field of its own — it must not inherit phase 2's, got: ${JSON.stringify(byNumber['1'])}`,
+    );
+    assert.strictEqual(byNumber['2'].depends_on, 'Phase 1');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
