@@ -374,6 +374,51 @@ describe('ADR-1769 Phase 1: beginPhase first-time body field updates', () => {
     assert.ok(result.updated.includes('Current focus'),
       `updated should include 'Current focus'; got ${JSON.stringify(result.updated)}`);
   });
+
+  // #4469: same defect class as #4243/PR #4453's stateReplaceField bold-branch
+  // fix, applied here to beginPhaseCore's own standalone `focusPattern` regex,
+  // which carried no `^` anchor / `/m` flag and used `\s*` (crosses newlines)
+  // rather than same-line whitespace. A body with NO real `**Current focus:**`
+  // field yet present at the top, but a mid-sentence prose mention of the same
+  // bold text further down (an Accumulated Context bullet documenting the
+  // format), demonstrates the corruption: the unanchored pattern's first (and
+  // only, since it's not global) match is the prose occurrence, and its rest-
+  // of-line gets silently overwritten with the new focus label.
+  test('anchored **Current focus:** rewrite leaves a mid-sentence prose lookalike untouched (#4469)', () => {
+    const body = [
+      '# Project State',
+      '',
+      '**Status:** Planning',
+      '**Current Phase:** 02',
+      '**Current Phase Name:** Previous Phase',
+      '**Current Plan:** 02',
+      '**Total Plans in Phase:** 3',
+      '**Last Activity:** 2026-06-20',
+      '**Last Activity Description:** previous work',
+      '',
+      '## Accumulated Context',
+      '',
+      '### Decisions',
+      '',
+      '- Archived phases historically rendered `**Current focus:**` inline in prose. Must not change.',
+      '',
+      '## Current Position',
+      '',
+      'Phase: 2 (Previous Phase)',
+      'Plan: 2 of 3',
+      'Status: Planning',
+      'Last activity: 2026-06-20 — context gathered',
+      '',
+    ].join('\n');
+
+    const result = transitionCore(body, intent, deps);
+    const proseLine = result.content.split('\n').find((l) => l.includes('Archived phases historically'));
+    assert.strictEqual(
+      proseLine,
+      '- Archived phases historically rendered `**Current focus:**` inline in prose. Must not change.',
+      `a mid-sentence prose mention of **Current focus:** must survive byte-identically, got: ${JSON.stringify(proseLine)}`,
+    );
+  });
 });
 
 // Fixture for resume: a STATE.md body where Status already contains
