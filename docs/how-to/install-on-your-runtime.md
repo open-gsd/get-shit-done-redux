@@ -64,7 +64,9 @@ The `FileChanged` hook is always-on and a no-op when `.planning/config.json` doe
 
 ### Claude Code — native plugin install
 
-GSD Core ships a `.claude-plugin/plugin.json` manifest, which enables installation and lifecycle management through the Claude Code plugin system. This path is **additive** — the npm installer above remains fully supported, and the two approaches differ in namespace and lifecycle only.
+GSD Core ships a `.claude-plugin/plugin.json` manifest, which enables installation and lifecycle management through the Claude Code plugin system. This path is **additive** — the npm installer above remains fully supported, and the two approaches differ in namespace and lifecycle.
+
+**Install-time config does not apply here.** The native plugin path (this section, the skills-dir load below, and marketplace discovery) materializes the repository tree directly — there is no install step. Install-time config that the npm installer bakes into generated artifact files at install time (confirmed for `agent_tools`; the same applies architecturally to `model_overrides` and other install-time-only keys) is never applied on this path, and running `claude plugin update` does not change that. If your setup relies on install-time config, use the npm installer above.
 
 **Install paths**
 
