@@ -2964,6 +2964,28 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
     assert.strictEqual(shipped.stdout, '', 'a review path that is not a regular file reports nothing, and does not guess');
     assert.strictEqual(readGateMessage(shipped.stdout).reported, false);
   });
+
+  // An EMPTY REGULAR FILE is a third arm, and it is NOT the missing case: `-f` and `-r` both pass,
+  // so the fence opens and reads the file where the missing case never gets past the guard. The
+  // missing-file test above cannot reach it — it passes `writeReview: false`, so no file exists at
+  // all — and until this test every `reviewText: ''` call in this file did the same. The PR body
+  // has claimed this case since round 1; it was documented as covered and was not covered.
+  //
+  // WHY the scan yields nothing, stated precisely because the obvious reading is wrong: it is NOT
+  // the `NR==1{if($0!="---") exit}` guard. A zero-byte file supplies awk no record at all, so that
+  // action never executes (NR stays 0). The output is empty because `closed` is never set and the
+  // END block therefore prints nothing.
+  //
+  // And note what this test does NOT prove on its own: its observable — exit 0, empty stdout — is
+  // identical to the missing-file case. That the file was actually READ is established by the
+  // harness (writeReview defaults true, so a real zero-byte file exists) and by the fence's guard,
+  // not by the assertions below.
+  test('an EMPTY REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
+    const shipped = runShippedGateCounts({ reviewText: '' });   // writeReview defaults true: a real, empty file
+    assert.strictEqual(shipped.exitCode, 0, 'advisory: an empty review must not abort the step');
+    assert.strictEqual(shipped.stdout, '', 'an empty review reports nothing, and does not guess');
+    assert.strictEqual(readGateMessage(shipped.stdout).reported, false);
+  });
 });
 
 // ---------------------------------------------------------------------------
