@@ -1,0 +1,120 @@
+name: Dependabot Vendor Refresh
+
+# #4573: scripts/lint-vendored-deps.cjs gates gsd-core/bin/lib/vendor/{js-yaml.cjs,re2js.cjs}
+# for byte-freshness against node_modules, and requires package.json's
+# devDependencies pin to literally match the installed version. Dependabot
+# regularly opens lockfile-only PRs that bump these packages within the
+# existing semver range — it never touches the vendor copy or the manifest
+# pin, so the lint-vendored-deps check in test.yml correctly (but
+# unhelpfully) flags every such PR as stale, and a human has to manually run
+# the refresh command and push a fixup commit.
+#
+# This workflow does that refresh automatically: on a Dependabot PR that
+# touches package.json/package-lock.json, it runs
+# `node scripts/lint-vendored-deps.cjs --fix`, which mechanically re-copies
+# the upstream build artifact over the vendored .cjs (and, for
+# upstream-verbatim twins, their .d.cts files) and rewrites the
+# package.json pin to match — see fixRow() in scripts/lint-vendored-deps.cjs
+# for exactly what it does and does not touch (it never hand-edits a
+# hand-authored twin like js-yaml.d.cts; a genuine upstream API break there
+# is left for a human).
+#
+# Trust boundary: same-repo Dependabot PRs only. The `if:` guard below
+# checks both github.actor and pull_request.user.login — defense-in-depth,
+# mirroring dependabot-auto-merge.yml's own rationale (github.actor alone
+# can't be forged to a different login, but pairing it with
+# pull_request.user.login is GitHub's documented hardening pattern). This
+# workflow never checks out or executes a fork's code: Dependabot PRs that
+# only touch package.json/package-lock.json originate same-repo, and the
+# checkout below pins `ref` to the PR head SHA of that same-repo branch.
+#
+# Why pushing here is not a bypass of the real check: the push (via
+# GSD_BOT_PR_TOKEN, falling back to GITHUB_TOKEN — see
+# auto-backmerge.yml's "Open or update PR" step for the same fallback
+# pattern) lands a new commit on the PR branch, which re-triggers this
+# workflow's own `synchronize` trigger AND the `pull_request: synchronize`
+# trigger on test.yml. The real lint-vendored-deps check in test.yml then
+# re-runs against the fixed commit and genuinely passes — this workflow
+# fixes the actual drift the check complains about, it does not silence,
+# skip, or override the check itself.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [next]
+    paths:
+      - package.json
+      - package-lock.json
+
+concurrency:
+  group: dependabot-vendor-refresh-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-vendor:
+    # Defense-in-depth: check both the triggering actor and the PR author,
+    # same rationale as dependabot-auto-merge.yml.
+    if: |
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # persist-credentials: false — the write-capable token must not sit on
+      # disk while the --fix step below runs `npm ci` and requires the
+      # freshly-installed, Dependabot-proposed (unreviewed) vendor package.
+      # The token is only reintroduced, transiently, in the push step, after
+      # that require() has already run.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          token: ${{ secrets.GSD_BOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run lint-vendored-deps --fix
+        id: fix
+        run: |
+          set +e
+          node scripts/lint-vendored-deps.cjs --fix
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push the mechanical refresh
+        if: steps.fix.outputs.exit_code == '0' && steps.diff.outputs.dirty == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GSD_BOT_PR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- gsd-core/bin/lib/vendor package.json
+          git commit -m "chore: refresh vendored deps to match dependency bump"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git push origin HEAD:${{ github.head_ref }}
+
+      # Intentionally a no-op when the --fix step did not exit 0 (findings
+      # remain after --fix, e.g. a hand-authored twin's declared-export
+      # finding): a remaining finding means a real upstream API break that
+      # only a human can resolve. Auto-committing here would either mask
+      # that break behind a green re-run or ship something wrong. The real
+      # lint-vendored-deps check in test.yml still runs on the original
+      # commit and reports the failure to the PR exactly as it does today.

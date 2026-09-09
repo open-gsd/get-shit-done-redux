@@ -161,8 +161,24 @@ function compareFiles(relA, relB) {
  * @param {string} spec
  * @returns {string}
  */
+const PIN_OPERATOR_RE = /^(\^|~|>=|<=|>|<|=)?/;
+
 function stripRangeOperator(spec) {
-  return String(spec || '').trim().replace(/^[\^~]|^>=|^<=|^>|^<|^=/, '').trim();
+  return String(spec || '').trim().replace(PIN_OPERATOR_RE, '').trim();
+}
+
+/**
+ * The leading range-operator token (if any) a package.json dependency spec
+ * was written with — the inverse half of stripRangeOperator, needed by
+ * `fixRow` to rebuild a pin (`<same operator>` + `<new version>`) that
+ * preserves the author's original range style instead of collapsing every
+ * pin to an exact version.
+ * @param {string} spec
+ * @returns {string} the operator (e.g. "^", "~", ">="), or "" for an exact pin
+ */
+function pinOperatorPrefix(spec) {
+  const m = String(spec || '').trim().match(PIN_OPERATOR_RE);
+  return (m && m[1]) || '';
 }
 
 /**
@@ -212,6 +228,26 @@ function checkHandAuthoredTwin(row) {
 }
 
 /**
+ * Read a row's pin state: the package.json devDependencies spec for
+ * `row.name` and, if `node_modules/<row.name>/package.json` exists, its
+ * installed version. Shared by checkRow (compares) and fixRow (rewrites) so
+ * the two can never silently diverge on how a pin is read.
+ * @param {VendoredPackage} row
+ * @returns {{pinnedSpec: string | undefined, installedVersion: string | undefined}}
+ */
+function readPinState(row) {
+  const pkgPath = path.join(ROOT, 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const pinnedSpec = pkg.devDependencies && pkg.devDependencies[row.name];
+  const installedPkgPath = path.join(ROOT, 'node_modules', row.name, 'package.json');
+  let installedVersion;
+  if (fs.existsSync(installedPkgPath)) {
+    installedVersion = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')).version;
+  }
+  return { pinnedSpec, installedVersion };
+}
+
+/**
  * Run all applicable freshness checks for one vendored package row.
  * @param {VendoredPackage} row
  * @returns {string[]} findings (empty when the row is fresh)
@@ -235,31 +271,92 @@ function checkRow(row) {
     findings.push(...checkHandAuthoredTwin(row));
   }
 
-  const pkgPath = path.join(ROOT, 'package.json');
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  const pinnedSpec = pkg.devDependencies && pkg.devDependencies[row.name];
+  const { pinnedSpec, installedVersion } = readPinState(row);
   if (!pinnedSpec) {
     findings.push(`package.json devDependencies.${row.name} is missing`);
+  } else if (installedVersion === undefined) {
+    findings.push(`node_modules/${row.name}/package.json does not exist (run npm install)`);
   } else {
-    const installedPkgPath = path.join(ROOT, 'node_modules', row.name, 'package.json');
-    if (!fs.existsSync(installedPkgPath)) {
-      findings.push(`node_modules/${row.name}/package.json does not exist (run npm install)`);
-    } else {
-      const installed = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8'));
-      const pinned = stripRangeOperator(pinnedSpec);
-      if (pinned !== installed.version) {
-        findings.push(
-          `package.json devDependencies.${row.name} ("${pinnedSpec}" -> "${pinned}") != `
-            + `node_modules/${row.name}/package.json version ("${installed.version}")`,
-        );
-      }
+    const pinned = stripRangeOperator(pinnedSpec);
+    if (pinned !== installedVersion) {
+      findings.push(
+        `package.json devDependencies.${row.name} ("${pinnedSpec}" -> "${pinned}") != `
+          + `node_modules/${row.name}/package.json version ("${installedVersion}")`,
+      );
     }
   }
 
   return findings;
 }
 
+/**
+ * Mechanically resolve a vendored package's byte/pin drift: copy the
+ * upstream .cjs (and, for `upstream-verbatim` rows, the .d.cts twins) over
+ * the vendored copy, and bump the package.json pin to the installed
+ * version, preserving the original range-operator prefix. Then re-runs
+ * `checkRow` and returns whatever findings remain.
+ *
+ * This NEVER hand-edits a `hand-authored` twin (e.g. js-yaml.d.cts) — that
+ * file encodes a human's deliberate judgment about which exports are safe
+ * to expose, and only a human can tell whether a declared-export-missing
+ * finding is mechanical drift or a real upstream API break. If one remains
+ * after this runs, that is by design: the caller must not treat it as
+ * fixed.
+ * @param {VendoredPackage} row
+ * @returns {string[]} findings remaining after the fix (empty when fully resolved)
+ */
+function fixRow(row) {
+  fs.copyFileSync(resolvePath(row.upstreamCjs), resolvePath(row.vendoredCjs));
+
+  if (row.twinKind === 'upstream-verbatim' && row.upstreamDts) {
+    if (row.vendoredDts) fs.copyFileSync(resolvePath(row.upstreamDts), resolvePath(row.vendoredDts));
+    if (row.srcTwin) fs.copyFileSync(resolvePath(row.upstreamDts), resolvePath(row.srcTwin));
+  }
+
+  const { pinnedSpec, installedVersion } = readPinState(row);
+  if (pinnedSpec && installedVersion !== undefined) {
+    const newPin = `${pinOperatorPrefix(pinnedSpec)}${installedVersion}`;
+    if (newPin !== pinnedSpec) {
+      const pkgPath = path.join(ROOT, 'package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      pkg.devDependencies[row.name] = newPin;
+      fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    }
+  }
+
+  return checkRow(row);
+}
+
 function main() {
+  if (process.argv.includes('--fix')) {
+    /** @type {Record<string, string[]>} */
+    const remaining = {};
+    for (const row of VENDORED) {
+      const findings = fixRow(row);
+      if (findings.length > 0) remaining[row.name] = findings;
+    }
+
+    const names = VENDORED.map((row) => row.name).join(', ');
+
+    if (Object.keys(remaining).length === 0) {
+      process.stdout.write(
+        `ok lint-vendored-deps --fix: gsd-core/bin/lib/vendor/{${names}} refreshed and now match node_modules and their pinned versions\n`,
+      );
+      return 0;
+    }
+
+    const detail = Object.entries(remaining)
+      .map(([name, findings]) => `  ${name}:\n${findings.map((f) => `    ${f}`).join('\n')}`)
+      .join('\n');
+    throw new ExitError(
+      1,
+      `lint-vendored-deps --fix: mechanical drift refreshed, but the following row(s)\n`
+        + 'still have findings that --fix cannot resolve automatically — these need a\n'
+        + 'human, not just a re-run of --fix:\n'
+        + detail,
+    );
+  }
+
   const findings = [];
   for (const row of VENDORED) {
     findings.push(...checkRow(row));
@@ -288,9 +385,11 @@ if (require.main === module) runMain(main);
 module.exports = {
   compareFiles,
   stripRangeOperator,
+  pinOperatorPrefix,
   VENDORED,
   buildRefreshCommand,
   checkRow,
+  fixRow,
   declaredValueExports,
   checkHandAuthoredTwin,
   resolvePath,
