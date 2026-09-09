@@ -262,6 +262,17 @@ rather than mis-selects — and untested: constructing the evil-merge fixture co
 the branch is worth while the failure mode is a refusal. `/gsd:undo --last N` is the route
 if it is ever hit.
 
+**Known residual — a later milestone reusing BOTH the number and the slug.** The anchor is
+the *current path*, and `--diff-filter=A` does not follow renames, so if a later milestone
+re-creates the same literal directory (`03-auth` again, not merely phase `03` again) the
+oldest add at that path is the **previous occupant's** and the window opens there. The
+archived-milestone refusal above does not reach this one: `find-phase` returns the **live**
+directory, so nothing is under `milestones/` to refuse. Driven: two milestones both using
+`.planning/phases/03-auth` anchored on the v1 plan commit and selected all four v1+v2
+phase-03 commits. `code-review.md` carries the same residual on the same anchor, where it is
+read-only; here it is destructive, so prefer `/gsd:undo --last N` when a phase directory name
+has been reused verbatim across milestones.
+
 **Known residual — concurrent workstreams.** The window above is scoped to the target
 phase's own directory, which is workstream-correct, but the commit subjects it filters
 are not: the executor's scope contract is `type({phase}-{plan})` with no workstream
