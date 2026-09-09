@@ -31,6 +31,13 @@ FALLOW_STDERR_TMP=$(mktemp)
 # scope step (#3191/#3995): base = the parent of the first commit that added
 # anything under the phase's own directory. Commit subjects carry no milestone
 # bound — a same-numbered phase in a previous milestone used to win the grep.
+# #4467: the BASE half above is lockstep with Tier 3 (#3995); the TIP is not.
+# fallow's own --changed-since is one-sided by design (no upper-bound flag
+# exists in fallow 2.70.0 — --diff-file only scopes line ranges within the
+# hot-path-touched verdict, it is not a general file-scoping control), so
+# reviewing an earlier phase after a later one has landed pulls the later
+# phase's files into this pass's audited set. Do not assume this step and
+# Tier 3's scope step agree on the tip just because they agree on the base.
 FALLOW_SCOPE_ARGS=()
 if [ \"$FALLOW_SCOPE\" = \"phase\" ]; then
   # #3995: phase-directory anchor — same derivation as the Tier-3 scope step
