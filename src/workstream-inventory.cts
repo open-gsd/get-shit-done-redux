@@ -860,6 +860,7 @@ export = {
   inspectWorkstream,
   isCompletedInventory,
   listWorkstreamInventories,
+  readCurrentMilestoneVersion,
   sortWorkstreamInventories,
   workstreamsRoot,
 };

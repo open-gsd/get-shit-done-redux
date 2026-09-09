@@ -183,6 +183,25 @@ describe('broken-windows: appendWindow', () => {
     // 10 cells = 11 cell-separator pipes per row (leading + 9 internal + trailing).
     assert.equal(unescapedPipes, 11, 'table row must have exactly 11 unescaped pipes (10 cells) — backslash-pipe in description must NOT add a split');
   });
+
+  // #4487: phase numbers are unique only within one active phases/ directory —
+  // milestone complete archives phases and frees their numbers for reuse, so
+  // two milestones can produce entries sharing the same `phase` value with
+  // nothing to distinguish them. appendWindow itself is pure (no I/O), so the
+  // milestone value is a caller-supplied input, not resolved here — this pins
+  // that it flows through untouched, and defaults to null when omitted
+  // (an entry recorded before this field existed reads the same way).
+  test('milestone input flows through to the entry (#4487)', () => {
+    const led = emptyLedger('now');
+    const { entry } = appendWindow(led, makeEntry({ milestone: 'v2.0' }), { now: 't' });
+    assert.equal(entry.milestone, 'v2.0');
+  });
+
+  test('milestone defaults to null when the caller omits it (#4487)', () => {
+    const led = emptyLedger('now');
+    const { entry } = appendWindow(led, makeEntry(), { now: 't' });
+    assert.equal(entry.milestone, null);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -201,6 +220,13 @@ describe('broken-windows: markWaived', () => {
     assert.equal(led.open_count, 0);
     assert.equal(led.waived_count, 1);
     assert.equal(openCount(led), 0); // waived does not block
+  });
+
+  test('waive preserves the entry\'s milestone (#4487 — object-spread transition must not drop it)', () => {
+    let led = emptyLedger('now');
+    ({ ledger: led } = appendWindow(led, makeEntry({ milestone: 'v2.0' }), { now: 't1' }));
+    led = markWaived(led, 1, 'reason', { now: 't2' });
+    assert.equal(led.entries[0].milestone, 'v2.0');
   });
 
   test('waive with empty reason throws (boundary: limit-1 = 0 chars)', () => {
@@ -264,6 +290,13 @@ describe('broken-windows: markFixed', () => {
     assert.equal(openCount(led), 0);
   });
 
+  test('fixed preserves the entry\'s milestone (#4487 — object-spread transition must not drop it)', () => {
+    let led = emptyLedger('now');
+    ({ ledger: led } = appendWindow(led, makeEntry({ milestone: 'v2.0' }), { now: 't1' }));
+    led = markFixed(led, 1, { now: 't2' });
+    assert.equal(led.entries[0].milestone, 'v2.0');
+  });
+
   test('fixed on unknown id throws', () => {
     const led = emptyLedger('now');
     assert.throws(
@@ -299,6 +332,12 @@ describe('broken-windows: parse/render roundtrip property', () => {
     phase: arbPhase,
     description: arbText,
     status: arbStatus,
+    // #4487: three-way split so the roundtrip property actually exercises
+    // all of "key absent" (pre-#4487 entry), "explicit null" (recorded but
+    // unresolvable), and "a real string" -- these three states must each
+    // survive parse/render identically, which is exactly the distinction
+    // validateEntryShape/renderLedger have to get right.
+    milestoneCase: fc.constantFrom('absent', 'null', 'string'),
   }).map((e) => ({
     id: e.id,
     kind: e.kind,
@@ -310,6 +349,7 @@ describe('broken-windows: parse/render roundtrip property', () => {
     reason: e.status === 'waived' ? 'justified' : '',
     recorded_at: '2026-07-19T00:00:00Z',
     resolved_at: e.status === 'open' ? null : '2026-07-19T01:00:00Z',
+    ...(e.milestoneCase === 'absent' ? {} : { milestone: e.milestoneCase === 'null' ? null : 'v2.0' }),
   }));
 
   const arbLedger = fc.array(arbEntry, { maxLength: 6 }).map((entries) => {
@@ -394,6 +434,58 @@ describe('broken-windows: parseLedger fail-closed', () => {
       '',
     ].join('\n');
     assert.throws(() => parseLedger(raw), reasonIs(REASON.WINDOWS_LEDGER_MALFORMED));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4487: milestone field backward compatibility
+// ---------------------------------------------------------------------------
+
+describe('broken-windows: parseLedger backward compatibility for the #4487 milestone field', () => {
+  const rawWithNoMilestoneKey = [
+    '---',
+    'schema_version: 1',
+    'open_count: 1',
+    'waived_count: 0',
+    'fixed_count: 0',
+    'total_count: 1',
+    'last_updated: 2026-01-01T00:00:00.000Z',
+    '---',
+    '',
+    '```json',
+    JSON.stringify([
+      {
+        id: 1,
+        kind: 'stub',
+        phase: '3',
+        file: '',
+        line: null,
+        description: 'old entry',
+        status: 'open',
+        reason: '',
+        recorded_at: '2026-01-01T00:00:00.000Z',
+        resolved_at: null,
+        // deliberately no `milestone` key
+      },
+    ], null, 2),
+    '```',
+    '',
+  ].join('\n');
+
+  test('an entry with NO milestone key at all (pre-#4487 shape) parses without error, reading as undefined', () => {
+    const ledger = parseLedger(rawWithNoMilestoneKey);
+    // Not `null`: an explicit null is the "recorded, but unresolvable"
+    // signal appendWindow stamps on NEW entries. A pre-#4487 entry never
+    // recorded anything -- it must read as genuinely absent (`undefined`),
+    // the only representation JSON.stringify will also omit on re-render.
+    assert.equal(ledger.entries[0].milestone, undefined, 'an entry recorded before this field existed must read as milestone: undefined (absent), not null');
+    assert.equal('milestone' in ledger.entries[0], false, 'the key itself must not be materialized for a pre-#4487 entry');
+  });
+
+  test('re-rendering a parsed pre-#4487 entry does not stamp a milestone key into the JSON (no drive-by churn)', () => {
+    const ledger = parseLedger(rawWithNoMilestoneKey);
+    const rendered = renderLedger(ledger);
+    assert.doesNotMatch(rendered, /"milestone"/, 'parsing then re-rendering a legacy entry must not introduce milestone: null noise the entry never had');
   });
 });
 
@@ -722,6 +814,57 @@ describe('broken-windows CLI: windows append', () => {
     const obj2 = JSON.parse(res2.output);
     assert.equal(obj2.ledger.open_count, 1);
     assert.equal(obj2.ledger.entries[0].id, 1);
+  });
+
+  // #4487: cmdWindowsAppend (unlike the pure appendWindow) resolves the
+  // milestone itself from disk, reusing workstream-inventory.cts's existing
+  // readCurrentMilestoneVersion (STATE.md `milestone:` frontmatter first,
+  // ROADMAP.md in-progress marker as fallback) rather than a new parallel
+  // implementation.
+  test('append stamps the milestone resolved from STATE.md frontmatter (#4487)', (t) => {
+    const tmp = createTempDir('bw-append-milestone-state-');
+    t.after(() => cleanup(tmp));
+    fs.mkdirSync(path.join(tmp, '.planning'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.planning', 'STATE.md'),
+      '---\nmilestone: v2.0\n---\n# Project State\n',
+      'utf-8',
+    );
+    const res = runGsdTools(
+      ['windows', 'append', '--kind', 'stub', '--phase', '5', '--description', 'x'],
+      tmp,
+    );
+    assert.equal(res.success, true, `stderr: ${res.error || ''}`);
+    assert.equal(JSON.parse(res.output).entry.milestone, 'v2.0');
+  });
+
+  test('append stamps null when no milestone is resolvable (#4487)', (t) => {
+    const tmp = createTempDir('bw-append-milestone-none-');
+    t.after(() => cleanup(tmp));
+    const res = runGsdTools(
+      ['windows', 'append', '--kind', 'stub', '--phase', '5', '--description', 'x'],
+      tmp,
+    );
+    assert.equal(res.success, true, `stderr: ${res.error || ''}`);
+    assert.equal(JSON.parse(res.output).entry.milestone, null);
+  });
+
+  test('append falls back to the ROADMAP in-progress marker when STATE.md has no milestone field (#4487)', (t) => {
+    const tmp = createTempDir('bw-append-milestone-roadmap-fallback-');
+    t.after(() => cleanup(tmp));
+    fs.mkdirSync(path.join(tmp, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.planning', 'STATE.md'), '---\nstatus: executing\n---\n# Project State\n', 'utf-8');
+    fs.writeFileSync(
+      path.join(tmp, '.planning', 'ROADMAP.md'),
+      '# Roadmap\n\n## 🚧 **v3.1** — In Progress\n',
+      'utf-8',
+    );
+    const res = runGsdTools(
+      ['windows', 'append', '--kind', 'stub', '--phase', '5', '--description', 'x'],
+      tmp,
+    );
+    assert.equal(res.success, true, `stderr: ${res.error || ''}`);
+    assert.equal(JSON.parse(res.output).entry.milestone, 'v3.1');
   });
 
   test('append a second entry gets id=2', (t) => {
