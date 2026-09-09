@@ -119,6 +119,20 @@ PHASE_DIR_ARCHIVED=""
 case "${PHASE_DIR}" in
   */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
 esac
+# A LIVE path can still be a previous occupant's. `--diff-filter=A` does not follow renames,
+# so a later milestone re-creating the same literal directory anchors on the OLDER milestone's
+# add. Nothing is under milestones/ to refuse -- find-phase returned the live dir -- so key on
+# the collision instead: the same basename present under an archived milestone means this path
+# has been used before and the anchor cannot be trusted. Fail closed; `--last N` is the route.
+PHASE_DIR_REUSED=""
+if [ -n "${PHASE_DIR}" ]; then
+  _pd_base=$(basename "${PHASE_DIR}")
+  _pd_root=${PHASE_DIR%/phases/*}
+  for _arch in "${_pd_root}"/milestones/v*-phases/"${_pd_base}"; do
+    [ -e "$_arch" ] || continue
+    PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
+  done
+fi
 ```
 
 If `PHASE_DIR_ARCHIVED` is non-empty, stop — this message, not the not-found one:
@@ -128,7 +142,14 @@ Refusing: the anchor there is the archival commit, so the window would span late
 milestones and select their same-numbered phase instead of this one.
 Use /gsd:undo --last N and select commits explicitly.
 ```
-Exit cleanly.
+And if `PHASE_DIR_REUSED` is non-empty, stop with its own message:
+```
+Phase ${TARGET_PHASE} resolves to ${PHASE_DIR}, but that directory name is also archived
+at ${PHASE_DIR_REUSED}. Refusing: the first commit adding this path belongs to the earlier
+occupant, so the window would open there and select that milestone's commits too.
+Use /gsd:undo --last N and select commits explicitly.
+```
+Exit cleanly in both cases.
 
 Derive the selection window from `PHASE_DIR` (the `#3995` anchor, shared with
 `code-review.md`): the base is the parent of the first commit that added anything under
@@ -194,6 +215,20 @@ PHASE_DIR_ARCHIVED=""
 case "${PHASE_DIR}" in
   */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
 esac
+# A LIVE path can still be a previous occupant's. `--diff-filter=A` does not follow renames,
+# so a later milestone re-creating the same literal directory anchors on the OLDER milestone's
+# add. Nothing is under milestones/ to refuse -- find-phase returned the live dir -- so key on
+# the collision instead: the same basename present under an archived milestone means this path
+# has been used before and the anchor cannot be trusted. Fail closed; `--last N` is the route.
+PHASE_DIR_REUSED=""
+if [ -n "${PHASE_DIR}" ]; then
+  _pd_base=$(basename "${PHASE_DIR}")
+  _pd_root=${PHASE_DIR%/phases/*}
+  for _arch in "${_pd_root}"/milestones/v*-phases/"${_pd_base}"; do
+    [ -e "$_arch" ] || continue
+    PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
+  done
+fi
 PHASE_START=$(git log --format="%H" --diff-filter=A -- "${PHASE_DIR}" 2>/dev/null | tail -1)
 UNDO_RANGE=""
 if [ -n "$PHASE_START" ]; then
@@ -208,8 +243,8 @@ fi
 ```
 
 Apply the same fail-closed rule as MODE=phase when `PHASE_DIR` or `UNDO_RANGE` is empty —
-and the same archived refusal, with its own message, when `PHASE_DIR_ARCHIVED` is
-non-empty — then select within the window:
+and the same two refusals, each with its own message, when `PHASE_DIR_ARCHIVED` or
+`PHASE_DIR_REUSED` is non-empty — then select within the window:
 
 ```bash
 # `|| true` for the same reason as MODE=phase: an empty selection is not an error here.
@@ -262,23 +297,27 @@ rather than mis-selects — and untested: constructing the evil-merge fixture co
 the branch is worth while the failure mode is a refusal. `/gsd:undo --last N` is the route
 if it is ever hit.
 
-**Known residual — a later milestone reusing BOTH the number and the slug.** The anchor is
-the *current path*, and `--diff-filter=A` does not follow renames, so if a later milestone
-re-creates the same literal directory (`03-auth` again, not merely phase `03` again) the
-oldest add at that path is the **previous occupant's** and the window opens there. The
-archived-milestone refusal above does not reach this one: `find-phase` returns the **live**
-directory, so nothing is under `milestones/` to refuse. Driven: two milestones both using
-`.planning/phases/03-auth` anchored on the v1 plan commit and selected all four v1+v2
-phase-03 commits. `code-review.md` carries the same residual on the same anchor, where it is
-read-only; here it is destructive, so prefer `/gsd:undo --last N` when a phase directory name
-has been reused verbatim across milestones.
+**A later milestone reusing BOTH the number and the slug is REFUSED, not a residual.** The
+anchor is the *current path*, and `--diff-filter=A` does not follow renames, so re-creating
+the same literal directory (`03-auth` again, not merely phase `03` again) makes the oldest add
+at that path the **previous occupant's**. The archived refusal above cannot reach it —
+`find-phase` returns the **live** directory, so nothing is under `milestones/` to refuse.
+Driven before the guard: two milestones both using `.planning/phases/03-auth` anchored on the
+v1 plan commit and selected all four v1+v2 phase-03 commits. The collision check closes it
+without needing a phase identity a directory name does not carry: the same basename present
+under an archived milestone means the path has been used before, so the anchor is untrustworthy
+and both modes refuse. `code-review.md` carries the same weakness on the same anchor, where it
+is read-only and merely widens a review scope; here it reverts, which is why this one is a
+refusal rather than a note.
 
 **Known residual — concurrent workstreams.** The window above is scoped to the target
 phase's own directory, which is workstream-correct, but the commit subjects it filters
 are not: the executor's scope contract is `type({phase}-{plan})` with no workstream
 token, so two workstreams running the same phase number concurrently emit
-indistinguishable subjects and both fall inside each other's window. Narrowing the window
-removes the previous-milestone and unreachable-branch classes entirely; this last class
+indistinguishable subjects and both fall inside each other's window. Narrowing the window plus the two
+refusals above removes the unreachable-branch class entirely and every previous-milestone
+route this workflow can detect — residual 2 is the one it cannot, since a merged side branch
+is genuinely reachable from `HEAD`. This last class
 needs a discriminator that does not exist in a commit subject today (`#3995`: *"Message
 subjects demonstrably do not carry enough information to identify a phase"*). Until one
 exists, `confirm_revert` is the backstop for it.

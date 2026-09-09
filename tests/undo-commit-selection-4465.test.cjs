@@ -209,6 +209,12 @@ describe('#4465: undo commit selection is bounded', () => {
     );
     assert.equal(guards.length, 2,
       `undo.md must refuse an archived resolution in BOTH modes; found ${guards.length} guard(s)`);
+    // The same fence carries the reused-path collision check: an archived twin of a LIVE
+    // directory name means the anchor belongs to the earlier occupant.
+    for (const g of guards) {
+      assert.ok(/PHASE_DIR_REUSED=""/.test(g) && /milestones\/v\*-phases\//.test(g),
+        `each guard fence must also refuse a reused directory name (#4465):\n${g}`);
+    }
     // The pattern must key on the ARCHIVE LAYOUT. A bare `*/milestones/*` also matches a
     // workstream or project legitimately named `milestones` and refuses a LIVE phase.
     // Executable lines only: the guard's own comment quotes the rejected pattern to
@@ -470,6 +476,78 @@ describe('#4465: undo commit selection — executed against a git fixture', { sk
       'echo "ARCHIVED=[${PHASE_DIR_ARCHIVED}]"');
     assert.ok(out.includes('ARCHIVED=[]'), `a live phase dir must not trip the guard; got:\n${out}`);
     assert.deepEqual(subjects(out.replace(/ARCHIVED=.*\n?/, '')), ['feat(03-01): add beta feature flag']);
+  });
+
+  // Round 2, self-found: a LIVE path can still be a previous occupant's. A later milestone
+  // that re-creates the same literal directory (same number AND same slug) anchors on the
+  // older milestone's add commit. The archive guard cannot see it -- find-phase returns the
+  // live directory -- so the collision check keys on the archived twin instead.
+  function reusedSlugFixture() {
+    const cwd = createTempGitProject('gsd-4465-slug-');
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# v1\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): v1 plan'], { cwd });
+    commitFile(cwd, 'src/a.js', 'a\n', 'feat(03-01): v1 auth work');
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'v1.0-phases'), { recursive: true });
+    gitOrThrow(['mv', '.planning/phases/03-auth', '.planning/milestones/v1.0-phases/03-auth'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'chore: archive v1.0'], { cwd });
+    // v2.0 re-creates the SAME literal path.
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# v2\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): v2 plan'], { cwd });
+    commitFile(cwd, 'src/b.js', 'b\n', 'feat(03-01): v2 auth work');
+    return cwd;
+  }
+
+  test('negative control: WITHOUT the collision guard, a reused slug selects the EARLIER milestone too', (t) => {
+    const cwd = reusedSlugFixture();
+    t.after(() => cleanup(cwd));
+    // Resolve + anchor + select with the guard fence omitted. find-phase returns the LIVE
+    // path, so the archive guard is inert here by construction -- this is the case it misses.
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect],
+      'echo "PHASE_DIR=${PHASE_DIR}"');
+    assert.ok(out.includes('PHASE_DIR=.planning/phases/03-auth'),
+      `the LIVE path must win -- this is why the archive guard cannot reach it; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/PHASE_DIR=.*\n?/, '')), [
+      'feat(03-01): v2 auth work',
+      'docs(03-01): v2 plan',
+      'feat(03-01): v1 auth work',
+      'docs(03-01): v1 plan',
+    ], 'the unguarded window must reach back into v1.0');
+  });
+
+  test('--phase REFUSES a reused directory name: no anchor, no range, nothing selected', (t) => {
+    const cwd = reusedSlugFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=03',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'printf "REUSED=[%s]\\nPHASE_DIR=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR_REUSED" "$PHASE_DIR" "$UNDO_RANGE"');
+    assert.ok(out.includes('REUSED=[.planning/milestones/v1.0-phases/03-auth]'),
+      `the refusal must name the archived twin it collided with; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `UNDO_RANGE must stay empty; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/(REUSED|PHASE_DIR|UNDO_RANGE)=.*\n?/g, '')), [],
+      'nothing may be selected once the reused path is refused');
+  });
+
+  test('--plan REFUSES a reused directory name too', (t) => {
+    const cwd = reusedSlugFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PLAN=03-01', [planAnchor, planSelect],
+      'printf "REUSED=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR_REUSED" "$UNDO_RANGE"');
+    assert.ok(out.includes('REUSED=[.planning/milestones/v1.0-phases/03-auth]'),
+      `--plan must refuse the same collision; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `UNDO_RANGE must stay empty; got:\n${out}`);
+  });
+
+  test('the collision guard is inert when no archived twin exists', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    // 03-beta is live and 03-auth is archived -- different slugs, so no collision.
+    const out = runFences(cwd, 'TARGET_PHASE=03',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'echo "REUSED=[${PHASE_DIR_REUSED}]"');
+    assert.ok(out.includes('REUSED=[]'), `a distinct slug must not collide; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/REUSED=.*\n?/, '')), ['feat(03-01): add beta feature flag']);
   });
 
   test('the guard keys on the archive LAYOUT: a workstream named "milestones" is still live', (t) => {
