@@ -618,17 +618,18 @@ test('a ripple names the unexplained path and not the explained one', () => {
   assert.ok(!r.ok);
 });
 
-test('a converter change fails without an ack and passes with one', () => {
+test('an unregistered converter change fails without an ack and passes with one', () => {
   // #2723 AC: "simulate a legitimate converter change: assert it fails without an ack
-  // entry and passes with one." A converter edit moves emitted bytes for files whose
-  // sources nobody touched — ADR-2264's "~5% git cannot review".
+  // entry and passes with one." Registered transforms are now first-class provenance
+  // (covered above), so use a converter path the rule does not declare to retain this
+  // guard for ADR-2264's "~5% git cannot review" rather than contradicting that model.
   const moved = {};
   const base = {};
   for (let i = 0; i < 25; i++) {
     base[`skills/gsd-cmd-${i}/SKILL.md`] = `h${i}`;
     moved[`skills/gsd-cmd-${i}/SKILL.md`] = `x${i}`;
   }
-  const changedPaths = ['src/runtime-artifact-conversion.cts'];
+  const changedPaths = ['src/unregistered-runtime-converter.cts'];
 
   const without = diffEmitted({ baseline: mf(base), current: mf(moved), changedPaths });
   assert.equal(without.unattributable.length, 25);
