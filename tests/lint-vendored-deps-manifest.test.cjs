@@ -28,6 +28,8 @@ const {
   compareFiles,
   checkRow,
   stripRangeOperator,
+  pinOperatorPrefix,
+  fixRow,
   declaredValueExports,
   checkHandAuthoredTwin,
   resolvePath,
@@ -266,5 +268,90 @@ describe('G3: the hand-authored js-yaml type twin is excluded from byte-compare,
     // for an actual export statement, not just the word (which legitimately appears in
     // this file's own prose explaining the exclusion).
     assert.doesNotMatch(content, /export function loadAll\(/, 'loadAll must stay undeclared per the narrowed surface');
+  });
+});
+
+describe('#4573: pinOperatorPrefix / fixRow — mechanical --fix for Dependabot-range vendor drift', () => {
+  test('pinOperatorPrefix extracts the leading range-operator token, or "" for an exact pin', () => {
+    assert.equal(pinOperatorPrefix('^4.3.1'), '^');
+    assert.equal(pinOperatorPrefix('~4.3.1'), '~');
+    assert.equal(pinOperatorPrefix('4.3.1'), '');
+    assert.equal(pinOperatorPrefix('>=4.3.1'), '>=');
+  });
+
+  test('regression guard: stripRangeOperator is unchanged for the same inputs after the PIN_OPERATOR_RE refactor', () => {
+    assert.equal(stripRangeOperator('^4.3.1'), '4.3.1');
+    assert.equal(stripRangeOperator('~4.3.1'), '4.3.1');
+    assert.equal(stripRangeOperator('4.3.1'), '4.3.1');
+    assert.equal(stripRangeOperator('>=4.3.1'), '4.3.1');
+  });
+
+  test('fixRow resolves mechanical .cjs drift: mutated vendored js-yaml.cjs is byte-restored to match node_modules', (t) => {
+    const row = jsYamlRow();
+    const vendoredAbs = path.join(REPO_ROOT, row.vendoredCjs);
+    const upstreamAbs = path.join(REPO_ROOT, row.upstreamCjs);
+    const original = fs.readFileSync(vendoredAbs, 'utf8');
+    fs.writeFileSync(vendoredAbs, `${original}\n// mutated for test\n`);
+    t.after(() => {
+      // Safety net: fixRow copies FROM upstream, so the vendored file should
+      // already be back in its original clean state — but re-copy from
+      // upstream regardless in case an assertion above threw before fixRow
+      // completed, so this test never leaves the tree dirty.
+      fs.copyFileSync(upstreamAbs, vendoredAbs);
+    });
+
+    const findings = fixRow(row);
+    assert.deepEqual(findings, [], `expected fixRow to leave zero findings, got: ${JSON.stringify(findings)}`);
+    assert.ok(
+      fs.readFileSync(vendoredAbs).equals(fs.readFileSync(upstreamAbs)),
+      'expected the vendored .cjs to byte-equal node_modules/js-yaml/dist/js-yaml.js after fixRow',
+    );
+  });
+
+  test('fixRow does NOT mask a genuine hand-authored-twin incompatibility: a fake declared export still surfaces after --fix', (t) => {
+    const row = jsYamlRow();
+    const srcTwinAbs = path.join(REPO_ROOT, row.srcTwin);
+    const original = fs.readFileSync(srcTwinAbs, 'utf8');
+    fs.writeFileSync(
+      srcTwinAbs,
+      `${original}\nexport function thisFixRowExportDoesNotExistAtRuntime(): void;\n`,
+    );
+    t.after(() => {
+      fs.writeFileSync(srcTwinAbs, original);
+    });
+
+    const findings = fixRow(row);
+    assert.ok(
+      findings.some((f) => f.includes('thisFixRowExportDoesNotExistAtRuntime')),
+      `expected the hand-authored-twin finding to survive fixRow, got: ${JSON.stringify(findings)}`,
+    );
+  });
+
+  test('fixRow preserves the pin\'s original range-operator style when rewriting package.json', (t) => {
+    const row = jsYamlRow();
+    const pkgPath = path.join(REPO_ROOT, 'package.json');
+    const installedPkgPath = path.join(REPO_ROOT, 'node_modules', 'js-yaml', 'package.json');
+    const installedVersion = JSON.parse(fs.readFileSync(installedPkgPath, 'utf8')).version;
+
+    const originalContent = fs.readFileSync(pkgPath, 'utf8');
+    t.after(() => {
+      fs.writeFileSync(pkgPath, originalContent);
+    });
+
+    const pkg = JSON.parse(originalContent);
+    const stalePin = installedVersion === '4.0.0' ? '~4.0.1' : '~4.0.0';
+    pkg.devDependencies['js-yaml'] = stalePin;
+    fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+    const findings = fixRow(row);
+    assert.deepEqual(findings, [], `expected fixRow to leave zero findings, got: ${JSON.stringify(findings)}`);
+
+    const after = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const pinnedAfter = after.devDependencies['js-yaml'];
+    assert.equal(
+      pinnedAfter,
+      `~${installedVersion}`,
+      `expected fixRow to preserve the "~" range-operator style from the stale pin and correct the version to the installed one, got pin "${pinnedAfter}"`,
+    );
   });
 });
