@@ -92,6 +92,44 @@ Phase ${TARGET_PHASE} not found in the active planning scope. Nothing to revert.
 ```
 Exit cleanly — do NOT fall back to an unbounded search.
 
+**Refuse an ARCHIVED resolution — it selects the wrong milestone, not merely too few
+commits.** `find-phase` searches the live `phases/` directory first, then every
+`milestones/v<X.Y>-phases/` directory in ascending version order, and its ambiguity check
+is scoped to a *single* directory — it does not span them (`cmdFindPhase`, `src/phase.cts`:
+the `matches.length > 1` test sits inside the per-`searchDir` loop). A phase number that is
+not live therefore resolves **silently to the oldest archived milestone that has one**,
+with no warning. Anchoring there is wrong in both directions at once: the oldest commit
+adding that path is the archival **move**, so the phase's real work predates the window and
+falls outside it, while the window runs forward from that archival through every later
+milestone — where the subject grep matches *their* same-numbered phase. Driven on a
+two-archived-milestone fixture, `--phase 03` selected v2.0's `feat(03-01): add search index`
+and excluded v1.0's own `feat(03-01): implement auth endpoint`. Feeding that to
+`git revert` is the cross-milestone contamination this workflow exists to close, so it
+fails closed:
+
+```bash
+# Match the ARCHIVE LAYOUT, never the bare token `milestones`. cmdFindPhase only ever
+# creates these dirs from /^v\d+.*-phases$/, so `v*-phases` is the discriminator -- and a
+# bare `*/milestones/*` REFUSES A LIVE PHASE whenever a workstream or project is itself
+# named `milestones` (driven: GSD_WORKSTREAM=milestones resolves
+# `.planning/workstreams/milestones/phases/03-live`, which that pattern classifies as
+# archived). Blanking PHASE_DIR is deliberate: the fail-closed rule below then also holds,
+# so no path reaches selection even if this refusal's prose is not honored.
+PHASE_DIR_ARCHIVED=""
+case "${PHASE_DIR}" in
+  */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
+esac
+```
+
+If `PHASE_DIR_ARCHIVED` is non-empty, stop — this message, not the not-found one:
+```
+Phase ${TARGET_PHASE} resolves to an ARCHIVED milestone directory (${PHASE_DIR_ARCHIVED}).
+Refusing: the anchor there is the archival commit, so the window would span later
+milestones and select their same-numbered phase instead of this one.
+Use /gsd:undo --last N and select commits explicitly.
+```
+Exit cleanly.
+
 Derive the selection window from `PHASE_DIR` (the `#3995` anchor, shared with
 `code-review.md`): the base is the parent of the first commit that added anything under
 the phase's own directory, and the tip is `HEAD`.
@@ -149,6 +187,13 @@ phase number only within its milestone and workstream.
 ```bash
 PLAN_PHASE="${TARGET_PLAN%%-*}"
 PHASE_DIR=$(gsd_run query find-phase "${PLAN_PHASE}" --raw 2>/dev/null)
+# Same archived-resolution refusal as MODE=phase, and for the same reason — an archived
+# anchor selects a LATER milestone's same-numbered phase. Blanking PHASE_DIR keeps the
+# fail-closed rule below load-bearing.
+PHASE_DIR_ARCHIVED=""
+case "${PHASE_DIR}" in
+  */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
+esac
 PHASE_START=$(git log --format="%H" --diff-filter=A -- "${PHASE_DIR}" 2>/dev/null | tail -1)
 UNDO_RANGE=""
 if [ -n "$PHASE_START" ]; then
@@ -162,8 +207,9 @@ if [ -n "$PHASE_START" ]; then
 fi
 ```
 
-Apply the same fail-closed rule as MODE=phase when `PHASE_DIR` or `UNDO_RANGE` is empty,
-then select within the window:
+Apply the same fail-closed rule as MODE=phase when `PHASE_DIR` or `UNDO_RANGE` is empty —
+and the same archived refusal, with its own message, when `PHASE_DIR_ARCHIVED` is
+non-empty — then select within the window:
 
 ```bash
 # `|| true` for the same reason as MODE=phase: an empty selection is not an error here.
@@ -189,13 +235,20 @@ is reachable from `HEAD` without being an ancestor of `PHASE_START^`, so it stay
 selectable. This is strictly narrower than the unbounded search it replaces, not a new
 exposure — but it is not zero.
 
-**Known residual — an archived or renamed phase directory under-selects.** The anchor is
+**Known residual — a RENAMED phase directory under-selects.** The anchor is
 `--diff-filter=A` on the phase directory's *current* path and does not follow renames, so
-for a phase whose directory has since moved (milestone archival moves it under
-`milestones/v<X.Y>-phases/`) the oldest add at that path is the **move** commit, and the
-phase's real work commits — which predate it — fall outside the window. The failure is
-under-selection: the undo reverts too little or refuses, never too much. Prefer
-`/gsd:undo --last N` for a phase whose directory has been archived.
+for a phase whose directory has since moved the oldest add at that path is the **move**
+commit, and the phase's real work commits — which predate it — fall outside the window.
+For a rename *within* the live `phases/` tree the failure is under-selection: the undo
+reverts too little or refuses, never too much.
+
+The **archival** case is not that case, and is no longer a residual — it is refused above.
+It was previously documented here as under-selection only, which was wrong in the direction
+that matters: the window runs forward from the archival commit, so while the target's own
+work falls outside it, a *later* milestone's same-numbered phase falls inside and matches
+the subject grep. Driven on a two-archived-milestone fixture it selected the wrong
+milestone's commit and none of the right one's. Both modes now refuse an archived
+`PHASE_DIR` outright; `/gsd:undo --last N` is the route for a phase that has been archived.
 
 **Known residual — concurrent workstreams.** The window above is scoped to the target
 phase's own directory, which is workstream-correct, but the commit subjects it filters

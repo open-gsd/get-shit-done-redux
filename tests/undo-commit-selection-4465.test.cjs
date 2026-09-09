@@ -187,6 +187,32 @@ describe('#4465: undo commit selection is bounded', () => {
       'undo.md must never execute git reset --hard',
     );
   });
+
+  test('M: both modes refuse a PHASE_DIR that resolves under milestones/', () => {
+    // find-phase falls back to archived milestone dirs, and its ambiguity check does
+    // not span them; anchoring there selects a LATER milestone's same-numbered phase.
+    // Two guards, one per mode — a single one would leave the other selecting.
+    const guards = extractBashBlocks(content).filter(
+      (b) => /PHASE_DIR_ARCHIVED=""/.test(b)
+        && /\*\/milestones\/v\*-phases\/\*\|milestones\/v\*-phases\/\*/.test(b),
+    );
+    assert.equal(guards.length, 2,
+      `undo.md must refuse an archived resolution in BOTH modes; found ${guards.length} guard(s)`);
+    // The pattern must key on the ARCHIVE LAYOUT. A bare `*/milestones/*` also matches a
+    // workstream or project legitimately named `milestones` and refuses a LIVE phase.
+    // Executable lines only: the guard's own comment quotes the rejected pattern to
+    // explain why it is rejected, and a whole-block match would fire on that.
+    for (const g of guards) {
+      const code = g.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+      assert.ok(!/\*\/milestones\/\*/.test(code),
+        `the guard must not match the bare token 'milestones' — it refuses live phases:\n${code}`);
+    }
+    for (const g of guards) {
+      assert.ok(/PHASE_DIR=""/.test(g),
+        `the archived guard must blank PHASE_DIR so the fail-closed rule still holds:\n${g}`);
+    }
+  });
+
 });
 
 // ─── Behavioral half (review round 1, #4472) ──────────────────────────────────
@@ -241,6 +267,8 @@ describe('#4465: undo commit selection — executed against a git fixture', { sk
   // gather_commits, MODE=phase: resolve → anchor → select
   const phaseResolve = fenceWhere(bodies, 'phase resolve',
     (b) => b.includes('PHASE_DIR=$(gsd_run query find-phase "${TARGET_PHASE}"'));
+  const phaseArchivedGuard = fenceWhere(bodies, 'phase archived guard',
+    (b) => b.includes('PHASE_DIR_ARCHIVED=""') && !b.includes('PLAN_PHASE'));
   const phaseAnchor = fenceWhere(bodies, 'phase anchor',
     (b) => b.includes('PHASE_START=$(git log') && !b.includes('PLAN_PHASE'));
   const phaseSelect = fenceWhere(bodies, 'phase select',
@@ -332,6 +360,120 @@ describe('#4465: undo commit selection — executed against a git fixture', { sk
     t.after(() => cleanup(cwd));
     const out = runFences(cwd, 'TARGET_PLAN=03-01', [planAnchor, planSelect]);
     assert.deepEqual(subjects(out), ['feat(03-01): add beta feature flag']);
+  });
+
+  // Round 2: find-phase's ambiguity check is scoped to ONE searchDir (the
+  // `matches.length > 1` test sits inside cmdFindPhase's per-directory loop), and the
+  // live `phases/` dir is searched first. So a phase number that is NOT live resolves
+  // silently to the OLDEST archived milestone carrying one. Two archived milestones is
+  // the reported scenario; the current milestone has not reached phase 03 yet.
+  function twoArchivedMilestonesFixture() {
+    const cwd = createTempGitProject('gsd-4465-arch-');
+    seedPhase(cwd, '03-auth', { '03-01-PLAN.md': '# auth\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): v1.0 phase plan'], { cwd });
+    commitFile(cwd, 'src/auth.js', 'auth\n', 'feat(03-01): implement auth endpoint');
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'v1.0-phases'), { recursive: true });
+    gitOrThrow(['mv', '.planning/phases/03-auth', '.planning/milestones/v1.0-phases/03-auth'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'chore: archive v1.0 milestone files'], { cwd });
+    seedPhase(cwd, '03-search', { '03-01-PLAN.md': '# search\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): v2.0 phase plan'], { cwd });
+    commitFile(cwd, 'src/search.js', 's\n', 'feat(03-01): add search index');
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'v2.0-phases'), { recursive: true });
+    gitOrThrow(['mv', '.planning/phases/03-search', '.planning/milestones/v2.0-phases/03-search'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'chore: archive v2.0 milestone files'], { cwd });
+    // v3.0 in progress; phase 03 does not exist live, which is what sends find-phase
+    // into the archives at all.
+    seedPhase(cwd, '01-setup', { '01-01-PLAN.md': '# setup\n' });
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(01-01): v3.0 phase plan'], { cwd });
+    return cwd;
+  }
+
+  test('negative control: WITHOUT the archived guard, an archived resolution selects the WRONG milestone', (t) => {
+    const cwd = twoArchivedMilestonesFixture();
+    t.after(() => cleanup(cwd));
+    // Anchor + select with the guard fence omitted — i.e. this PR's round-1 state.
+    // find-phase returns v1.0's dir, PHASE_START is the v1.0 ARCHIVAL commit, and the
+    // window then runs forward into v2.0 and matches its same-numbered phase, while
+    // v1.0's own work commit sits before the window. Both halves are asserted, because
+    // "reverts too little" and "reverts someone else's milestone" are different bugs
+    // and only the second is destructive.
+    const out = runFences(cwd, 'TARGET_PHASE=03', [phaseResolve, phaseAnchor, phaseSelect],
+      'echo "PHASE_DIR=${PHASE_DIR}"');
+    assert.ok(out.includes('PHASE_DIR=.planning/milestones/v1.0-phases/03-auth'),
+      `expected the OLDEST archived dir to win; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/PHASE_DIR=.*\n?/, '')),
+      ['feat(03-01): add search index', 'docs(03-01): v2.0 phase plan'],
+      'the unguarded window must select v2.0\'s phase 03 and none of v1.0\'s');
+  });
+
+  test('--phase REFUSES an archived resolution: no anchor, no range, nothing selected', (t) => {
+    const cwd = twoArchivedMilestonesFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=03',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'printf "ARCHIVED=[%s]\\nPHASE_DIR=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR_ARCHIVED" "$PHASE_DIR" "$UNDO_RANGE"');
+    assert.ok(out.includes('ARCHIVED=[.planning/milestones/v1.0-phases/03-auth]'),
+      `the refusal must name the archived directory it declined; got:\n${out}`);
+    assert.ok(out.includes('PHASE_DIR=[]'), `PHASE_DIR must be blanked; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `UNDO_RANGE must stay empty; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/(ARCHIVED|PHASE_DIR|UNDO_RANGE)=.*\n?/g, '')), [],
+      'nothing may be selected once the resolution is refused');
+  });
+
+  test('--plan REFUSES an archived resolution too', (t) => {
+    const cwd = twoArchivedMilestonesFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PLAN=03-01', [planAnchor, planSelect],
+      'printf "ARCHIVED=[%s]\\nUNDO_RANGE=[%s]\\n" "$PHASE_DIR_ARCHIVED" "$UNDO_RANGE"');
+    assert.ok(out.includes('ARCHIVED=[.planning/milestones/v1.0-phases/03-auth]'),
+      `--plan must refuse the same resolution; got:\n${out}`);
+    assert.ok(out.includes('UNDO_RANGE=[]'), `UNDO_RANGE must stay empty; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/(ARCHIVED|UNDO_RANGE)=.*\n?/g, '')), [],
+      'nothing may be selected once the resolution is refused');
+  });
+
+  test('the archived guard is inert on a LIVE resolution — it refuses archives, not phases', (t) => {
+    const cwd = multiMilestoneFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=03',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'echo "ARCHIVED=[${PHASE_DIR_ARCHIVED}]"');
+    assert.ok(out.includes('ARCHIVED=[]'), `a live phase dir must not trip the guard; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/ARCHIVED=.*\n?/, '')), ['feat(03-01): add beta feature flag']);
+  });
+
+  test('the guard keys on the archive LAYOUT: a workstream named "milestones" is still live', (t) => {
+    // The conventional live path above cannot catch this. `milestones` is a legal
+    // workstream (and project) name, so a bare `*/milestones/*` pattern classifies
+    // .planning/workstreams/milestones/phases/NN-x as archived and refuses a phase that
+    // is live and revertible — a fail-closed bug, but a bug. Only `v*-phases`, the shape
+    // cmdFindPhase actually creates (/^v\d+.*-phases$/), separates the two.
+    const cwd = createTempGitProject('gsd-4465-wsname-');
+    t.after(() => cleanup(cwd));
+    const dir = path.join(cwd, '.planning', 'workstreams', 'milestones', 'phases', '03-live');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '03-01-PLAN.md'), '# live\n');
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(03-01): workstream phase plan'], { cwd });
+    commitFile(cwd, 'src/live.js', 'l\n', 'feat(03-01): workstream work');
+    // Activate by env, the same route find-phase honours for an active workstream.
+    const script = [
+      'TARGET_PHASE=03', GSD_RUN, phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect,
+      'echo "ARCHIVED=[${PHASE_DIR_ARCHIVED}]"',
+    ].join('\n');
+    const env = { ...process.env, GSD_TOOLS_BIN, HOME: cwd, GSD_WORKSTREAM: 'milestones' };
+    delete env.GSD_PROJECT;
+    const r = runHookSeam('-c', [script], { interpreter: 'bash', cwd, env, timeoutMs: PROBE_TIMEOUT_MS });
+    throwIfFailed(r, 'bash <undo.md fences>');
+    assert.ok(r.stdout.includes('ARCHIVED=[]'),
+      `a workstream NAMED "milestones" is a live scope, not an archive; got:\n${r.stdout}`);
+    assert.deepEqual(subjects(r.stdout.replace(/ARCHIVED=.*\n?/, '')), [
+      'feat(03-01): workstream work',
+      'docs(03-01): workstream phase plan',
+    ]);
   });
 
   test('single-milestone selection is unchanged: every phase commit, none from a later phase', (t) => {
