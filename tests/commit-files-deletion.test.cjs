@@ -904,7 +904,11 @@ describe('commit --files-removed: index states absent by design are never remova
     git(['commit', '-q', '-m', 'seed todo']);
     fs.writeFileSync(path.join(tmpDir, PENDING, 'gone.md'), 'gone\n');
     git(['add', path.join(PENDING, 'gone.md')]);
-    const blob = git(['rev-parse', ':' + path.join(PENDING, 'gone.md')]);
+    // git's `:<path>` index syntax takes a FORWARD-slash path; `path.join`
+    // yields backslashes on Windows and git rejects them as an ambiguous
+    // argument. The hook below already uses the slash form for the same reason.
+    const GONE = '.planning/todos/pending/gone.md';
+    const blob = git(['rev-parse', ':' + GONE]);
     fs.unlinkSync(path.join(tmpDir, PENDING, 'gone.md'));
     const hooksDir = path.join(tmpDir, '.git', 'hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
