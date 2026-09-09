@@ -50,10 +50,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const fc = require('./helpers/fast-check-setup.cjs');
-const { runHook: runHookSeam } = require('./helpers/process-seam.cjs');
+const { runHook: runHookSeam, runNode, OUTCOME } = require('./helpers/process-seam.cjs');
 const { toLegacyResult, gitOrThrow } = require('./helpers/git-fixture.cjs');
-const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
-const { createTempDir, createTempProject, createTempGitProject, runGsdTools, cleanup } = require('./helpers.cjs');
+const { PROBE_TIMEOUT_MS, SEAM_DEFAULT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+const { createTempDir, createTempProject, createTempGitProject, runGsdTools, cleanup, TOOLS_PATH, TEST_ENV_BASE } = require('./helpers.cjs');
 const { SENTINEL_RELATIVE_PATH, SENTINEL_STALE_MS, readSentinel } = require('../hooks/lib/isolation-sentinel.js');
 const { REASON_CODE } = require('../hooks/lib/isolation-deny-reason.js');
 const { runtimes } = require('../gsd-core/bin/lib/capability-registry.cjs');
@@ -1389,6 +1389,29 @@ describe('#4222 — the #683 base-check degrade is re-derived by the resolver, s
   // and only the first models the unbuilt-lib case the nit named.
   const BASEREF_FAULT_PRELOAD = path.join(__dirname, 'helpers', 'worktree-base-ref-fault-preload.cjs');
 
+  // `runGsdTools` reconstructs a legacy `{ success, output, error }` shape that DISCARDS stderr on a
+  // ZERO exit (tests/helpers.cjs `toLegacyShape`) — and the fallback warning below is emitted by a
+  // query that SUCCEEDS, so the helper structurally cannot observe it. Drop to the same process seam
+  // `runGsdTools` itself uses, exactly as tests/api-coverage-gate-e2e.test.cjs does, and keep the
+  // legacy fields the assertions above already read.
+  function runToolsCapturingStderr(argv, cwd, extraEnv) {
+    const r = runNode([TOOLS_PATH, ...argv], {
+      cwd,
+      env: { ...process.env, ...TEST_ENV_BASE, ...extraEnv },
+      // The seam's OWN fallback, imported rather than restated: this helper exists to mirror
+      // `runGsdTools`, which passes exactly this constant (tests/helpers.cjs), so importing it
+      // asserts that parity instead of hard-coding a second copy of the same number.
+      timeoutMs: SEAM_DEFAULT_TIMEOUT_MS,
+    });
+    const exited = r.outcome === OUTCOME.EXITED;
+    return {
+      success: exited && r.exitCode === 0,
+      output: (r.stdout || '').trim(),
+      stderr: (r.stderr || '').trim(),
+      error: exited ? (r.stderr || '').trim() : `seam outcome ${r.outcome}`,
+    };
+  }
+
   for (const fault of ['unresolvable', 'throws']) {
     test(`#4232: base-check evaluation ${fault} — the resolver falls back to the natural capability and never throws`, (t) => {
       const { dir } = projectWithOrigin(t, 'gsd-4232-basecheck-fault-');
@@ -1396,16 +1419,24 @@ describe('#4222 — the #683 base-check degrade is re-derived by the resolver, s
 
       // Control, same repo state: with the evaluation available the degrade is
       // re-derived and the sentinel records `none` — #4222's whole point.
-      const control = runGsdTools(['query', 'dispatch-isolation', '--raw', '--phase', '1'], dir, env(dir));
+      const control = runToolsCapturingStderr(['query', 'dispatch-isolation', '--raw', '--phase', '1'], dir, env(dir));
       assert.equal(control.success, true, control.error);
       assert.equal(
         readSentinelRaw(dir).isolation,
         'none',
         'control: with the evaluation available a diverged repo must record none',
       );
+      // #4232 review round 3 — the warning is a FALLBACK signal, so the healthy path must stay
+      // silent. This is the control half of the warning's own pair: without it the assertion
+      // below would pass against a helper that warned unconditionally.
+      assert.doesNotMatch(
+        control.stderr,
+        /could not be re-derived/,
+        'control: the healthy path must not emit the fallback warning',
+      );
 
       // Fault arm: the identical call with the evaluation unavailable.
-      const faulted = runGsdTools(['query', 'dispatch-isolation', '--raw', '--phase', '1'], dir, {
+      const faulted = runToolsCapturingStderr(['query', 'dispatch-isolation', '--raw', '--phase', '1'], dir, {
         ...env(dir),
         NODE_OPTIONS: `--require ${BASEREF_FAULT_PRELOAD}`,
         GSD_TEST_BASEREF_FAULT: fault,
@@ -1432,6 +1463,30 @@ describe('#4222 — the #683 base-check degrade is re-derived by the resolver, s
         'fault arm: with no evaluation available the resolver records the natural capability',
       );
       assert.equal(sentinel.harness_flag, 'isolation="worktree"');
+
+      // #4232 review round 3 — the fallback is no longer silent. The review's finding was that the
+      // catch swallowed BOTH producers into one undiagnosable `false`, so the assertion is
+      // seam-specific: it is the "which one" that carries the diagnostic value, and a single shared
+      // phrase would pass while the two arms remained indistinguishable — the exact defect.
+      assert.match(
+        faulted.stderr,
+        /gsd: warning — the #683 worktree base-check could not be re-derived/,
+        'fault arm: the fallback must announce itself on stderr',
+      );
+      assert.match(
+        faulted.stderr,
+        fault === 'unresolvable'
+          ? /runtime lib \.\/lib\/worktree-base-ref\.cjs is unbuilt or unresolvable/
+          : /the evaluation threw/,
+        `fault arm: the warning must name the '${fault}' seam specifically`,
+      );
+      // stdout stays machine-readable — the whole reason the warning goes to stderr. Asserted here
+      // rather than argued: `--raw` consumers parse this stream.
+      assert.equal(
+        faulted.output.trim(),
+        'harness-worktree',
+        'fault arm: the warning must not leak into --raw stdout',
+      );
     });
   }
 });

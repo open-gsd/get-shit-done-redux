@@ -1951,7 +1951,29 @@ function dispatchOverlayCapabilityCommand({ command, args, cwd, raw, error, load
     try {
       const { evaluateWorktreeBaseDegradeForCwd } = require('./lib/worktree-base-ref.cjs');
       return evaluateWorktreeBaseDegradeForCwd(cwd, isolationMode).shouldDegrade === true;
-    } catch {
+    } catch (err) {
+      // #4232 review — the fallback is no longer silent. Returning false here reverts this call to
+      // pre-#4222 behaviour, so on a diverged repo it reopens the clobber window until the workflow's
+      // own `--force-isolation none` re-records. That is a fallback worth one line, not a normal state:
+      // in a healthy install neither seam is reachable.
+      //
+      // stderr, never stdout. `routeDispatchIsolation` backs `--raw` and `--json`, whose consumers
+      // parse stdout; a diagnostic there would corrupt them. `process.stderr.write` matches this
+      // file's existing warnings (no `console.*` anywhere in it).
+      //
+      // The two seams the doc comment above names are distinguished, because "which one" is the whole
+      // diagnostic value and the review's finding is that both collapsed into one silent `false`.
+      // Deliberately NOT interpolating `err.message`: the evaluation shells out to git, so that string
+      // can carry repo-controlled text (a ref name) straight to a terminal. The `worktree base-check`
+      // subcommand runs the same evaluation and reports the real error, so the pointer is both safer
+      // and more useful than an echo.
+      const unbuilt = err && err.code === 'MODULE_NOT_FOUND';
+      process.stderr.write(
+        'gsd: warning — the #683 worktree base-check could not be re-derived '
+        + `(${unbuilt ? 'the runtime lib ./lib/worktree-base-ref.cjs is unbuilt or unresolvable' : 'the evaluation threw'}); `
+        + 'recording the naturally-resolved isolation instead. Run `gsd-tools worktree base-check` '
+        + 'for the underlying error.\n',
+      );
       return false;
     }
   }
