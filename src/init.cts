@@ -579,6 +579,16 @@ function readConfigJsonBoolean(cwd: string, keyPath: readonly string[]): boolean
   }
 }
 
+/** Reads `filePath`; returns its content, or `null` when missing/unreadable/empty. */
+function readNonEmptyFileOrNull(filePath: string): string | null {
+  try {
+    const content = platformReadSync(filePath);
+    return content && content.length > 0 ? content : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Bounded, non-throwing read of a dotted key path from `.planning/config.json`,
  * returning the raw resolved value (any JSON type) or `undefined` on any
@@ -4111,19 +4121,36 @@ function cmdAgentSkills(
   // persona fallback. Triggering the fallback for claude would change the
   // documented "unconfigured → empty block" contract that agent-skills tests
   // pin.
+  //
+  // #4407 (ADR-4139 stream 2): this is the one place GSD's own agent-persona
+  // content is served through a real code seam rather than an eagerly
+  // @-included file, so the compact/canonical choice is made here in code
+  // (a real exit code) instead of a prose config-get gate. Compact is tried
+  // first when requested; a missing compact sibling falls back to canonical
+  // with the fallback disclosed in the payload itself, never a silent switch.
+  let agentPayloadVariant: 'compact' | 'canonical' | null = null;
   if (!block) {
     const runtime = (config && (config['runtime'] as string)) || process.env['GSD_RUNTIME'] || 'claude';
     if (runtime !== 'claude') {
       const agentCheck = checkAgentsInstalled(runtime, projectRoot) as unknown as { agents_dir?: string } | null;
       const agentsDir = agentCheck?.agents_dir;
       if (typeof agentsDir === 'string' && agentsDir.length > 0) {
-        const agentFile = path.join(agentsDir, `${agentType}.md`);
-        try {
-          const content = platformReadSync(agentFile);
-          if (content && content.length > 0) {
-            block = content;
+        const compactRequested = readConfigJsonBoolean(projectRoot, ['workflow', 'compact_content']);
+        const compactContent = compactRequested
+          ? readNonEmptyFileOrNull(path.join(agentsDir, `${agentType}.compact.md`))
+          : null;
+        if (compactContent !== null) {
+          block = compactContent;
+          agentPayloadVariant = 'compact';
+        } else {
+          const canonicalContent = readNonEmptyFileOrNull(path.join(agentsDir, `${agentType}.md`));
+          if (canonicalContent !== null) {
+            block = compactRequested
+              ? `<!-- gsd: no compact payload registered for ${agentType}; serving canonical -->\n\n${canonicalContent}`
+              : canonicalContent;
+            agentPayloadVariant = 'canonical';
           }
-        } catch { /* agent file not found — fall through to empty block */ }
+        }
       }
     }
   }
@@ -4170,8 +4197,8 @@ function cmdAgentSkills(
   if (jsonMode) {
     // Build the Resolution<AgentSkillsValue> envelope and embed .value additively.
     // Flat fields are retained unchanged for back-compat; value formalises the
-    // Resolution convention (ADR-1411 P3, #1416). source/degraded remain
-    // config-provenance extras, outside the Resolution<T> envelope.
+    // Resolution convention (ADR-1411 P3, #1416). source/degraded/agent_payload_variant
+    // remain config-provenance extras, outside the Resolution<T> envelope.
     const resolution = makeResolution(
       { block: block || '', skills_count: normalizedPaths.length },
       { configured, reason, warnings: diagnostics.warnings },
@@ -4185,6 +4212,7 @@ function cmdAgentSkills(
       reason,
       source,
       degraded,
+      agent_payload_variant: agentPayloadVariant,
       value: resolution.value,
     }, raw);
     return;

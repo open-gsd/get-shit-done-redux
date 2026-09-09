@@ -861,13 +861,16 @@ describe('Copilot agent conversion - real files', () => {
     assert.ok(toolsLine.includes("'read'"), 'Read mapped');
   });
 
-  test('all 18 agents convert without error', () => {
+  test('every gsd-*.md agent file (canonical and .compact.md variants alike) converts without error', () => {
     // Not the shared listAgentFiles() helper: this needs full `.md` filenames
-    // (not stripped basenames) to readFileSync each agent below.
+    // (not stripped basenames) to readFileSync each agent below, and it
+    // deliberately covers .compact.md variant siblings too (#4407) — the
+    // converter has no reason to treat them differently, and a compact
+    // variant that failed to convert would be exactly the kind of defect
+    // this test exists to catch.
     const agents = fs.readdirSync(agentsSrc)
       .filter(f => f.startsWith('gsd-') && f.endsWith('.md'));
-    const expectedAgentCount = listAgentFiles(agentsSrc).length;
-    assert.strictEqual(agents.length, expectedAgentCount, `expected ${expectedAgentCount} agents, got ${agents.length}`);
+    assert.ok(agents.length > 0, 'expected at least one agent file to convert');
 
     for (const agentFile of agents) {
       const content = fs.readFileSync(path.join(agentsSrc, agentFile), 'utf8');
@@ -1358,8 +1361,12 @@ const { throwIfFailed } = require('./helpers/git-fixture.cjs');
 const INSTALL_PATH = path.join(__dirname, '..', 'bin', 'install.js');
 const EXPECTED_SKILLS = fs.readdirSync(path.join(__dirname, '..', 'commands', 'gsd'))
   .filter(f => f.endsWith('.md')).length;
-// Source-roster count (gsd-*.md basenames) — shared helper.
-const EXPECTED_AGENTS = listAgentFiles().length;
+// Installed-FILE count (#4407): every agents/*.md file the full profile stages,
+// including .compact.md variant siblings — deliberately NOT listAgentFiles().length
+// (that counts distinct agent IDENTITIES, excluding variants by design; see its
+// docstring). This assertion is about what actually lands in the manifest.
+const EXPECTED_AGENTS = fs.readdirSync(path.join(__dirname, '..', 'agents'))
+  .filter(f => f.endsWith('.md')).length;
 
 // #3145: class-norm timeouts, not per-suite values — see helpers/timeouts.cjs.
 const { PROBE_TIMEOUT_MS, INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
@@ -1437,43 +1444,22 @@ describe('E2E: Copilot full install verification', () => {
     const agentsDir = path.join(tmpDir, '.github', 'agents');
     const files = fs.readdirSync(agentsDir);
     const gsdAgents = files.filter(f => f.startsWith('gsd-') && f.endsWith('.agent.md')).sort();
-    const expected = [
-      'gsd-advisor-researcher.agent.md',
-      'gsd-ai-researcher.agent.md',
-      'gsd-assumptions-analyzer.agent.md',
-      'gsd-code-fixer.agent.md',
-      'gsd-code-reviewer.agent.md',
-      'gsd-codebase-mapper.agent.md',
-      'gsd-debug-session-manager.agent.md',
-      'gsd-debugger.agent.md',
-      'gsd-doc-classifier.agent.md',
-      'gsd-doc-synthesizer.agent.md',
-      'gsd-doc-verifier.agent.md',
-      'gsd-doc-writer.agent.md',
-      'gsd-dom-verifier.agent.md',
-      'gsd-domain-researcher.agent.md',
-      'gsd-eval-auditor.agent.md',
-      'gsd-eval-planner.agent.md',
-      'gsd-executor.agent.md',
-      'gsd-framework-selector.agent.md',
-      'gsd-integration-checker.agent.md',
-      'gsd-intel-updater.agent.md',
-      'gsd-mempalace-curator.agent.md',
-      'gsd-nyquist-auditor.agent.md',
-      'gsd-pattern-mapper.agent.md',
-      'gsd-phase-researcher.agent.md',
-      'gsd-plan-checker.agent.md',
-      'gsd-planner.agent.md',
-      'gsd-project-researcher.agent.md',
-      'gsd-research-synthesizer.agent.md',
-      'gsd-roadmapper.agent.md',
-      'gsd-security-auditor.agent.md',
-      'gsd-ui-auditor.agent.md',
-      'gsd-ui-checker.agent.md',
-      'gsd-ui-researcher.agent.md',
-      'gsd-user-profiler.agent.md',
-      'gsd-verifier.agent.md',
-    ].sort();
+    // #4407: each canonical agent now installs alongside its .compact.md variant
+    // sibling (both real files on disk — see agents/*.compact.md), so the
+    // expected roster is derived from listAgentFiles() (35 canonical stems)
+    // rather than hand-listed, with each stem's .compact counterpart added
+    // alongside it. A hand-typed 70-entry literal would be exactly the kind of
+    // drift this test exists to catch, one level removed.
+    // Not every agent has a .compact.md source sibling (a few exceed the
+    // hard NEW_FILE_CAP even compacted — see agents/*.compact.md and
+    // .gsd/phase/enhance-4407-agent-skill-seam/40-design.md "Coverage
+    // exception"), so check disk per stem rather than assuming universal
+    // coverage.
+    const expected = listAgentFiles()
+      .flatMap((stem) => fs.existsSync(path.join(__dirname, '..', 'agents', `${stem}.compact.md`))
+        ? [`${stem}.agent.md`, `${stem}.compact.agent.md`]
+        : [`${stem}.agent.md`])
+      .sort();
     assert.deepStrictEqual(gsdAgents, expected);
   });
 

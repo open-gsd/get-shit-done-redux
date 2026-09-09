@@ -32,6 +32,15 @@
  *
  * This module only reads (filesystem + a search of markdown source for
  * literal path substrings). No writes, no network, no git.
+ *
+ * `agents/*.compact.md` (Phase 7, #4407, ADR-4139 stream 2) is a THIRD shape
+ * layered onto this module's roots: registration, protected-content and
+ * size checks apply unchanged, but reachability does not — an agent variant
+ * is reached by a generic, config-driven code construction in
+ * `cmdAgentSkills` (`src/init.cts`), not by a literal path substring named in
+ * markdown prose. `checkReachability`'s markdown-search shape has nothing to
+ * find there, so callers scanning `agents/` skip it and instead assert the
+ * code seam exists once (see `tests/agent-skills-compact-variant.test.cjs`).
  */
 
 const fs = require('node:fs');
@@ -49,6 +58,17 @@ const DEFAULT_VARIANT_ROOTS = [
 const DEFAULT_SEARCH_ROOTS = [
   path.join(__dirname, '..', '..', 'gsd-core', 'workflows'),
 ];
+
+/**
+ * `agents/*.compact.md` root (Phase 7, #4407). Deliberately NOT folded into
+ * `DEFAULT_VARIANT_ROOTS` — `checkReachability`'s markdown-literal-search shape
+ * has nothing to find for an agent variant (reached by a generic code
+ * construction in `cmdAgentSkills`, not a named path in prose), so a caller
+ * that discovers agent pairs through the shared default and then runs
+ * `checkReachability` on them would report false violations. Callers that want
+ * agent pairs pass `[AGENTS_ROOT]` explicitly to `discoverRegisteredVariants`.
+ */
+const AGENTS_ROOT = path.join(__dirname, '..', '..', 'agents');
 
 const COMPACT_SUFFIX = '.compact.md';
 
@@ -284,6 +304,7 @@ function checkSizeSmaller(pairs) {
 module.exports = {
   DEFAULT_VARIANT_ROOTS,
   DEFAULT_SEARCH_ROOTS,
+  AGENTS_ROOT,
   COMPACT_SUFFIX,
   discoverRegisteredVariants,
   checkRegistration,

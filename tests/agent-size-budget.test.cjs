@@ -95,9 +95,20 @@ const ALL_AGENTS = fs.readdirSync(AGENTS_DIR)
   .filter(f => isGsdAgent(f) && f.endsWith('.md'))
   .map(f => f.replace('.md', ''));
 
+// #4407: a `.compact.md` variant is a terser rewrite of its canonical sibling,
+// not a new agent — it belongs to the SAME complexity tier. Stripping the
+// `.compact` suffix before lookup lets e.g. `gsd-planner.compact` inherit
+// `gsd-planner`'s XL tier instead of silently falling through to DEFAULT,
+// which would apply a cap sized for a "focused single-purpose agent" to a
+// compacted rewrite of an XL top-level orchestrator.
+function canonicalStem(agent) {
+  return agent.endsWith('.compact') ? agent.slice(0, -'.compact'.length) : agent;
+}
+
 function capFor(agent) {
-  if (XL_AGENTS.has(agent)) return { tier: 'XL', cap: XL_CAP };
-  if (LARGE_AGENTS.has(agent)) return { tier: 'LARGE', cap: LARGE_CAP };
+  const stem = canonicalStem(agent);
+  if (XL_AGENTS.has(stem)) return { tier: 'XL', cap: XL_CAP };
+  if (LARGE_AGENTS.has(stem)) return { tier: 'LARGE', cap: LARGE_CAP };
   return { tier: 'DEFAULT', cap: DEFAULT_CAP };
 }
 
