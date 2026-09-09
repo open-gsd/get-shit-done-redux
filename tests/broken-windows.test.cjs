@@ -332,6 +332,12 @@ describe('broken-windows: parse/render roundtrip property', () => {
     phase: arbPhase,
     description: arbText,
     status: arbStatus,
+    // #4487: three-way split so the roundtrip property actually exercises
+    // all of "key absent" (pre-#4487 entry), "explicit null" (recorded but
+    // unresolvable), and "a real string" -- these three states must each
+    // survive parse/render identically, which is exactly the distinction
+    // validateEntryShape/renderLedger have to get right.
+    milestoneCase: fc.constantFrom('absent', 'null', 'string'),
   }).map((e) => ({
     id: e.id,
     kind: e.kind,
@@ -343,6 +349,7 @@ describe('broken-windows: parse/render roundtrip property', () => {
     reason: e.status === 'waived' ? 'justified' : '',
     recorded_at: '2026-07-19T00:00:00Z',
     resolved_at: e.status === 'open' ? null : '2026-07-19T01:00:00Z',
+    ...(e.milestoneCase === 'absent' ? {} : { milestone: e.milestoneCase === 'null' ? null : 'v2.0' }),
   }));
 
   const arbLedger = fc.array(arbEntry, { maxLength: 6 }).map((entries) => {
@@ -435,38 +442,50 @@ describe('broken-windows: parseLedger fail-closed', () => {
 // ---------------------------------------------------------------------------
 
 describe('broken-windows: parseLedger backward compatibility for the #4487 milestone field', () => {
-  test('an entry with NO milestone key at all (pre-#4487 shape) parses without error, reading as null', () => {
-    const raw = [
-      '---',
-      'schema_version: 1',
-      'open_count: 1',
-      'waived_count: 0',
-      'fixed_count: 0',
-      'total_count: 1',
-      'last_updated: 2026-01-01T00:00:00.000Z',
-      '---',
-      '',
-      '```json',
-      JSON.stringify([
-        {
-          id: 1,
-          kind: 'stub',
-          phase: '3',
-          file: '',
-          line: null,
-          description: 'old entry',
-          status: 'open',
-          reason: '',
-          recorded_at: '2026-01-01T00:00:00.000Z',
-          resolved_at: null,
-          // deliberately no `milestone` key
-        },
-      ], null, 2),
-      '```',
-      '',
-    ].join('\n');
-    const ledger = parseLedger(raw);
-    assert.equal(ledger.entries[0].milestone, null, 'an entry recorded before this field existed must read as milestone: null, not throw or omit the key');
+  const rawWithNoMilestoneKey = [
+    '---',
+    'schema_version: 1',
+    'open_count: 1',
+    'waived_count: 0',
+    'fixed_count: 0',
+    'total_count: 1',
+    'last_updated: 2026-01-01T00:00:00.000Z',
+    '---',
+    '',
+    '```json',
+    JSON.stringify([
+      {
+        id: 1,
+        kind: 'stub',
+        phase: '3',
+        file: '',
+        line: null,
+        description: 'old entry',
+        status: 'open',
+        reason: '',
+        recorded_at: '2026-01-01T00:00:00.000Z',
+        resolved_at: null,
+        // deliberately no `milestone` key
+      },
+    ], null, 2),
+    '```',
+    '',
+  ].join('\n');
+
+  test('an entry with NO milestone key at all (pre-#4487 shape) parses without error, reading as undefined', () => {
+    const ledger = parseLedger(rawWithNoMilestoneKey);
+    // Not `null`: an explicit null is the "recorded, but unresolvable"
+    // signal appendWindow stamps on NEW entries. A pre-#4487 entry never
+    // recorded anything -- it must read as genuinely absent (`undefined`),
+    // the only representation JSON.stringify will also omit on re-render.
+    assert.equal(ledger.entries[0].milestone, undefined, 'an entry recorded before this field existed must read as milestone: undefined (absent), not null');
+    assert.equal('milestone' in ledger.entries[0], false, 'the key itself must not be materialized for a pre-#4487 entry');
+  });
+
+  test('re-rendering a parsed pre-#4487 entry does not stamp a milestone key into the JSON (no drive-by churn)', () => {
+    const ledger = parseLedger(rawWithNoMilestoneKey);
+    const rendered = renderLedger(ledger);
+    assert.doesNotMatch(rendered, /"milestone"/, 'parsing then re-rendering a legacy entry must not introduce milestone: null noise the entry never had');
   });
 });
 

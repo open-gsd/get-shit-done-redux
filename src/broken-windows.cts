@@ -125,8 +125,12 @@ export interface WindowEntry {
   // value with nothing to distinguish them. Absence (on an entry recorded
   // before this field existed) reads as "recorded before this change" --
   // validateEntryShape below does NOT require this key, so existing ledgers
-  // stay valid with no migration.
-  milestone: string | null;
+  // stay valid with no migration. Optional (not `| null` alone): a genuinely
+  // absent key must survive parseLedger -> renderLedger as absent, not as an
+  // explicit `null`, or every legacy entry picks up permanent JSON noise
+  // the first time ANY entry in the ledger is touched (JSON.stringify drops
+  // an `undefined` property but keeps an explicit `null` one).
+  milestone?: string | null;
 }
 
 /** Input shape for appendWindow — id/status/timestamps are assigned by the fn. */
@@ -628,9 +632,17 @@ function validateEntryShape(e: unknown, i: number): WindowEntry {
     recorded_at: recordedStr,
     resolved_at: resolvedStr,
     // #4487: NOT in `required` above -- an entry recorded before this field
-    // existed has no `milestone` key at all, and that must parse cleanly as
-    // null rather than fail the ledger.
-    milestone: typeof o.milestone === 'string' ? o.milestone : null,
+    // existed has no `milestone` key at all, and that must parse cleanly.
+    // Preserve the absence itself (as `undefined`) rather than collapsing it
+    // to `null`: renderLedger re-serializes this object verbatim, and
+    // JSON.stringify keeps an explicit `null` but drops `undefined` -- so
+    // collapsing absence to null here would stamp every legacy entry with
+    // permanent `"milestone": null` noise the moment the ledger is next
+    // touched. A genuinely-recorded-but-unresolvable milestone (set by
+    // appendWindow) is still an explicit null and round-trips as one.
+    milestone: 'milestone' in o
+      ? (typeof o.milestone === 'string' ? o.milestone : null)
+      : undefined,
   };
 }
 
