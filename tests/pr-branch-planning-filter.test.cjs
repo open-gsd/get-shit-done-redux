@@ -84,6 +84,14 @@ const CONFIG_SCHEMA_MANIFEST_PATH = path.join(
   REPO_ROOT, 'gsd-core', 'bin', 'shared', 'config-schema.manifest.json',
 );
 
+/**
+ * The cherry-pick recipe below runs the REAL create_pr_branch loop
+ * extracted from pr-branch.md against a real git fixture (rev-list,
+ * checkout, cherry-pick) -- genuine git work, not a mocked/trivial
+ * operation. Pre-existing value, unchanged by this migration (#4514).
+ */
+const CHERRY_PICK_RECIPE_TIMEOUT_MS = 30000;
+
 // ── Shared git-fixture primitives (L2 + L4) ────────────────────────────────
 
 function git(args, cwd) {
@@ -379,7 +387,7 @@ describe('#2971 — pr-branch.md planning.pr_strict filter (failing-first)', () 
       const filterPaths = strict ? ['.planning/'] : transientDirs.map((d) => `.planning/${d}/`);
       const script = buildRecipeScript(filterPaths);
       try {
-        const stdout = execFileSync('sh', ['-c', script], { cwd: repoDir, encoding: 'utf8', timeout: 30000 });
+        const stdout = execFileSync('sh', ['-c', script], { cwd: repoDir, encoding: 'utf8', timeout: CHERRY_PICK_RECIPE_TIMEOUT_MS });
         return { status: 0, stdout, stderr: '' };
       } catch (err) {
         return {

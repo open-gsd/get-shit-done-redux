@@ -34,6 +34,7 @@ const { generateSlugInternal } = require(path.join(ROOT, 'gsd-core', 'bin', 'lib
 const { getPhaseDirFromPhaseId } = require(path.join(ROOT, 'gsd-core', 'bin', 'lib', 'phase-id.cjs'));
 const { slugify: qaSmellRatchetSlugify } = require(path.join(ROOT, 'scripts', 'qa-smell-ratchet.cjs'));
 const { createTempDir, cleanup } = require('./helpers.cjs');
+const { QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const { splitLines } = require(path.join(ROOT, 'gsd-core', 'bin', 'lib', 'text-lines.cjs'));
 const { MAX_REGEX_LITERAL_LEN, resetRegexScanStats, getRegexScanStats } = require(path.join(ROOT, 'scripts', 'lib', 'drift-scan.cjs'));
 
@@ -439,7 +440,7 @@ describe('CLI (main()) — the process.exitCode/stderr surface scanRepo alone do
 
     const res = spawnSync(process.execPath, [path.join(tmpRoot, 'scripts', 'lint-slug-derivation-drift.cjs')], {
       encoding: 'utf8',
-      timeout: 10000,
+      timeout: QUICK_SPAWN_TIMEOUT_MS,
     });
 
     assert.equal(res.status, 1, 'main() must set a non-zero process.exitCode when a violation is found');
@@ -470,7 +471,7 @@ describe('CLI (main()) — the process.exitCode/stderr surface scanRepo alone do
 
     const res = spawnSync(process.execPath, [path.join(tmpRoot, 'scripts', 'lint-slug-derivation-drift.cjs')], {
       encoding: 'utf8',
-      timeout: 10000,
+      timeout: QUICK_SPAWN_TIMEOUT_MS,
     });
 
     assert.equal(res.status, 0);

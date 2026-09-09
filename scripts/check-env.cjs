@@ -30,7 +30,17 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const { ExitError, runMain } = require('./lib/cli-exit.cjs');
+const { describeNpmVersionCheckFailure } = require('./lib/npm-version-check-diagnosis.cjs');
 
+// #4460 follow-up: check-env.cjs runs as its own standalone CI step BEFORE
+// `npm ci` / `npm run build:lib` (a deliberate pre-flight, run before there
+// is even a node_modules to build with) -- confirmed the hard way, by a
+// MODULE_NOT_FOUND crash on every real CI platform after a first attempt at
+// this fix routed the npm-version check through the canonical execNpm seam
+// (gsd-core/bin/lib/shell-command-projection.cjs), a tsc-compiled artifact
+// that plain does not exist yet at that point in the pipeline. This file
+// must stay self-contained: no requires reaching into gsd-core/bin/lib.
+//
 // On Windows, npm ships as npm.cmd (a batch wrapper); spawnSync without
 // shell:true requires the exact filename including extension.
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -180,18 +190,33 @@ function main() {
   // Check 2: npm version vs engines.npm (skip if field absent)
   // ---------------------------------------------------------------------------
   const enginesNpm = pkgField('engines.npm', PROJECT_ROOT);
-  let currentNpm = '';
-  try {
-    const res = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: 10_000, shell: process.platform === 'win32' });
-    if (res.status === 0 && res.stdout) {
-      currentNpm = res.stdout.trim();
-    }
-  } catch { /* ignore */ }
+  // #4460: 15_000ms, not the original 10_000 -- matches the default this
+  // repo's canonical (but here unusable, see the file-header note above)
+  // execNpm seam already uses for npm subprocess calls generally, rather
+  // than inventing a new number. Confirmed via real Windows CI: a 10s
+  // window was insufficient twice under ~51-file concurrent test load.
+  const NPM_VERSION_TIMEOUT_MS = 15_000;
+  const npmVersionSpawn = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: NPM_VERSION_TIMEOUT_MS, shell: process.platform === 'win32' });
+  const npmVersionResult = {
+    exitCode: npmVersionSpawn.status ?? 1,
+    stdout: (npmVersionSpawn.stdout || '').toString().trim(),
+    signal: npmVersionSpawn.signal ?? null,
+    error: npmVersionSpawn.error ?? null,
+    // Canonical cross-platform timeout predicate (matches this repo's
+    // execNpm/isSpawnTimeout convention, src/shell-command-projection.cts):
+    // error.code === 'ETIMEDOUT', which Node's spawnSync guarantees when its
+    // own `timeout` option fires. Checking `signal === 'SIGTERM'` instead
+    // (what an earlier version of this fix did) is platform-fragile -- that
+    // module's own docstring flags a Windows-specific false-negative risk,
+    // the exact platform this bug was discovered on.
+    timedOut: (npmVersionSpawn.error && npmVersionSpawn.error.code === 'ETIMEDOUT') === true,
+  };
+  const currentNpm = npmVersionResult.exitCode === 0 && npmVersionResult.stdout ? npmVersionResult.stdout : '';
 
   if (!enginesNpm) {
     addCheck('npm-version', 'skip', 'engines.npm not set in package.json — skipping');
   } else if (!currentNpm) {
-    addCheck('npm-version', 'fail', 'npm binary not found on PATH');
+    addCheck('npm-version', 'fail', describeNpmVersionCheckFailure(npmVersionResult));
   } else {
     if (satisfiesConstraint(currentNpm, enginesNpm)) {
       addCheck('npm-version', 'pass', `npm ${currentNpm} satisfies ${enginesNpm}`);

@@ -27,7 +27,16 @@ const NODE   = process.execPath;
 const { cleanup } = require('./helpers.cjs');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 // #3145: class-norm timeout, not a per-suite value — see helpers/timeouts.cjs.
-const { GIT_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+const { GIT_TIMEOUT_MS, QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+/**
+ * The real ci-rebase-check.cjs script run below (fetch+merge against a real
+ * git fixture remote) is heavier than a QUICK_SPAWN_TIMEOUT_MS-class call —
+ * it does real git network/merge work, not a trivial mocked/in-process
+ * operation. Kept as its own pre-existing value, unchanged by this
+ * migration (#4514).
+ */
+const CI_REBASE_SCRIPT_TIMEOUT_MS = 20000;
 
 // ---------------------------------------------------------------------------
 // Helper: run a small inline Node snippet that requires the run() helper
@@ -54,7 +63,7 @@ function evalRunHelper(stmts) {
     }
     ${stmts}
   `;
-  const r = spawnSync(NODE, ['-e', code], { encoding: 'utf8', timeout: 10_000 });
+  const r = spawnSync(NODE, ['-e', code], { encoding: 'utf8', timeout: QUICK_SPAWN_TIMEOUT_MS });
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
@@ -157,7 +166,7 @@ describe('ci-rebase-check: fetch-retry loop resolves when git fetch succeeds', (
       const r = spawnSync(NODE, [SCRIPT], {
         cwd:      workDir,
         encoding: 'utf8',
-        timeout:  20_000,
+        timeout:  CI_REBASE_SCRIPT_TIMEOUT_MS,
         env: {
           ...process.env,
           GITHUB_BASE_REF:    'main',
