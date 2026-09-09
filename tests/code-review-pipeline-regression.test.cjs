@@ -2569,11 +2569,17 @@ describe('#3861 round 2 — the shell-sharing guard, EXECUTED', () => {
 // looks like it covers exactly that surface — the green was structurally incapable of turning red
 // for it. The emitter now lives in the fence (see the step file), so the harness reads the fence's
 // own stdout and nothing is synthesized here.
-function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode, phaseNumber }) {
+// `plantDir` stands a DIRECTORY at the review path. It is the root-immune half of the
+// unreadable-review contract: the fence's guard is `[ -f "$REVIEW_FILE" ] && [ -r ... ]`,
+// and only the `-r` leg is defeated by running as root. A directory fails the `-f` leg on
+// every lane and euid, so it reaches the same non-reporting arm without depending on
+// permission bits at all. See the two tests at the end of this describe.
+function runShippedGateCounts({ reviewText, padded = '01', writeReview = true, mode, phaseNumber, plantDir = false }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-3861-'));
   try {
     const reviewPath = path.join(dir, padded + '-REVIEW.md');
-    if (writeReview) fs.writeFileSync(reviewPath, reviewText);
+    if (plantDir) fs.mkdirSync(reviewPath);
+    else if (writeReview) fs.writeFileSync(reviewPath, reviewText);
     if (mode !== undefined) fs.chmodSync(reviewPath, mode);
     const fence = bashFences(fs.readFileSync(DISPOSITION_STEP_PATH, 'utf8'))[0];
     assert.ok(fence && fence.includes('REVIEW_COUNTS_OK'), 'the counts block must still be the first fence');
@@ -2921,10 +2927,42 @@ describe('#3861 round 1 — the counts mirror is asserted against the shipped sh
       'all four present and consistent is what the breakdown arm requires');
   });
 
-  test('an unreadable REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
+  // The guard this pair covers is `[ -f "$REVIEW_FILE" ] && [ -r "$REVIEW_FILE" ]`, and the two
+  // legs need different fixtures because only one of them survives root.
+  //
+  // `chmod 0o000` does NOT make a file unreadable to root: root bypasses POSIX read permission
+  // bits, so `[ -r ]` stays true, the fence reads the fixture, and the assertion below sees the
+  // real breakdown instead of silence. That is not hypothetical here — the bench runs this suite
+  // as root under Docker, where this test failed with
+  //   actual: 'Code review: 4 findings — 1 critical, 2 warning, 1 info.\n...'
+  // against an expected ''. CLAUDE.md names the mode-bit trick as the wrong tool for injecting an
+  // IO failure, and the usual remedy — monkeypatch the read to throw EACCES — does not reach this
+  // site: the read is performed by a spawned `bash`, not by this process, so stubbing node's `fs`
+  // is not on the code path at all.
+  //
+  // So the `-r` leg keeps the mode-bit fixture and declares the lanes it cannot bind on, exactly
+  // as tests/plan-review-convergence.test.cjs does for its own shell-side `-r` arm, and the `-f`
+  // leg below carries the contract on every lane INCLUDING root. Skipping the first without
+  // adding the second would have traded a false failure for lost coverage.
+  const SKIP_MODE_BITS = !HAS_BASH
+    ? 'POSIX-only bash fragment'
+    : typeof process.getuid === 'function' && process.getuid() === 0
+      ? 'root bypasses the read permission bit'
+      : false;
+
+  test('an unreadable REVIEW.md leaves the counts empty and does not abort', { skip: SKIP_MODE_BITS }, () => {
     const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS, mode: 0o000 });
     assert.strictEqual(shipped.exitCode, 0, 'advisory: an unreadable review must not abort the step');
     assert.strictEqual(shipped.stdout, '', 'an unreadable review reports nothing, and does not guess');
+  });
+
+  // Root-immune companion: a directory fails `-f` for every euid, so this binds on the bench lane
+  // where the test above is skipped. Same arm, same observable — silence and a zero exit.
+  test('a directory standing in for REVIEW.md leaves the counts empty and does not abort', { skip: !HAS_BASH }, () => {
+    const shipped = runShippedGateCounts({ reviewText: REVIEW_WITH_FINDINGS, plantDir: true });
+    assert.strictEqual(shipped.exitCode, 0, 'advisory: a non-regular review path must not abort the step');
+    assert.strictEqual(shipped.stdout, '', 'a review path that is not a regular file reports nothing, and does not guess');
+    assert.strictEqual(readGateMessage(shipped.stdout).reported, false);
   });
 });
 
