@@ -205,15 +205,18 @@ describe('#4465: undo commit selection is bounded', () => {
     // Two guards, one per mode — a single one would leave the other selecting.
     const guards = extractBashBlocks(content).filter(
       (b) => /PHASE_DIR_ARCHIVED=""/.test(b)
-        && /\*\/milestones\/v\*-phases\/\*\|milestones\/v\*-phases\/\*/.test(b),
+        && /\*\/milestones\/v\[0-9\]\*-phases\/\*\|milestones\/v\[0-9\]\*-phases\/\*/.test(b),
     );
     assert.equal(guards.length, 2,
       `undo.md must refuse an archived resolution in BOTH modes; found ${guards.length} guard(s)`);
     // The same fence carries the reused-path collision check: an archived twin of a LIVE
     // directory name means the anchor belongs to the earlier occupant.
     for (const g of guards) {
-      assert.ok(/PHASE_DIR_REUSED=""/.test(g) && /milestones\/v\*-phases\//.test(g),
-        `each guard fence must also refuse a reused directory name (#4465):\n${g}`);
+      const code = g.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+      assert.ok(/PHASE_DIR_REUSED=""/.test(code) && /milestones\/v\[0-9\]\*-phases\//.test(code),
+        `each guard fence must also refuse a reused directory name (#4465):\n${code}`);
+      assert.ok(/\[ -d "\$_arch" \]/.test(code),
+        `the collision check must require a DIRECTORY, not any entry (#4465):\n${code}`);
     }
     // The pattern must key on the ARCHIVE LAYOUT. A bare `*/milestones/*` also matches a
     // workstream or project legitimately named `milestones` and refuses a LIVE phase.
@@ -548,6 +551,64 @@ describe('#4465: undo commit selection — executed against a git fixture', { sk
       'echo "REUSED=[${PHASE_DIR_REUSED}]"');
     assert.ok(out.includes('REUSED=[]'), `a distinct slug must not collide; got:\n${out}`);
     assert.deepEqual(subjects(out.replace(/REUSED=.*\n?/, '')), ['feat(03-01): add beta feature flag']);
+  });
+
+  test('the collision guard needs a real archived DIRECTORY, not merely an entry', (t) => {
+    // `-e` would accept a stray regular file and block a legitimate undo. The evidence the
+    // refusal claims is "this path was used by an earlier milestone", and only a directory
+    // is that. Round-2 audit finding.
+    const cwd = createTempGitProject('gsd-4465-file-twin-');
+    t.after(() => cleanup(cwd));
+    seedPhase(cwd, '06-live', { '06-01-PLAN.md': '# live\n' });
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'v1.0-phases'), { recursive: true });
+    // A FILE where an archived phase directory would sit.
+    fs.writeFileSync(path.join(cwd, '.planning', 'milestones', 'v1.0-phases', '06-live'), 'not a dir\n');
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(06-01): live plan'], { cwd });
+    commitFile(cwd, 'src/f.js', 'f\n', 'feat(06-01): live work');
+    const out = runFences(cwd, 'TARGET_PHASE=06',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'echo "REUSED=[${PHASE_DIR_REUSED}]"');
+    assert.ok(out.includes('REUSED=[]'), `a regular file is not an archived phase dir; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/REUSED=.*\n?/, '')), [
+      'feat(06-01): live work',
+      'docs(06-01): live plan',
+    ], 'the undo must still work');
+  });
+
+  test('the collision guard mirrors the resolver: a malformed milestone dir does not refuse', (t) => {
+    // cmdFindPhase only admits /^v\d+.*-phases$/, so `vnondigit-phases` is not a milestone
+    // it would ever resolve. A broader glob here refuses over evidence the producer rejects.
+    const cwd = createTempGitProject('gsd-4465-malformed-');
+    t.after(() => cleanup(cwd));
+    seedPhase(cwd, '05-live', { '05-01-PLAN.md': '# live\n' });
+    fs.mkdirSync(path.join(cwd, '.planning', 'milestones', 'vnondigit-phases', '05-live'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.planning', 'milestones', 'vnondigit-phases', '05-live', 'x.md'), 'x\n');
+    gitOrThrow(['add', '-A'], { cwd });
+    gitOrThrow(['commit', '-q', '-m', 'docs(05-01): live plan'], { cwd });
+    commitFile(cwd, 'src/m.js', 'm\n', 'feat(05-01): live work');
+    const out = runFences(cwd, 'TARGET_PHASE=05',
+      [phaseResolve, phaseArchivedGuard, phaseAnchor, phaseSelect],
+      'echo "REUSED=[${PHASE_DIR_REUSED}]"');
+    assert.ok(out.includes('REUSED=[]'),
+      `vnondigit-phases is not a milestone cmdFindPhase resolves; got:\n${out}`);
+    assert.deepEqual(subjects(out.replace(/REUSED=.*\n?/, '')), [
+      'feat(05-01): live work',
+      'docs(05-01): live plan',
+    ]);
+  });
+
+  test('the reused-path refusal can still name the live path it declined', (t) => {
+    // The fence blanks PHASE_DIR, so the message must read the preserved copy — otherwise it
+    // renders "resolves to , but ...". Round-2 audit finding.
+    const cwd = reusedSlugFixture();
+    t.after(() => cleanup(cwd));
+    const out = runFences(cwd, 'TARGET_PHASE=03',
+      [phaseResolve, phaseArchivedGuard],
+      'printf "LIVE=[%s]\\nPHASE_DIR=[%s]\\n" "$PHASE_DIR_LIVE" "$PHASE_DIR"');
+    assert.ok(out.includes('LIVE=[.planning/phases/03-auth]'),
+      `the declined live path must survive for the message; got:\n${out}`);
+    assert.ok(out.includes('PHASE_DIR=[]'), `PHASE_DIR must still be blanked; got:\n${out}`);
   });
 
   test('the guard keys on the archive LAYOUT: a workstream named "milestones" is still live', (t) => {

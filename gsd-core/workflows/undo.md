@@ -117,21 +117,31 @@ fails closed:
 # so no path reaches selection even if this refusal's prose is not honored.
 PHASE_DIR_ARCHIVED=""
 case "${PHASE_DIR}" in
-  */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
+  */milestones/v[0-9]*-phases/*|milestones/v[0-9]*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
 esac
 # A LIVE path can still be a previous occupant's. `--diff-filter=A` does not follow renames,
 # so a later milestone re-creating the same literal directory anchors on the OLDER milestone's
 # add. Nothing is under milestones/ to refuse -- find-phase returned the live dir -- so key on
 # the collision instead: the same basename present under an archived milestone means this path
 # has been used before and the anchor cannot be trusted. Fail closed; `--last N` is the route.
-PHASE_DIR_REUSED=""
+PHASE_DIR_REUSED=""; PHASE_DIR_LIVE=""
 if [ -n "${PHASE_DIR}" ]; then
   _pd_base=$(basename "${PHASE_DIR}")
   _pd_root=${PHASE_DIR%/phases/*}
-  for _arch in "${_pd_root}"/milestones/v*-phases/"${_pd_base}"; do
-    [ -e "$_arch" ] || continue
-    PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
-  done
+  # The suffix strip must actually have fired. A path with no `/phases/` segment is not a
+  # live phase directory this resolver produces, and scanning its own subtree would look in
+  # the wrong place while reading as a clean pass.
+  if [ "$_pd_root" != "${PHASE_DIR}" ]; then
+    for _arch in "${_pd_root}"/milestones/v[0-9]*-phases/"${_pd_base}"; do
+      # `-d`, not `-e`: only a real archived phase DIRECTORY is evidence of prior use, and a
+      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` mirrors
+      # cmdFindPhase's own /^v\d+.*-phases$/ filter, so a malformed sibling cannot trigger a
+      # refusal over a directory the resolver would never have returned. An unmatched glob
+      # stays literal and fails `-d`, which is why no nullglob is needed.
+      [ -d "$_arch" ] || continue
+      PHASE_DIR_LIVE="${PHASE_DIR}"; PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
+    done
+  fi
 fi
 ```
 
@@ -144,7 +154,7 @@ Use /gsd:undo --last N and select commits explicitly.
 ```
 And if `PHASE_DIR_REUSED` is non-empty, stop with its own message:
 ```
-Phase ${TARGET_PHASE} resolves to ${PHASE_DIR}, but that directory name is also archived
+Phase ${TARGET_PHASE} resolves to ${PHASE_DIR_LIVE}, but that directory name is also archived
 at ${PHASE_DIR_REUSED}. Refusing: the first commit adding this path belongs to the earlier
 occupant, so the window would open there and select that milestone's commits too.
 Use /gsd:undo --last N and select commits explicitly.
@@ -213,21 +223,31 @@ PHASE_DIR=$(gsd_run query find-phase "${PLAN_PHASE}" --raw 2>/dev/null)
 # fail-closed rule below load-bearing.
 PHASE_DIR_ARCHIVED=""
 case "${PHASE_DIR}" in
-  */milestones/v*-phases/*|milestones/v*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
+  */milestones/v[0-9]*-phases/*|milestones/v[0-9]*-phases/*) PHASE_DIR_ARCHIVED="${PHASE_DIR}"; PHASE_DIR="" ;;
 esac
 # A LIVE path can still be a previous occupant's. `--diff-filter=A` does not follow renames,
 # so a later milestone re-creating the same literal directory anchors on the OLDER milestone's
 # add. Nothing is under milestones/ to refuse -- find-phase returned the live dir -- so key on
 # the collision instead: the same basename present under an archived milestone means this path
 # has been used before and the anchor cannot be trusted. Fail closed; `--last N` is the route.
-PHASE_DIR_REUSED=""
+PHASE_DIR_REUSED=""; PHASE_DIR_LIVE=""
 if [ -n "${PHASE_DIR}" ]; then
   _pd_base=$(basename "${PHASE_DIR}")
   _pd_root=${PHASE_DIR%/phases/*}
-  for _arch in "${_pd_root}"/milestones/v*-phases/"${_pd_base}"; do
-    [ -e "$_arch" ] || continue
-    PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
-  done
+  # The suffix strip must actually have fired. A path with no `/phases/` segment is not a
+  # live phase directory this resolver produces, and scanning its own subtree would look in
+  # the wrong place while reading as a clean pass.
+  if [ "$_pd_root" != "${PHASE_DIR}" ]; then
+    for _arch in "${_pd_root}"/milestones/v[0-9]*-phases/"${_pd_base}"; do
+      # `-d`, not `-e`: only a real archived phase DIRECTORY is evidence of prior use, and a
+      # stray regular file must not block a legitimate undo. `v[0-9]*-phases` mirrors
+      # cmdFindPhase's own /^v\d+.*-phases$/ filter, so a malformed sibling cannot trigger a
+      # refusal over a directory the resolver would never have returned. An unmatched glob
+      # stays literal and fails `-d`, which is why no nullglob is needed.
+      [ -d "$_arch" ] || continue
+      PHASE_DIR_LIVE="${PHASE_DIR}"; PHASE_DIR_REUSED="$_arch"; PHASE_DIR=""; break
+    done
+  fi
 fi
 PHASE_START=$(git log --format="%H" --diff-filter=A -- "${PHASE_DIR}" 2>/dev/null | tail -1)
 UNDO_RANGE=""
