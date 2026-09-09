@@ -28,17 +28,18 @@ const { runNode, OUTCOME } = require('./helpers/process-seam.cjs');
 // gate. Those tests monkeypatch fs rather than drive a subprocess.
 const { readPhaseScope } = require('../gsd-core/bin/lib/check-command-router.cjs');
 const { escapeRegex } = require('../gsd-core/bin/lib/pattern.cjs');
+const { isQualifiedPhaseArg } = require('../gsd-core/bin/lib/phase-locator.cjs');
 
 const TOOLS_PATH = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
 
-function runTools(args, cwd) {
+function runTools(args, cwd, env = {}) {
   const argv = Array.isArray(args)
     ? args
     : (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [])
         .map((t) => t.replace(/"([^"]*)"/g, '$1').replace(/'([^']*)'/g, '$1'));
   const r = runNode([TOOLS_PATH, ...argv], {
     cwd,
-    env: { ...process.env, ...TEST_ENV_BASE },
+    env: { ...process.env, ...TEST_ENV_BASE, ...env },
     timeoutMs: 60000,
   });
   if (r.outcome === OUTCOME.EXITED && r.exitCode === 0) {
@@ -139,6 +140,75 @@ describe('api-coverage.verify-pre — seal contract (#1562 acceptance #1,#2,#4,#
     phaseDir = makePhaseDir(tmpDir, '01-pay');
     return phaseDir;
   }
+
+  test('#4498 a qualified directory wins over the active workstream phase with the same number', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const activePhase = path.join(tmpDir, '.planning', 'workstreams', 'active', 'phases', '14-api');
+    const requestedPhase = path.join(tmpDir, '.planning', 'workstreams', 'requested', 'phases', '14-api');
+    fs.mkdirSync(activePhase, { recursive: true });
+    fs.mkdirSync(requestedPhase, { recursive: true });
+    writePlan(activePhase, '14-PLAN.md', '# Plan\nIntegrate the Stripe API.');
+    writePlan(requestedPhase, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runTools(
+      ['check', 'api-coverage.verify-pre', requestedPhase, '--raw'],
+      tmpDir,
+      { GSD_WORKSTREAM: 'active' },
+    );
+    assert.ok(r.success, r.error);
+    const result = JSON.parse(r.output);
+    assert.strictEqual(result.block, false, 'the exact requested phase is non-API');
+    assert.strictEqual(result.detected, false);
+  });
+
+  test('#4498 a bare token honors an explicit --ws scope', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const activePhase = path.join(tmpDir, '.planning', 'workstreams', 'active', 'phases', '14-api');
+    const requestedPhase = path.join(tmpDir, '.planning', 'workstreams', 'requested', 'phases', '14-api');
+    fs.mkdirSync(activePhase, { recursive: true });
+    fs.mkdirSync(requestedPhase, { recursive: true });
+    writePlan(activePhase, '14-PLAN.md', '# Plan\nIntegrate the Stripe API.');
+    writePlan(requestedPhase, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runTools(
+      ['check', 'api-coverage.verify-pre', '14', '--ws', 'requested', '--raw'],
+      tmpDir,
+      { GSD_WORKSTREAM: 'active' },
+    );
+    assert.ok(r.success, r.error);
+    assert.strictEqual(JSON.parse(r.output).block, false);
+  });
+
+  test('#4498 a qualified archived phase directory is accepted', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const archived = path.join(tmpDir, '.planning', 'milestones', 'v1.0-phases', '14-api');
+    fs.mkdirSync(archived, { recursive: true });
+    writePlan(archived, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runGate(tmpDir, archived);
+    assert.ok(r.success, r.error);
+    assert.strictEqual(JSON.parse(r.output).block, false);
+  });
+
+  test('#4498 a qualified directory with a non-phase shape fails closed', () => {
+    tmpDir = makeProject({ api_coverage_gate: true });
+    const invalid = path.join(tmpDir, '.planning', 'scratch', '14-api');
+    fs.mkdirSync(invalid, { recursive: true });
+    writePlan(invalid, '14-PLAN.md', '# Plan\nRefactor the local parser.');
+
+    const r = runGate(tmpDir, invalid);
+    assert.ok(r.success, r.error);
+    const result = JSON.parse(r.output);
+    assert.strictEqual(result.block, true);
+    assert.strictEqual(result.phase_lookup_failed, true);
+  });
+
+  test('#4498 qualification recognizes POSIX, relative, and Windows path forms', () => {
+    assert.strictEqual(isQualifiedPhaseArg('14-api'), false);
+    assert.strictEqual(isQualifiedPhaseArg('workstreams/requested/phases/14-api'), true);
+    assert.strictEqual(isQualifiedPhaseArg('/repo/.planning/phases/14-api'), true);
+    assert.strictEqual(isQualifiedPhaseArg('C:\\repo\\.planning\\phases\\14-api'), true);
+  });
 
   test('#1 API phase without a matrix → BLOCKS the seal', () => {
     fresh();

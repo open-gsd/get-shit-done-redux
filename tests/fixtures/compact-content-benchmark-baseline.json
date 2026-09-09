@@ -18,9 +18,9 @@
       "reductionPct": 16.51
     },
     "execute-phase": {
-      "offTokens": 25631,
-      "onTokens": 23380,
-      "reductionPct": 8.78
+      "offTokens": 25759,
+      "onTokens": 23508,
+      "reductionPct": 8.74
     },
     "new-project": {
       "offTokens": 14112,
@@ -33,14 +33,14 @@
       "reductionPct": 11.9
     },
     "verify-work": {
-      "offTokens": 12112,
-      "onTokens": 10139,
-      "reductionPct": 16.29
+      "offTokens": 12241,
+      "onTokens": 10268,
+      "reductionPct": 16.12
     }
   },
   "aggregate": {
-    "offTokens": 106923,
-    "onTokens": 90275,
-    "reductionPct": 15.57
+    "offTokens": 107180,
+    "onTokens": 90532,
+    "reductionPct": 15.53
   }
 }
