@@ -9,6 +9,18 @@ const {
   CONFIG_LOCATION_ENV_KEYS,
   scrubConfigLocationEnv,
 } = require('./helpers.cjs');
+const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+/**
+ * A cold `node -e` require-probe in this file (not the shared
+ * `PROBE_TIMEOUT_MS` class — that constant is 15000ms and consolidating
+ * onto it would silently halve this file's pre-existing bound, a real
+ * behavior change a rename-only migration must not make). The comment at
+ * each use site already documents the observed duration as sub-second, so
+ * 30000ms leaves ~30x headroom. Pre-existing value, unchanged by this
+ * migration.
+ */
+const COLD_REQUIRE_PROBE_TIMEOUT_MS = 30000;
 
 describe('#2665: the built-lib require is deferred', () => {
   // The scrub set derives from gsd-core/bin/lib, which is BUILT. Requiring it at
@@ -24,9 +36,9 @@ describe('#2665: the built-lib require is deferred', () => {
       "const needle = path.join('gsd-core', 'bin', 'lib', 'capability-registry.cjs');",
       'process.stdout.write(String(Object.keys(require.cache).some((m) => m.endsWith(needle))));',
     ].join('\n');
-    // Bounded per local/no-unbounded-spawn (#3143): a cold require is sub-second,
-    // so 30s is ~30x headroom and still fails loudly instead of hanging a lane.
-    const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8', timeout: 30_000 });
+    // Bounded per local/no-unbounded-spawn (#3143): a cold require is sub-second, so
+    // COLD_REQUIRE_PROBE_TIMEOUT_MS leaves ~30x headroom and fails loudly instead of hanging a lane.
+    const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8', timeout: COLD_REQUIRE_PROBE_TIMEOUT_MS });
     assert.strictEqual(r.status, 0, `probe failed: ${r.stderr}`);
     return r.stdout === 'true';
   };
@@ -339,7 +351,8 @@ describe('#2665 round 4: the skillsHome walk is reversion-sensitive', () => {
       cwd: __dirname,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 30_000,
+      // Same class as the probe above (#2665) — see COLD_REQUIRE_PROBE_TIMEOUT_MS's own comment.
+      timeout: COLD_REQUIRE_PROBE_TIMEOUT_MS,
     });
     void out; // exit 0 is the assertion; execFileSync throws on nonzero
   });
@@ -406,7 +419,7 @@ describe('#3156: a raw installer spawn cannot write into the ambient HOME', () =
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: installerEnv(),
-        timeout: 120_000,
+        timeout: INSTALL_TIMEOUT_MS,
       });
 
       assert.ok(!fs.existsSync(path.join(canaryHome, '.gsd')),
@@ -432,6 +445,14 @@ describe('#3712: a raw installer spawn cannot reach the ambient HOME\'s shared s
   const { cleanup } = require('./helpers.cjs');
   const { installerEnv } = require('./helpers/install-shared.cjs');
   const INSTALL_PATH = path.join(__dirname, '..', 'bin', 'install.js');
+  /**
+   * A GLOBAL codex install additionally walks and copies the shared skills
+   * tree across the ambient-HOME boundary (#3712) on top of a normal
+   * install run, so it keeps a larger cap than INSTALL_TIMEOUT_MS. No fresh
+   * bench measurement justifies a new number here; the existing multiple is
+   * preserved rather than re-guessed on migration.
+   */
+  const INSTALL_GLOBAL_TIMEOUT_MS = INSTALL_TIMEOUT_MS * 2.5;
 
   // #3156's canary asserts on <canaryHome>/.gsd. That is not the only ambient-HOME
   // surface: a kind may declare a global `home` override resolved from os.homedir()
@@ -480,7 +501,7 @@ describe('#3712: a raw installer spawn cannot reach the ambient HOME\'s shared s
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
         env: installerEnv(),
-        timeout: 300_000,
+        timeout: INSTALL_GLOBAL_TIMEOUT_MS,
       });
 
       assert.strictEqual(inventory(), before,
