@@ -1099,6 +1099,12 @@ let savedHome;
 let savedUserProfile;
 let restoreConfigEnv;
 
+/**
+ * Runs the real verify-reapply-patches.cjs CLI against patches+config
+ * fixture dirs. Pre-existing value, unchanged by this migration (#4514).
+ */
+const VERIFY_REAPPLY_TIMEOUT_MS = 60000;
+
 function writeFile(absPath, content) {
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, content);
@@ -1110,7 +1116,7 @@ function runVerifier() {
     '--patches-dir', patchesDir,
     '--config-dir', configDir,
     '--json',
-  ], { timeoutMs: 60_000 });
+  ], { timeoutMs: VERIFY_REAPPLY_TIMEOUT_MS });
   return {
     status: r.exitCode,
     report: r.stdout && r.stdout.length ? JSON.parse(r.stdout) : null,
@@ -1238,6 +1244,14 @@ function resetFixture() {
   fs.mkdirSync(pristineDir);
 }
 
+/**
+ * Runs the real verify-reapply-patches.cjs CLI against patches+config+
+ * pristine fixture dirs -- a distinct describe-block scope from the other
+ * runVerifier() above (different fixture, different pre-existing budget).
+ * Pre-existing value, unchanged by this migration (#4514).
+ */
+const VERIFY_REAPPLY_PRISTINE_TIMEOUT_MS = 30000;
+
 function runVerifier() {
   const r = runNode([
     SCRIPT,
@@ -1245,7 +1259,7 @@ function runVerifier() {
     '--config-dir',  configDir,
     '--pristine-dir', pristineDir,
     '--json',
-  ], { timeoutMs: 30_000 });
+  ], { timeoutMs: VERIFY_REAPPLY_PRISTINE_TIMEOUT_MS });
   return {
     status: r.exitCode,
     report: r.stdout && r.stdout.length ? JSON.parse(r.stdout) : null,

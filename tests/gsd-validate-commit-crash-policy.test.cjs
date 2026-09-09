@@ -31,6 +31,17 @@ const path = require('node:path');
 const { createTempDir, cleanup, TEST_ENV_BASE } = require('./helpers.cjs');
 const { runHook, OUTCOME } = require('./helpers/process-seam.cjs');
 
+/**
+ * gsd-validate-commit.sh is invoked via bash and internally fans out to
+ * nested `node -e` calls (the classifier/config-read/JSON-extraction
+ * sites this file's own header docblock describes) -- conceptually the
+ * same shape `HOOK_FANOUT_TIMEOUT_MS` (60000ms) describes, but this hook
+ * sits at a much lighter pre-existing value. Not reclassified/raised: no
+ * bench citation exists for whether this specific hook needs more.
+ * Pre-existing value, unchanged by this migration (#4514).
+ */
+const VALIDATE_COMMIT_HOOK_TIMEOUT_MS = 15000;
+
 const HOOK_PATH = path.join(__dirname, '..', 'hooks', 'gsd-validate-commit.sh');
 
 const CONFORMING_COMMIT_PAYLOAD = JSON.stringify({
@@ -94,7 +105,7 @@ function runValidateCommit({ payload, cwd, env } = {}) {
     cwd,
     env: { ...process.env, ...TEST_ENV_BASE, ...env },
     input: payload,
-    timeoutMs: 15000,
+    timeoutMs: VALIDATE_COMMIT_HOOK_TIMEOUT_MS,
   });
 }
 

@@ -4980,6 +4980,7 @@ const path = require('node:path');
 const { cleanup } = require('./helpers.cjs');
 const { runHook: seamRunHook } = require('./helpers/process-seam.cjs');
 const { gitOrThrow } = require('./helpers/git-fixture.cjs');
+const { QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const HOOK_PATH = path.join(__dirname, '..', 'hooks', 'gsd-worktree-path-guard.js');
 const INSTALL_SRC = path.join(__dirname, '..', 'bin', 'install.js');
@@ -5036,15 +5037,17 @@ function makeWorktree(mainRepo, branchName) {
  * Run the hook with a given payload, returning the spawnSync result.
  */
 function runHook(cwd, payload) {
-  // 10000ms: previously UNBOUNDED (no `timeout` option passed to spawnSync).
-  // gsd-worktree-path-guard.js is a synchronous, in-process path-guard hook
-  // (fs/path checks against a JSON stdin payload) — no subprocess or network
-  // work of its own. 10s leaves generous headroom over its sub-second
-  // worst case even on a heavily contended CI runner.
+  // QUICK_SPAWN_TIMEOUT_MS (10000ms): previously UNBOUNDED (no `timeout`
+  // option passed to spawnSync). gsd-worktree-path-guard.js is a
+  // synchronous, in-process path-guard hook (fs/path checks against a JSON
+  // stdin payload) — no subprocess or network work of its own. 10s leaves
+  // generous headroom over its sub-second worst case even on a heavily
+  // contended CI runner. See tests/helpers/timeouts.cjs for the shared
+  // norm this value was promoted to (#4514).
   const r = seamRunHook(HOOK_PATH, [], {
     cwd,
     input: JSON.stringify(payload),
-    timeoutMs: 10_000,
+    timeoutMs: QUICK_SPAWN_TIMEOUT_MS,
   });
   return { status: r.exitCode, stdout: r.stdout, stderr: r.stderr };
 }
