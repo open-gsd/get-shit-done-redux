@@ -1374,6 +1374,10 @@ describe('CONS-01..03 — external reviewer evidence consolidation (#4209)', () 
     for (const prohibition of ['no source mutation', 'no test execution', 'no background processes', 'no active polling']) {
       assert.ok(blockText.includes(prohibition),
         `EXTERNAL_EVIDENCE_BLOCK must restate "${prohibition}" (SAFE-03..06)`);
+    }
+  });
+});
+
 // #3829 — execute-phase `code_review_gate`: surface the severity counts it
 // already parses, and record a per-finding disposition.
 //
