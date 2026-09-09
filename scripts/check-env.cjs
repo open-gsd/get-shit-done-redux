@@ -31,6 +31,7 @@ const { spawnSync } = require('child_process');
 
 const { ExitError, runMain } = require('./lib/cli-exit.cjs');
 const { describeNpmVersionCheckFailure } = require('./lib/npm-version-check-diagnosis.cjs');
+const { execNpm } = require('../gsd-core/bin/lib/shell-command-projection.cjs');
 
 // On Windows, npm ships as npm.cmd (a batch wrapper); spawnSync without
 // shell:true requires the exact filename including extension.
@@ -181,21 +182,26 @@ function main() {
   // Check 2: npm version vs engines.npm (skip if field absent)
   // ---------------------------------------------------------------------------
   const enginesNpm = pkgField('engines.npm', PROJECT_ROOT);
-  const NPM_VERSION_TIMEOUT_MS = 10_000;
-  let currentNpm = '';
-  let npmSpawnResult = null;
-  let npmSpawnThrew = null;
-  try {
-    npmSpawnResult = spawnSync(npmCmd, ['--version'], { encoding: 'utf8', timeout: NPM_VERSION_TIMEOUT_MS, shell: process.platform === 'win32' });
-    if (npmSpawnResult.status === 0 && npmSpawnResult.stdout) {
-      currentNpm = npmSpawnResult.stdout.trim();
-    }
-  } catch (e) { npmSpawnThrew = e; }
+  // #4460: was a hand-rolled spawnSync(npmCmd, ...) with its own 10s timeout
+  // and shell:true/npm.cmd handling, duplicating -- imperfectly -- the
+  // canonical execNpm seam (src/shell-command-projection.cts, "OS Shell
+  // Projection: All OS-facing I/O; single platform seam" per CLAUDE.md).
+  // Routing through it directly gives the SAME npm.cmd/shell handling other
+  // callers rely on, the repo's own documented npm-subprocess timeout
+  // (execNpm's 15s default, vs. CLAUDE.md's "60s for npm" for network-facing
+  // peeks -- --version never touches the network, so the general-purpose
+  // default is the right analogue), and the canonical, cross-platform-correct
+  // timeout predicate (isSpawnTimeout / result.timedOut, which checks
+  // error.code === 'ETIMEDOUT' -- documented there as more reliable than
+  // signal === 'SIGTERM', which is "platform-fragile" specifically on
+  // Windows, the exact platform this was discovered failing on).
+  const npmVersionResult = execNpm(['--version']);
+  const currentNpm = npmVersionResult.exitCode === 0 && npmVersionResult.stdout ? npmVersionResult.stdout : '';
 
   if (!enginesNpm) {
     addCheck('npm-version', 'skip', 'engines.npm not set in package.json — skipping');
   } else if (!currentNpm) {
-    addCheck('npm-version', 'fail', describeNpmVersionCheckFailure(npmSpawnResult, npmSpawnThrew, NPM_VERSION_TIMEOUT_MS));
+    addCheck('npm-version', 'fail', describeNpmVersionCheckFailure(npmVersionResult));
   } else {
     if (satisfiesConstraint(currentNpm, enginesNpm)) {
       addCheck('npm-version', 'pass', `npm ${currentNpm} satisfies ${enginesNpm}`);
