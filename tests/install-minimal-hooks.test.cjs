@@ -29,6 +29,21 @@ const os = require('node:os');
 const { runNode } = require('./helpers/process-seam.cjs');
 const { throwIfFailed } = require('./helpers/git-fixture.cjs');
 
+const {
+  PROBE_TIMEOUT_MS,
+  INSTALL_TIMEOUT_MS,
+  FIXTURE_HOOK_TIMEOUT_SECONDS,
+} = require('./helpers/timeouts.cjs');
+
+/**
+ * Bounds executing a single already-staged hook script directly (not the
+ * installer itself, just the emitted script under a real node process).
+ * 30000ms digits coincide with the shared BUILD_TIMEOUT_MS, but this is a
+ * different operation class (running staged output vs. bundling it), so it
+ * is kept as its own local constant rather than aliased onto that norm.
+ */
+const INSTALLED_HOOK_EXEC_TIMEOUT_MS = 30000;
+
 const { createTempDir, cleanup } = require('./helpers.cjs');
 
 const {
@@ -115,7 +130,7 @@ describe('install-profiles: MINIMAL_SKILL_ALLOWLIST', () => {
 
 describe('install: --help profile counts match PROFILES (#834)', () => {
   function helpText() {
-    const r = runNode([INSTALL_SCRIPT, '--help'], { env: installerEnv(), timeoutMs: 15000 });
+    const r = runNode([INSTALL_SCRIPT, '--help'], { env: installerEnv(), timeoutMs: PROBE_TIMEOUT_MS });
     throwIfFailed(r, `node ${INSTALL_SCRIPT} --help`);
     return r.stdout;
   }
@@ -410,7 +425,7 @@ function sharedMinimalManifestInstall() {
   const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-minimal-shared-'));
   runNode(
     [INSTALL_SCRIPT, '--claude', '--global', '--config-dir', targetDir, '--minimal'],
-    { env: installerEnv(), timeoutMs: 120000 },
+    { env: installerEnv(), timeoutMs: INSTALL_TIMEOUT_MS },
   );
   const manifestPath = path.join(targetDir, MANIFEST_NAME);
   const m = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : {};
@@ -433,7 +448,7 @@ describe('install: manifest records mode for both profiles', () => {
     try {
       runNode(
         [INSTALL_SCRIPT, '--claude', '--global', '--config-dir', targetDir, ...extraArgs],
-        { env: installerEnv(), timeoutMs: 120000 },
+        { env: installerEnv(), timeoutMs: INSTALL_TIMEOUT_MS },
       );
       const manifestPath = path.join(targetDir, MANIFEST_NAME);
       if (!fs.existsSync(manifestPath)) return { mode: '<no manifest>', skillCount: 0, agentCount: 0 };
@@ -486,7 +501,7 @@ describe('install-minimal-backcompat: --minimal and --profile=core produce same 
     try {
       runNode(
         [INSTALL_SCRIPT, '--claude', '--global', '--config-dir', targetDir, ...extraArgs],
-        { env: installerEnv(), timeoutMs: 120000 },
+        { env: installerEnv(), timeoutMs: INSTALL_TIMEOUT_MS },
       );
       const manifestPath = path.join(targetDir, MANIFEST_NAME);
       if (!fs.existsSync(manifestPath)) return { mode: null, skillCount: 0, profileMarker: null };
@@ -562,7 +577,7 @@ describe('install: Codex full → minimal downgrade cleans stale agent state', (
       // config.toml (both under targetDir), so the sandbox has no effect on intent.
       const result = runNode(
         [INSTALL_SCRIPT, '--codex', '--global', '--config-dir', targetDir, '--minimal'],
-        { env: installerEnv({ HOME: targetDir, USERPROFILE: targetDir }), timeoutMs: 120000 },
+        { env: installerEnv({ HOME: targetDir, USERPROFILE: targetDir }), timeoutMs: INSTALL_TIMEOUT_MS },
       );
       assert.ok(result.stdout || result.stderr);
 
@@ -599,7 +614,7 @@ describe('install: Claude full → minimal downgrade removes stale agents', () =
 
       runNode(
         [INSTALL_SCRIPT, '--claude', '--global', '--config-dir', targetDir, '--minimal'],
-        { env: installerEnv(), timeoutMs: 120000 },
+        { env: installerEnv(), timeoutMs: INSTALL_TIMEOUT_MS },
       );
 
       const remaining = fs.existsSync(agentsDir) ? fs.readdirSync(agentsDir) : [];
@@ -691,7 +706,7 @@ describe('#1821/#2305: ZCode receives no dead hook files; Kilo/OpenCode/Claude k
     try {
       const result = runNode(
         [INSTALL_SCRIPT, `--${runtime}`, '--global', '--config-dir', targetDir],
-        { env: installerEnv(), timeoutMs: 120000 },
+        { env: installerEnv(), timeoutMs: INSTALL_TIMEOUT_MS },
       );
       assert.strictEqual(result.exitCode, 0,
         `installer exited with status ${result.exitCode} for --${runtime} --global\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
@@ -2851,7 +2866,7 @@ function runInstaller(configDir) {
   // in install-smoke.yml).
   throwIfFailed(
     runNode([INSTALL_SCRIPT, '--claude', '--global', '--yes', '--no-sdk'], {
-      timeoutMs: 120000,
+      timeoutMs: INSTALL_TIMEOUT_MS,
       env: {
         ...process.env,
         CLAUDE_CONFIG_DIR: configDir,
@@ -2970,7 +2985,7 @@ describe('#4087 regression: Codex install stages the hook helpers its hooks requ
     // child's env.
     throwIfFailed(
       runNode([INSTALL_SCRIPT, '--codex', '--global', '--yes', '--no-sdk', '--config-dir', configDir], {
-        timeoutMs: 120000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
         env: { ...process.env, HOME: configDir, USERPROFILE: configDir },
       }),
       `node ${INSTALL_SCRIPT} --codex --global --config-dir ${configDir}`,
@@ -3224,7 +3239,7 @@ describe('#4087 review: Windsurf install stages the hook helpers its hooks requi
     // HOME/USERPROFILE sandboxed for the CHILD, for the same reason as installCodex.
     throwIfFailed(
       runNode([INSTALL_SCRIPT, '--windsurf', '--global', '--yes', '--config-dir', configDir], {
-        timeoutMs: 120000,
+        timeoutMs: INSTALL_TIMEOUT_MS,
         env: { ...process.env, HOME: configDir, USERPROFILE: configDir },
       }),
       `node ${INSTALL_SCRIPT} --windsurf --global --config-dir ${configDir}`,
@@ -3238,7 +3253,7 @@ describe('#4087 review: Windsurf install stages the hook helpers its hooks requi
     for (const script of ['gsd-windsurf-pre-write.js', 'gsd-windsurf-pre-command.js']) {
       const hook = path.join(hooksDir, script);
       assert.ok(fs.existsSync(hook), `precondition: ${script} must be staged`);
-      const result = runNode([hook], { timeoutMs: 30000, input: '{}', env: { ...process.env } });
+      const result = runNode([hook], { timeoutMs: INSTALLED_HOOK_EXEC_TIMEOUT_MS, input: '{}', env: { ...process.env } });
       assert.strictEqual(result.outcome, 'exited',
         `${script} must run to completion, not time out or be killed. outcome=${result.outcome}`);
       assert.strictEqual(result.exitCode, 0,
@@ -3391,7 +3406,7 @@ describe('bug #3981: blocking-guard timeout budget + migration', () => {
         hooks: {
           PreToolUse: [{
             matcher: 'Write|Edit',
-            hooks: [{ type: 'command', command: `node ${path.join(targetDir, 'hooks', guard)}`, timeout: 5 }],
+            hooks: [{ type: 'command', command: `node ${path.join(targetDir, 'hooks', guard)}`, timeout: FIXTURE_HOOK_TIMEOUT_SECONDS }],
           }],
         },
       };
@@ -3423,7 +3438,7 @@ describe('bug #3981: blocking-guard timeout budget + migration', () => {
   });
 
   test('non-managed timeout:5 entries are left alone (#3981)', () => {
-    const mine = { type: 'command', command: 'node /usr/local/bin/my-own-hook.js', timeout: 5 };
+    const mine = { type: 'command', command: 'node /usr/local/bin/my-own-hook.js', timeout: FIXTURE_HOOK_TIMEOUT_SECONDS };
     const settings = { hooks: { PreToolUse: [{ matcher: 'Write', hooks: [mine] }] } };
     const localCmd = (hookFile) => `node ${path.join(targetDir, 'hooks', hookFile)}`;
     captureConsole(() => {

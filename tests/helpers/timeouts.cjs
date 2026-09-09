@@ -127,6 +127,20 @@ const SEAM_DEFAULT_TIMEOUT_MS = 60000;
  */
 const QUICK_SPAWN_TIMEOUT_MS = 10000;
 
+/**
+ * NOT a subprocess spawn timeout. This is fixture DATA -- the numeric value
+ * placed inside a fixture JSON object that mimics a Claude Code
+ * `settings.json` hook-entry's own `timeout` field, whose schema expresses
+ * that field in SECONDS. Do not pass this into a `spawnSync`/`execFileSync`
+ * options object -- every other constant in this file is milliseconds, this
+ * one is not.
+ *
+ * Shared across >=2 files in batch #4515 of the ad hoc timeout literal
+ * migration, epic #4445 -- that is why it lives here rather than as a
+ * file-local constant.
+ */
+const FIXTURE_HOOK_TIMEOUT_SECONDS = 5;
+
 module.exports = {
   PROBE_TIMEOUT_MS,
   HOOK_FANOUT_TIMEOUT_MS,
@@ -136,4 +150,5 @@ module.exports = {
   INSTALL_TIMEOUT_MS,
   SEAM_DEFAULT_TIMEOUT_MS,
   QUICK_SPAWN_TIMEOUT_MS,
+  FIXTURE_HOOK_TIMEOUT_SECONDS,
 };

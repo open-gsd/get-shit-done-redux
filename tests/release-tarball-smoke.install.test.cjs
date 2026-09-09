@@ -474,6 +474,11 @@ const { execFileSync } = require('node:child_process');
 // The helpers under test.
 const { isolatedNpmEnv, cleanup } = require('./helpers.cjs');
 
+// Bounds the `node -e` npm-harness spawn pattern shared by the three
+// execFileSync(process.execPath, ['-e', script], ...) sites in this file,
+// each of which requires helpers.cjs and calls runNpm(...).
+const NPM_HARNESS_SPAWN_TIMEOUT_MS = 30_000;
+
 // Resolve a filesystem path to its canonical (symlink-free) form even if the
 // leaf does not exist yet (e.g. ~/.npm before npm has written its cache).
 // Walks up to the nearest existing ancestor, resolves that, then re-appends
@@ -540,7 +545,7 @@ describe('bug-131: runNpm isolates HOME from the caller environment', () => {
       try {
         stdout = execFileSync(process.execPath, ['-e', script], {
           encoding: 'utf-8',
-          timeout: 30_000,
+          timeout: NPM_HARNESS_SPAWN_TIMEOUT_MS,
         });
       } catch (err) {
         stdout = err.stdout || '';
@@ -594,7 +599,7 @@ describe('bug-131: runNpm isolates HOME from the caller environment', () => {
     try {
       stdout = execFileSync(process.execPath, ['-e', script], {
         encoding: 'utf-8',
-        timeout: 30_000,
+        timeout: NPM_HARNESS_SPAWN_TIMEOUT_MS,
       });
     } catch (err) {
       stdout = err.stdout || '';
@@ -728,7 +733,7 @@ describe('bug-131: runNpm isolates HOME from the caller environment', () => {
     try {
       stdout = execFileSync(process.execPath, ['-e', script], {
         encoding: 'utf-8',
-        timeout: 30_000,
+        timeout: NPM_HARNESS_SPAWN_TIMEOUT_MS,
       });
     } catch (err) {
       stdout = err.stdout || '';

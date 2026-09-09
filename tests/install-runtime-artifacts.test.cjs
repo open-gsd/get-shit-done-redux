@@ -32,6 +32,20 @@ const { splitLines, joinLines } = require('../gsd-core/bin/lib/text-lines.cjs');
 const { createTempDir, cleanup, writePackageSourceMarkerFixture } = require('./helpers.cjs');
 const { runNode } = require('./helpers/process-seam.cjs');
 const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+// Bound the writer subprocess so a regression that hangs the writer
+// (or the dispatcher) cannot deadlock CI (PR #3003 CR feedback).
+// 30s is generous for what should complete in <1s; if it trips,
+// surface that as a clear test failure rather than CI hanging.
+const WRITER_SUBPROCESS_TIMEOUT_MS = 30_000;
+
+// Bounds a real `gsd-tools.cjs capability install` subprocess run against a
+// fully-installed tree; digits coincide with the shared
+// HOOK_FANOUT_TIMEOUT_MS/SEAM_DEFAULT_TIMEOUT_MS constants but this is
+// neither a hook fan-out nor an omitted-default seam call, so kept as its
+// own constant.
+const CAPABILITY_INSTALL_TIMEOUT_MS = 60000;
+
 const {
   INSTALL_SCRIPT,
   MANIFEST_NAME,
@@ -5564,11 +5578,9 @@ describe('Bug #2973: dev-preferences default writer path is skills/gsd-dev-prefe
         // landed in the developer's live config dir instead of tmpHome.
         env: Object.assign({}, process.env, TEST_ENV_BASE, { HOME: tmpHome, USERPROFILE: tmpHome }),
         encoding: 'utf-8',
-        // Bound the subprocess so a regression that hangs the writer
-        // (or the dispatcher) cannot deadlock CI (PR #3003 CR feedback).
-        // 30s is generous for what should complete in <1s; if it trips,
-        // surface that as a clear test failure rather than CI hanging.
-        timeout: 30_000,
+        // See WRITER_SUBPROCESS_TIMEOUT_MS's own doc comment (top of file)
+        // for the full rationale.
+        timeout: WRITER_SUBPROCESS_TIMEOUT_MS,
       });
       assert.equal(result.signal, null,
         `writer subprocess was killed by signal ${result.signal} (likely timeout): ${result.stderr}`);
@@ -6948,7 +6960,7 @@ function realInstall() {
   const res = spawnSync(
     process.execPath,
     [INSTALL, '--claude', '--global', '--config-dir', dir],
-    { encoding: 'utf8', timeout: 120000, env: childEnv },
+    { encoding: 'utf8', timeout: INSTALL_TIMEOUT_MS, env: childEnv },
   );
   assert.strictEqual(res.status, 0, `install --claude failed: ${res.stderr || res.stdout}`);
   return dir;
@@ -6992,7 +7004,7 @@ describe('Gap 1 (end-to-end CLI): installed capability install uses the real hos
       const res = spawnSync(
         process.execPath,
         [installedTools, 'capability', 'install', src, '--scope', 'global', '--yes', '--json'],
-        { cwd, env, encoding: 'utf8', timeout: 60000 },
+        { cwd, env, encoding: 'utf8', timeout: CAPABILITY_INSTALL_TIMEOUT_MS },
       );
       const combined = `${res.stdout || ''}\n${res.stderr || ''}`;
       assert.doesNotMatch(

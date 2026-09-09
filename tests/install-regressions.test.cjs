@@ -21,7 +21,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { runNode } = require('./helpers/process-seam.cjs');
 const { throwIfFailed } = require('./helpers/git-fixture.cjs');
-const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+const { INSTALL_TIMEOUT_MS, FIXTURE_HOOK_TIMEOUT_SECONDS } = require('./helpers/timeouts.cjs');
+
+// Bounds a scoped/targeted runNode([INSTALL_SCRIPT, ...]) invocation — a
+// lighter shape than the shared full-install INSTALL_TIMEOUT_MS class
+// (120000ms), so kept as its own constant rather than raised to that bound.
+const SCOPED_INSTALL_TIMEOUT_MS = 60_000;
 
 const { createTempDir, cleanup, mockPartialWriteThenThrow } = require('./helpers.cjs');
 const {
@@ -95,7 +100,7 @@ describe('#2429 regression: Codex local skills stay project-scoped', () => {
 
     const result = runNode(
       [INSTALL_SCRIPT, '--codex', '--local', '--profile=core'],
-      { cwd: projectDir, env, timeoutMs: 60_000 },
+      { cwd: projectDir, env, timeoutMs: SCOPED_INSTALL_TIMEOUT_MS },
     );
 
     assert.strictEqual(
@@ -1118,7 +1123,7 @@ describe('#1004 regression: installer does not duplicate managed hooks when regi
               {
                 type: 'http',
                 url: hookUrl,
-                timeout: 5,
+                timeout: FIXTURE_HOOK_TIMEOUT_SECONDS,
               },
             ],
           },
@@ -1970,7 +1975,7 @@ describe('#1874 F6 (#338 migration): a malformed settings.local.json is preserve
     delete env.GSD_TEST_MODE;
     const result = runNode(
       [INSTALL_SCRIPT, '--claude', '--local'],
-      { cwd: root, env, timeoutMs: 60_000 },
+      { cwd: root, env, timeoutMs: SCOPED_INSTALL_TIMEOUT_MS },
     );
     assert.strictEqual(result.exitCode, 0,
       `installer exited ${result.exitCode}\n${result.stdout}\n${result.stderr}`);
@@ -2018,7 +2023,7 @@ describe('#1874 F6 adjacent: malformed settings.local.json does not crash the in
     delete env.GSD_TEST_MODE;
     const result = runNode(
       [INSTALL_SCRIPT, '--claude', '--local'],
-      { cwd: root, env, timeoutMs: 60_000 },
+      { cwd: root, env, timeoutMs: SCOPED_INSTALL_TIMEOUT_MS },
     );
 
     assert.strictEqual(result.exitCode, 0,

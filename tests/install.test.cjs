@@ -34,7 +34,20 @@ const { runNode } = require('./helpers/process-seam.cjs');
 const pkg = require('../package.json');
 
 // #3145: class-norm timeout, not a per-suite value — see helpers/timeouts.cjs.
-const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+const { PROBE_TIMEOUT_MS, QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
+
+// Fixture-JSON value (seconds, not ms) simulating the PRE-migration legacy
+// settings.json hook-entry timeout under test (#3981-style migration test).
+// Deliberately a different value than the shared FIXTURE_HOOK_TIMEOUT_SECONDS
+// constant (5) since this site tests the old value specifically (batch #4515,
+// epic #4445).
+const FIXTURE_LEGACY_HOOK_TIMEOUT_SECONDS = 10;
+
+// Bounds an `install.js --dry-run` run (no file writes) — a lighter shape than
+// the shared full-write INSTALL_TIMEOUT_MS class (120000ms), kept separate
+// rather than raised. Shared by both dry-run sites in this file (batch #4515,
+// epic #4445).
+const DRY_RUN_INSTALL_TIMEOUT_MS = 30_000;
 
 const {
   getConfigDirFromHome,
@@ -1127,7 +1140,7 @@ describe('install — fix-slash-commands.cjs lands at scripts/fix-slash-commands
     const result = spawnSync(
       process.execPath,
       [gsdToolsPath, 'query', 'init.new-project'],
-      { encoding: 'utf8', timeout: 15000 },
+      { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS },
     );
     assert.ok(
       !result.stderr.includes('MODULE_NOT_FOUND'),
@@ -1215,7 +1228,7 @@ describe('readCmdNames() — tolerates missing commands/gsd directory (#1223)', 
 
       const spawnResult = spawnSync(process.execPath, ['-e', script], {
         encoding: 'utf8',
-        timeout: 10000,
+        timeout: QUICK_SPAWN_TIMEOUT_MS,
         env: { ...process.env, GSD_TEST_MODE: '1' },
       });
       assert.ok(
@@ -5568,7 +5581,7 @@ describe('#338 case 3: migration of prior local install GSD entries from setting
               {
                 type: 'command',
                 command: `${process.execPath} ${path.join(claudeDir, 'hooks', 'gsd-context-monitor.js')}`,
-                timeout: 10,
+                timeout: FIXTURE_LEGACY_HOOK_TIMEOUT_SECONDS,
               }
             ]
           }
@@ -7368,7 +7381,7 @@ function installAndRead(runtime) {
   const res = spawnSync(
     process.execPath,
     [INSTALL, `--${runtime}`, '--global', '--config-dir', dir],
-    { encoding: 'utf8', timeout: 120000, env: { ...process.env, HOME: dir, USERPROFILE: dir } },
+    { encoding: 'utf8', timeout: INSTALL_TIMEOUT_MS, env: { ...process.env, HOME: dir, USERPROFILE: dir } },
   );
   assert.strictEqual(res.status, 0, `install --${runtime} failed: ${res.stderr || res.stdout}`);
   const wf = path.join(dir, 'gsd-core', 'workflows', 'execute-phase.md');
@@ -7809,7 +7822,7 @@ describe('#3026: installer --help documents every accepted runtime flag', () => 
 
   test('every accepted runtime flag appears in --help output', () => {
     // Derive accepted flags behaviorally from the installer's argument parser.
-    const r = spawnSync(process.execPath, [INSTALL_PATH, '--help'], { encoding: 'utf-8', timeout: 10000 });
+    const r = spawnSync(process.execPath, [INSTALL_PATH, '--help'], { encoding: 'utf-8', timeout: QUICK_SPAWN_TIMEOUT_MS });
     const helpText = r.stdout;
 
     // The installer's getRuntimeArgs defines which --<runtime> flags it accepts.
@@ -7976,7 +7989,7 @@ describe('#607 --dry-run flag: spawned installer exits 0 and mutates nothing', (
         },
         cwd: REPO_ROOT,
         encoding: 'utf8',
-        timeout: 30_000,
+        timeout: DRY_RUN_INSTALL_TIMEOUT_MS,
       }
     );
 
@@ -8051,7 +8064,7 @@ describe('#607 --dry-run flag: spawned installer exits 0 and mutates nothing', (
         },
         cwd: REPO_ROOT,
         encoding: 'utf8',
-        timeout: 30_000,
+        timeout: DRY_RUN_INSTALL_TIMEOUT_MS,
       }
     );
 

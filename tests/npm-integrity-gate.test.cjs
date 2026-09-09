@@ -23,10 +23,17 @@ const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const { runNode } = require('./helpers/process-seam.cjs');
+const { QUICK_SPAWN_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'check-npm-integrity.cjs');
 const FIXTURES = path.join(__dirname, 'fixtures', 'npm-integrity');
+
+// Bounds a real check-npm-integrity.cjs run via the process seam; digits
+// coincide with the shared BUILD_TIMEOUT_MS but this is a different
+// operation class (an integrity check, not a hooks build), so kept as its
+// own constant rather than aliased.
+const NPM_INTEGRITY_CHECK_TIMEOUT_MS = 30_000;
 
 /**
  * Run the integrity gate script against a fixture directory.
@@ -37,7 +44,7 @@ const FIXTURES = path.join(__dirname, 'fixtures', 'npm-integrity');
  */
 function runGate(fixtureName, extraArgs = []) {
   const fixtureDir = path.join(FIXTURES, fixtureName);
-  const r = runNode([SCRIPT, ...extraArgs], { cwd: fixtureDir, timeoutMs: 30_000 });
+  const r = runNode([SCRIPT, ...extraArgs], { cwd: fixtureDir, timeoutMs: NPM_INTEGRITY_CHECK_TIMEOUT_MS });
   return {
     status: r.exitCode ?? 1,
     stdout: r.stdout,
@@ -145,7 +152,7 @@ describe('#114: npm integrity gate — --help output', () => {
     const result = spawnSync(process.execPath, [SCRIPT, '--help'], {
       cwd: ROOT,
       encoding: 'utf-8',
-      timeout: 10_000,
+      timeout: QUICK_SPAWN_TIMEOUT_MS,
     });
     assert.strictEqual(result.status, 0, '--help should exit 0');
   });
@@ -154,7 +161,7 @@ describe('#114: npm integrity gate — --help output', () => {
     const result = spawnSync(process.execPath, [SCRIPT, '--help'], {
       cwd: ROOT,
       encoding: 'utf-8',
-      timeout: 10_000,
+      timeout: QUICK_SPAWN_TIMEOUT_MS,
     });
     // The .cjs script writes --help to stdout.
     const helpText = (result.stdout ?? '') + (result.stderr ?? '');

@@ -33,6 +33,17 @@ const { defaultPhaseCleanCommitTimesMs } = require(path.join(__dirname, '..', 'g
 const { createTempGitProject, createTempDir, cleanup } = require('./helpers.cjs');
 const { makeFaultyGit, withFaultyFs } = require('./helpers/faulty-deps.cjs');
 
+// A bound so small process creation cannot complete inside it, making the
+// ETIMEDOUT kill path deterministic on a real (unmocked) git call; used at
+// both sentinel sites in this file.
+const DETERMINISTIC_TIMEOUT_SENTINEL_MS = 1;
+
+// Bounds a real (unmocked) `git var GIT_EDITOR` call proving env passthrough;
+// deliberately not GIT_TIMEOUT_MS (15000ms) since this site's pre-existing
+// value differs and this migration never raises a bound without a fresh
+// bench citation.
+const GIT_VAR_PROBE_TIMEOUT_MS = 5000;
+
 // ─── A. execGit normalization (#3071) ──────────────────────────────────────
 
 describe('A. execGit normalization (#3071)', () => {
@@ -71,7 +82,7 @@ describe('A. execGit normalization (#3071)', () => {
     // complete inside 1ms, so the kill path is deterministic, matching the
     // existing "wall-clock timeout" pattern used for dispatchGsdCommand in
     // shell-command-projection-dispatch.test.cjs.
-    const result = execGit(['status', '--porcelain'], { cwd: tmpDir, timeout: 1 });
+    const result = execGit(['status', '--porcelain'], { cwd: tmpDir, timeout: DETERMINISTIC_TIMEOUT_SENTINEL_MS });
     assert.strictEqual(result.timedOut, true);
     assert.strictEqual(result.error && result.error.code, 'ETIMEDOUT');
   });
@@ -117,7 +128,7 @@ describe('A. execGit normalization (#3071)', () => {
     const result = execGit(['var', 'GIT_EDITOR'], {
       cwd: tmpDir,
       env: { GIT_EDITOR: 'fault-3056-sentinel-editor' },
-      timeout: 5000,
+      timeout: GIT_VAR_PROBE_TIMEOUT_MS,
     });
     assert.strictEqual(result.exitCode, 0);
     assert.strictEqual(result.stdout, 'fault-3056-sentinel-editor');
@@ -128,7 +139,7 @@ describe('A. execGit normalization (#3071)', () => {
     t.after(() => cleanup(tmpDir));
     const success = execGit(['status', '--porcelain'], { cwd: tmpDir });
     const enoent = execTool('definitely-not-a-real-program-fault-3056', []);
-    const timeout = execGit(['status', '--porcelain'], { cwd: tmpDir, timeout: 1 });
+    const timeout = execGit(['status', '--porcelain'], { cwd: tmpDir, timeout: DETERMINISTIC_TIMEOUT_SENTINEL_MS });
     assert.strictEqual(typeof success.exitCode, 'number');
     assert.strictEqual(typeof enoent.exitCode, 'number');
     assert.strictEqual(typeof timeout.exitCode, 'number');
