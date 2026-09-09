@@ -60,6 +60,7 @@ const { gitOrThrow } = require('./helpers/git-fixture.cjs');
 
 const { cleanup, createTempDir, readFileNormalized } = require('./helpers.cjs');
 const { RUNTIME_META, installerEnv } = require('./helpers/install-shared.cjs');
+const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 const {
   buildOverlayRepo,
   REPO_ROOT,
@@ -199,6 +200,37 @@ const ORIGINAL_WORKFLOW_CONTENT = readFileNormalized(PILOT_WORKFLOW_PATH);
 
 const FRAGMENT_SENTINEL = 'GSD-2933-FRAGMENT-EDIT-SENTINEL-4c1a9f';
 
+/**
+ * Bounds `runOverlayCheck`/`runOverlayGenerate` — a single overlay
+ * `scripts/gen-*.cjs` generator invocation (never the installer proper).
+ * The digits coincide with `INSTALL_TIMEOUT_MS` (also 120000ms), but this
+ * is a different operation class kept as its own local constant —
+ * coincidence, not collision.
+ */
+const GENERATOR_SCRIPT_TIMEOUT_MS = 120000;
+
+/**
+ * Bounds `trackedFileSet`'s `git ls-files` over the FULL overlay tree.
+ * Deliberately NOT the shared `GIT_TIMEOUT_MS` (15000ms, `helpers/timeouts.cjs`),
+ * which describes small-fixture-repo git plumbing — a much lighter shape
+ * than scanning this file's overlay tree.
+ */
+const TRACKED_FILE_SET_TIMEOUT_MS = 120000;
+
+/**
+ * Bounds the real `npm run regen:derived` spawn (row 21) — a full build
+ * plus eight generators, the single heaviest subprocess in this suite.
+ * 300000 (5min) was observed to be killed (status: null) near the very end
+ * of a genuinely completed run on a loaded bench (linux-node22), not from a
+ * real hang. 900000 (15min) is deliberately generous so this can never
+ * again flake on load while still catching a true hang.
+ * allow-spawn-timeout-ceiling: regen:derived is a full build plus eight
+ * generators; 300000 was observed killing a genuinely-completed run near
+ * the end on a loaded bench, not a real hang, so 900000 is deliberately
+ * above the 600000 ceiling to never repeat that flake.
+ */
+const REGEN_DERIVED_TIMEOUT_MS = 900000;
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -226,7 +258,7 @@ function installOverlay(overlayRoot, runtime, extraArgs = []) {
   const result = runNode(args, {
     cwd: root,
     env: installerEnv({ HOME: root, USERPROFILE: root }),
-    timeoutMs: 120000,
+    timeoutMs: INSTALL_TIMEOUT_MS,
   });
   result.status = result.exitCode;
   assert.equal(
@@ -262,7 +294,7 @@ function installOverlayExpectingFailure(overlayRoot, runtime, extraArgs = []) {
   const result = runNode(args, {
     cwd: root,
     env: installerEnv({ HOME: root, USERPROFILE: root }),
-    timeoutMs: 120000,
+    timeoutMs: INSTALL_TIMEOUT_MS,
   });
   result.status = result.exitCode;
   return { configDir: root, root, result };
@@ -281,7 +313,7 @@ function runOverlayCheck(overlayRoot, scriptRelPath, extraArgs = []) {
   const result = runNode([scriptPath, '--check', ...extraArgs], {
     cwd: overlayRoot,
     env: installerEnv(),
-    timeoutMs: 120000,
+    timeoutMs: GENERATOR_SCRIPT_TIMEOUT_MS,
   });
   result.status = result.exitCode;
   return result;
@@ -299,7 +331,7 @@ function runOverlayGenerate(overlayRoot, scriptRelPath) {
   const result = runNode([scriptPath], {
     cwd: overlayRoot,
     env: installerEnv(),
-    timeoutMs: 120000,
+    timeoutMs: GENERATOR_SCRIPT_TIMEOUT_MS,
   });
   result.status = result.exitCode;
   return result;
@@ -327,7 +359,7 @@ function runOverlayGenerate(overlayRoot, scriptRelPath) {
 function trackedFileSet(repoRoot) {
   const stdout = gitOrThrow(['-c', 'safe.directory=*', 'ls-files'], {
     cwd: repoRoot,
-    timeoutMs: 120000,
+    timeoutMs: TRACKED_FILE_SET_TIMEOUT_MS,
   });
   return stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 }
@@ -1198,17 +1230,9 @@ test('regenDerivedPropagatesSingleFragmentEditWithNoSecondSourceSurface', {
     cwd: overlay,
     encoding: 'utf8',
     env: installerEnv(),
-    // `regen:derived` chains a full `npm run build` plus eight generators —
-    // the single heaviest subprocess in this suite. 300_000 (5min) was
-    // observed to be killed (status: null) near the very end of a genuinely
-    // completed run on a loaded bench (linux-node22), not from a real hang.
-    // 900_000 (15min) is deliberately generous so this can never again flake
-    // on load while still catching a true hang.
-    // allow-spawn-timeout-ceiling: regen:derived is a full build plus eight
-    // generators; 300_000 was observed killing a genuinely-completed run
-    // near the end on a loaded bench, not a real hang, so 900_000 is
-    // deliberately above the 600000 ceiling to never repeat that flake.
-    timeout: 900000,
+    // See REGEN_DERIVED_TIMEOUT_MS's own doc comment (top of file) for the
+    // full rationale, including the allow-spawn-timeout-ceiling annotation.
+    timeout: REGEN_DERIVED_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
   });
   assert.equal(

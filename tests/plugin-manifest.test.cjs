@@ -25,9 +25,15 @@ const identity = require(path.join(ROOT, 'gsd-core', 'bin', 'lib', 'package-iden
 const pkg = require(path.join(ROOT, 'package.json'));
 const { MANAGED_HOOKS } = require(path.join(ROOT, 'hooks', 'managed-hooks-registry.cjs'));
 const { cleanup, TEST_ENV_BASE } = require('./helpers.cjs');
+const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const PLUGIN_JSON_PATH = path.join(ROOT, '.claude-plugin', 'plugin.json');
 const HOOKS_JSON_PATH  = path.join(ROOT, 'hooks', 'hooks.json');
+
+// Bounds a `claude --version` PATH probe; kept separate from the shared
+// PROBE_TIMEOUT_MS (15000ms) since this site's pre-existing value differs
+// and this migration never raises a bound without a fresh bench citation.
+const CLAUDE_VERSION_PROBE_TIMEOUT_MS = 5000;
 
 // ─── Section A: plugin.json ───────────────────────────────────────────────────
 describe('A: .claude-plugin/plugin.json', () => {
@@ -401,7 +407,7 @@ describe('C: plugin.json schema validation', () => {
     try {
       const result = spawnSync('claude', ['--version'], {
         encoding: 'utf-8',
-        timeout: 5000,
+        timeout: CLAUDE_VERSION_PROBE_TIMEOUT_MS,
         env: claudeCliEnv(),
       });
       return result.status === 0;
@@ -524,7 +530,7 @@ describe('C: plugin.json schema validation', () => {
         const result = spawnSync('claude', ['plugin', 'validate', pluginRoot, '--strict'], {
           cwd: ROOT,
           encoding: 'utf-8',
-          timeout: 15000,
+          timeout: PROBE_TIMEOUT_MS,
           env: claudeCliEnv(),
         });
         assert.equal(

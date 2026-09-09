@@ -24,6 +24,19 @@ const REPO_ROOT = path.join(__dirname, '..');
 const { extractRequires } = require('./helpers/copy-script-fixture.cjs');
 
 /**
+ * package.json's `prepack`/`prepare` runs a full `npm run build:lib` (tsc)
+ * before `npm pack` computes the file list — a bounded but non-trivial
+ * subprocess (~2s in isolation). Under the full parallel 28,000+-test CI
+ * matrix this has been observed to take 60.6s and trip a 60_000ms bound
+ * (#2931 gsd-test run d52d2ee4, linux-node24, duration_ms 60637.56),
+ * aborting this file's `before()` hook and cascading every sibling test to
+ * "cancelled". 120s keeps the bound finite (never unbounded, per the
+ * subprocess-timeout convention) while giving real headroom for a
+ * contended CI box.
+ */
+const NPM_PACK_TIMEOUT_MS = 120_000;
+
+/**
  * Resolve the tarball file list via `npm pack --dry-run --json`.
  * This is the ACTUAL set of files that ship — not a hardcoded list — so adding
  * a new entry to package.json `files` cannot silently bypass the guard.
@@ -34,16 +47,7 @@ function resolveTarballFiles() {
     encoding: 'utf-8',
     shell: true, // Windows: npm is npm.cmd and needs a shell
     stdio: ['pipe', 'pipe', 'pipe'],
-    // package.json's `prepack`/`prepare` runs a full `npm run build:lib`
-    // (tsc) before `npm pack` computes the file list — a bounded but
-    // non-trivial subprocess (~2s in isolation). Under the full parallel
-    // 28,000+-test CI matrix this has been observed to take 60.6s and trip
-    // a 60_000ms bound (#2931 gsd-test run d52d2ee4, linux-node24,
-    // duration_ms 60637.56), aborting this file's `before()` hook and
-    // cascading every sibling test to "cancelled". 120s keeps the bound
-    // finite (never unbounded, per the subprocess-timeout convention) while
-    // giving real headroom for a contended CI box.
-    timeout: 120_000,
+    timeout: NPM_PACK_TIMEOUT_MS,
   });
   const parsed = JSON.parse(raw);
   return packListToPathSet(parsed);

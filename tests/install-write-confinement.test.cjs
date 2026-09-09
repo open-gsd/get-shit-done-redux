@@ -2048,6 +2048,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runNode } = require('./helpers/process-seam.cjs');
 const { cleanup } = require('./helpers.cjs');
+const { PROBE_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DRIFT_LINT = path.join(ROOT, 'scripts', 'lint-shell-command-projection-drift.cjs');
@@ -2055,7 +2056,7 @@ const DRIFT_LINT = path.join(ROOT, 'scripts', 'lint-shell-command-projection-dri
 function runLint(targetFile) {
   const result = runNode([DRIFT_LINT, targetFile], {
     cwd: ROOT,
-    timeoutMs: 15000,
+    timeoutMs: PROBE_TIMEOUT_MS,
   });
   result.status = result.exitCode;
   return result;
@@ -3836,6 +3837,7 @@ const crypto = require('node:crypto');
 const ROOT = path.join(__dirname, '..');
 const INSTALL = require(path.join(ROOT, 'bin', 'install.js'));
 const { cleanup, sandboxHome, scrubConfigLocationEnv } = require('./helpers.cjs');
+const { INSTALL_TIMEOUT_MS } = require('./helpers/timeouts.cjs');
 
 const MANIFEST_NAME = 'gsd-file-manifest.json';
 const PATCHES_DIR_NAME = 'gsd-local-patches';
@@ -3977,7 +3979,7 @@ describe('Bug #4086: saveLocalPatches resolves skills/ manifest keys at the runt
     assert.deepEqual(modifiedList, [], 'without a runtime the old skip behavior applies');
   });
 
-  test('end-to-end codex reinstall backs up the modified skill (#4086)', { timeout: 120_000 }, () => {
+  test('end-to-end codex reinstall backs up the modified skill (#4086)', { timeout: INSTALL_TIMEOUT_MS }, () => {
     const origLog = console.log;
     const origWarn = console.warn;
     console.log = () => {};
