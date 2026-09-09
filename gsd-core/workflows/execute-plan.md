@@ -7,6 +7,8 @@ Read STATE.md before any operation to load project context.
 Read config.json for planning behavior settings.
 
 @~/.claude/gsd-core/references/git-integration.md
+
+**Not running as a spawned `gsd-executor`?** (`--interactive`, Copilot's sequential default, Pattern C inline, an `agent_hint` specialist.) The build-time embed hands `references/checkpoints.md` and `templates/summary.md` to spawned executors only, and `agents/gsd-executor.md` — resolved against the install root — only when that agent is the one spawned. On any other route **Read** each file this workflow points at, deviation rules first.
 </required_reading>
 
 <atomic_close_out_invariant>
@@ -242,20 +244,7 @@ Deviations are normal — handle via rules below.
 
 ## Authentication Gates
 
-Auth errors during execution are NOT failures — they're expected interaction points.
-
-**Indicators:** "Not authenticated", "Unauthorized", 401/403, "Please run {tool} login", "Set {ENV_VAR}"
-
-**Protocol:**
-1. Recognize auth gate (not a bug)
-2. STOP task execution
-3. Create dynamic checkpoint:human-action with exact auth steps
-4. Wait for user to authenticate
-5. Verify credentials work
-6. Retry original task
-7. Continue normally
-
-**Example:** `vercel --yes` → "Not authenticated" → checkpoint asking user to `vercel login` → verify with `vercel whoami` → retry deploy → continue
+Canonical protocol: **`gsd-core/references/checkpoints.md`** (`<authentication_gates>`).
 
 **In Summary:** Document as normal flow under "## Authentication Gates", not as deviations.
 
@@ -265,12 +254,7 @@ Auth errors during execution are NOT failures — they're expected interaction p
 
 ## Deviation Rules
 
-Apply deviation rules from the gsd-executor agent definition (single source of truth):
-- **Rules 1-3** (bugs, missing critical, blockers): auto-fix, test, verify, track as deviations
-- **Rule 4** (architectural changes): STOP, present decision to user, await approval
-- **Scope boundary**: do not auto-fix pre-existing issues unrelated to current task
-- **Fix attempt limit**: max 3 retries per deviation before escalating
-- **Priority**: Rule 4 (STOP) > Rules 1-3 (auto) > unsure → Rule 4
+Canonical Rules 1-4, scope boundary, fix-attempt limit and priority: **`agents/gsd-executor.md`** (`<deviation_rules>`).
 
 </deviation_rules>
 
@@ -278,11 +262,7 @@ Apply deviation rules from the gsd-executor agent definition (single source of t
 
 ## Documenting Deviations
 
-Summary MUST include deviations section. None? → `## Deviations from Plan\n\nNone - plan executed exactly as written.`
-
-Per deviation: **[Rule N - Category] Title** — Found during: Task X | Issue | Fix | Files modified | Verification | Commit hash
-
-End with: **Total deviations:** N auto-fixed (breakdown). **Impact:** assessment.
+Summary MUST include a deviations section — none? → `## Deviations from Plan\n\nNone - plan executed exactly as written.` Per-deviation row and closing totals line: the summary template `create_summary` names.
 
 </deviation_documentation>
 
@@ -337,17 +317,9 @@ Canonical per-task commit rules live in **`agents/gsd-executor.md`** (`<task_com
 <step name="checkpoint_protocol">
 On `type="checkpoint:*"`: automate everything possible first. Checkpoints are for verification/decisions only.
 
-Display: `### CHECKPOINT: [Type]` heading → Progress {X}/{Y} → Task name → type-specific content → `---` → `**YOUR ACTION: [signal]**`
-
-| Type | Content | Resume signal |
-|------|---------|---------------|
-| human-verify (90%) | What was built + verification steps (commands/URLs) | "approved" or describe issues |
-| decision (9%) | Decision needed + context + options with pros/cons | "Select: option-id" |
-| human-action (1%) | What was automated + ONE manual step + verification plan | "done" |
+Display format, the three checkpoint types and their resume signals: **`~/.claude/gsd-core/references/checkpoints.md`**.
 
 After response: verify if specified. Pass → continue. Fail → inform, wait. WAIT for user — do NOT hallucinate completion.
-
-See ~/.claude/gsd-core/references/checkpoints.md for details.
 </step>
 
 <step name="checkpoint_return_for_orchestrator">
@@ -440,10 +412,9 @@ IS_WORKTREE=$([ -f .git ] && echo "true" || echo "false")
 
 # Skip in parallel mode — orchestrator handles STATE.md centrally
 if [ "$IS_WORKTREE" != "true" ]; then
-  # Advance the plan counter, then READ the answer (#3830: it can REFUSE at exit 0).
-  # ALLOW-LIST: only the first arm records — a real advance, the last plan, or #4067's
-  # `plans_outstanding` (this plan done, siblings still writing). Everything else
-  # stops, including an exit-0 {"error": ...}.
+  # Advance the counter, then READ the answer (#3830: it can REFUSE at exit 0). ALLOW-LIST:
+  # only arm 1 records (advance / last_plan / #4067 plans_outstanding); all else stops,
+  # including an exit-0 {"error": ...}.
   ADVANCE_OUT=$(gsd_run query state.advance-plan)
   ADVANCE_RC=$?
   case "${ADVANCE_OUT}" in
@@ -457,18 +428,14 @@ if [ "$IS_WORKTREE" != "true" ]; then
         --tasks "${TASK_COUNT}" --files "${FILE_COUNT}"
       ;;
     *'"reason": "position_diverged"'*)
-      echo "STOP: advance-plan refused — Current Position disagrees with disk (see WARNING); do NOT record." >&2
-      ;;
+      echo "STOP: advance-plan refused — position disagrees with disk (see WARNING); do NOT record." >&2 ;;
     *)
       echo "STOP: no advance reported (exit ${ADVANCE_RC}) — counter did NOT move; do NOT record." >&2
-      printf '%s\n' "${ADVANCE_OUT}" >&2
-      ;;
+      printf '%s\n' "${ADVANCE_OUT}" >&2 ;;
   esac
 fi
 ```
-**If the block above printed `STOP:`, halt this workflow here.** The counter did not move, so
-later steps would record a wrong position. (The guard suppresses this step's writes; it
-cannot stop later steps.)
+**If the block above printed `STOP:`, halt this workflow here** — the counter did not move, so later steps would record a wrong position, and a `case` arm cannot stop a later fenced block.
 </step>
 
 <step name="extract_decisions_and_issues">
