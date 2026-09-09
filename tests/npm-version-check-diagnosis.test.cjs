@@ -11,11 +11,17 @@
  * now correctly reports "timed out under CI load" for exactly that case.
  *
  * describeNpmVersionCheckFailure is the extracted, pure reason-selection
- * logic operating on execNpm's SpawnResultOutput shape (the canonical
- * OS-shell-projection seam, src/shell-command-projection.cts). Kept in
- * scripts/lib/ (not scripts/check-env.cjs itself, which runs its CLI
- * unconditionally on require) so it can be required directly here without
- * triggering a real environment check.
+ * logic. It takes a plain result object shaped like this repo's canonical
+ * OS-shell-projection seam's SpawnResultOutput (execNpm,
+ * src/shell-command-projection.cts) -- same `timedOut` (error.code ===
+ * 'ETIMEDOUT') semantics -- but check-env.cjs computes that shape inline
+ * rather than importing the seam itself: that seam's compiled output
+ * (gsd-core/bin/lib/*.cjs) does not exist yet when check-env.cjs runs as
+ * its own standalone pre-`npm ci` CI step (an earlier version of this fix
+ * imported it directly and crashed every real CI job with
+ * MODULE_NOT_FOUND). Kept in scripts/lib/ (not scripts/check-env.cjs
+ * itself, which runs its CLI unconditionally on require) so it can be
+ * required directly here without triggering a real environment check.
  */
 
 const { describe, test } = require('node:test');
